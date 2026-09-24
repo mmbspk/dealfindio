@@ -29,6 +29,7 @@ interface ProductWithPrice extends Product {
   sale_pct_off?: number
   store_name?: string
   is_on_sale?: boolean
+  image_url?: string | null
 }
 
 function PriceTag({ price, pctOff }: { price: number; pctOff?: number }) {

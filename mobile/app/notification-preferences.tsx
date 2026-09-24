@@ -142,7 +142,7 @@ export default function NotificationPreferencesScreen() {
             <View style={styles.pickerBox}>
               <Picker
                 selectedValue={prefs.notif_quiet_hours_start ?? null}
-                onValueChange={(v) => set('notif_quiet_hours_start', v)}
+                onValueChange={(v: number | null) => set('notif_quiet_hours_start', v)}
                 style={styles.picker}
               >
                 {HOUR_OPTIONS.map((o) => (
@@ -156,7 +156,7 @@ export default function NotificationPreferencesScreen() {
             <View style={styles.pickerBox}>
               <Picker
                 selectedValue={prefs.notif_quiet_hours_end ?? null}
-                onValueChange={(v) => set('notif_quiet_hours_end', v)}
+                onValueChange={(v: number | null) => set('notif_quiet_hours_end', v)}
                 style={styles.picker}
               >
                 {HOUR_OPTIONS.map((o) => (
@@ -170,7 +170,7 @@ export default function NotificationPreferencesScreen() {
         <View style={styles.pickerBox}>
           <Picker
             selectedValue={prefs.notif_timezone}
-            onValueChange={(v) => set('notif_timezone', v)}
+            onValueChange={(v: string) => set('notif_timezone', v)}
             style={styles.picker}
           >
             {AU_TIMEZONES.map((tz) => (
