@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.config import Settings, get_settings
 from app.main import app
 from app.models import Base, Product, Store
+from app.models.base import PlainBase
 
 logger = logging.getLogger(__name__)
 
@@ -89,8 +90,10 @@ def test_db_engine():
             for ext in ("postgis", "pg_trgm", '"uuid-ossp"', "cube", "earthdistance", "vector"):
                 conn.exec_driver_sql(f"CREATE EXTENSION IF NOT EXISTS {ext}")
         Base.metadata.create_all(bind=engine)
+        PlainBase.metadata.create_all(bind=engine)
         yield engine
         Base.metadata.drop_all(bind=engine)
+        PlainBase.metadata.drop_all(bind=engine)
         engine.dispose()
         return
 
@@ -111,11 +114,13 @@ def test_db_engine():
 
     # Create all tables
     Base.metadata.create_all(bind=engine)
+    PlainBase.metadata.create_all(bind=engine)
 
     yield engine
 
     # Cleanup
     Base.metadata.drop_all(bind=engine)
+    PlainBase.metadata.drop_all(bind=engine)
     engine.dispose()
 
 
