@@ -32,6 +32,7 @@ settings = get_settings()
 
 class ValidationResult(TypedDict):
     """Result dictionary for validation tasks."""
+
     valid: bool
     flags: list[str]
     confidence_score: float
@@ -47,8 +48,8 @@ def get_db_session():
 
 @celery_app.task(
     bind=True,
-    name='app.workers.report_validator.validate_community_report',
-    queue='default',
+    name="app.workers.report_validator.validate_community_report",
+    queue="default",
     base=CallbackTask,
     time_limit=10,
     soft_time_limit=8,
@@ -131,8 +132,10 @@ def validate_community_report(self, report_id: str) -> ValidationResult:
                 "status": "rejected",
             }
 
-        if report.source != 'community':
-            logger.debug(f"Report is not community-sourced (source={report.source}), skipping validation")
+        if report.source != "community":
+            logger.debug(
+                f"Report is not community-sourced (source={report.source}), skipping validation"
+            )
             return {
                 "valid": True,
                 "flags": [],
@@ -141,9 +144,7 @@ def validate_community_report(self, report_id: str) -> ValidationResult:
             }
 
         # Load reporter
-        user = session.query(UserProfile).filter_by(
-            id=report.reporter_user_id
-        ).first()
+        user = session.query(UserProfile).filter_by(id=report.reporter_user_id).first()
 
         if not user:
             logger.error(f"Reporter user not found: {report.reporter_user_id}")
@@ -158,16 +159,22 @@ def validate_community_report(self, report_id: str) -> ValidationResult:
                 "status": "rejected",
             }
 
-        logger.debug(f"Validating report from user {user.email}: reputation={user.reputation_score}")
+        logger.debug(
+            f"Validating report from user {user.email}: reputation={user.reputation_score}"
+        )
 
         # 1. RATE LIMITING: max 20 reports per user per 24h
-        recent_count = session.query(PriceReport).filter(
-            and_(
-                PriceReport.reporter_user_id == user.id,
-                PriceReport.source == 'community',
-                PriceReport.created_at >= datetime.now(timezone.utc) - timedelta(hours=24),
+        recent_count = (
+            session.query(PriceReport)
+            .filter(
+                and_(
+                    PriceReport.reporter_user_id == user.id,
+                    PriceReport.source == "community",
+                    PriceReport.created_at >= datetime.now(timezone.utc) - timedelta(hours=24),
+                )
             )
-        ).count()
+            .count()
+        )
 
         if recent_count > 20:
             logger.warning(f"Rate limit exceeded for user {user.id}: {recent_count} reports in 24h")
@@ -183,14 +190,18 @@ def validate_community_report(self, report_id: str) -> ValidationResult:
             }
 
         # 2. OUTLIER DETECTION: 3-sigma from 30-day mean
-        historical = session.query(PriceReport).filter(
-            and_(
-                PriceReport.product_id == report.product_id,
-                PriceReport.store_id == report.store_id,
-                PriceReport.created_at >= datetime.now(timezone.utc) - timedelta(days=30),
-                PriceReport.id != report_id_uuid,  # Exclude current report
+        historical = (
+            session.query(PriceReport)
+            .filter(
+                and_(
+                    PriceReport.product_id == report.product_id,
+                    PriceReport.store_id == report.store_id,
+                    PriceReport.created_at >= datetime.now(timezone.utc) - timedelta(days=30),
+                    PriceReport.id != report_id_uuid,  # Exclude current report
+                )
             )
-        ).all()
+            .all()
+        )
 
         outlier_score = 1.0
         if len(historical) >= 3:
@@ -201,16 +212,22 @@ def validate_community_report(self, report_id: str) -> ValidationResult:
 
                 # Check if outside 3-sigma
                 z_score = abs(report.price_cents - mean_price) / sigma if sigma > 0 else 0
-                logger.debug(f"Price outlier check: z_score={z_score:.2f}, price={report.price_cents}, mean={mean_price:.0f}, sigma={sigma:.0f}")
+                logger.debug(
+                    f"Price outlier check: z_score={z_score:.2f}, price={report.price_cents}, mean={mean_price:.0f}, sigma={sigma:.0f}"
+                )
 
                 if z_score > 3:
-                    logger.warning(f"Extreme outlier detected: {report.price_cents} vs mean {mean_price:.0f} (z={z_score:.2f})")
+                    logger.warning(
+                        f"Extreme outlier detected: {report.price_cents} vs mean {mean_price:.0f} (z={z_score:.2f})"
+                    )
                     flags.append("price_outlier_3sigma")
                     outlier_score = 0.3
                     report.is_flagged = True
 
                 elif z_score > 2:
-                    logger.debug(f"Moderate outlier: {report.price_cents} vs mean {mean_price:.0f} (z={z_score:.2f})")
+                    logger.debug(
+                        f"Moderate outlier: {report.price_cents} vs mean {mean_price:.0f} (z={z_score:.2f})"
+                    )
                     flags.append("price_outlier_2sigma")
                     outlier_score = 0.6
 
@@ -218,15 +235,19 @@ def validate_community_report(self, report_id: str) -> ValidationResult:
                 logger.error(f"Failed to calculate outlier score: {e}")
 
         # 3. DUPLICATE CHECK: same product/chain within 1 hour
-        duplicate = session.query(PriceReport).filter(
-            and_(
-                PriceReport.product_id == report.product_id,
-                PriceReport.store_id == report.store_id,
-                PriceReport.created_at >= datetime.now(timezone.utc) - timedelta(hours=1),
-                PriceReport.id != report_id_uuid,
-                PriceReport.price_cents == report.price_cents,
+        duplicate = (
+            session.query(PriceReport)
+            .filter(
+                and_(
+                    PriceReport.product_id == report.product_id,
+                    PriceReport.store_id == report.store_id,
+                    PriceReport.created_at >= datetime.now(timezone.utc) - timedelta(hours=1),
+                    PriceReport.id != report_id_uuid,
+                    PriceReport.price_cents == report.price_cents,
+                )
             )
-        ).first()
+            .first()
+        )
 
         duplicate_score = 1.0
         if duplicate:
@@ -241,7 +262,9 @@ def validate_community_report(self, report_id: str) -> ValidationResult:
         # Default: confidence impact = user.reputation_score / 5.0
 
         reputation_factor = min(1.0, user.reputation_score / 5.0)
-        logger.debug(f"Reputation factor: {reputation_factor:.2f} (reputation_score={user.reputation_score})")
+        logger.debug(
+            f"Reputation factor: {reputation_factor:.2f} (reputation_score={user.reputation_score})"
+        )
 
         if user.contribution_count < 5:
             flags.append("new_reporter")
@@ -251,10 +274,7 @@ def validate_community_report(self, report_id: str) -> ValidationResult:
         # Base: 0.5 initial + reputation_factor weighted average
         # Components: reputation (40%), outlier (30%), duplicate (20%), other (10%)
         confidence_score = (
-            reputation_factor * 0.4 +
-            outlier_score * 0.3 +
-            duplicate_score * 0.2 +
-            0.1
+            reputation_factor * 0.4 + outlier_score * 0.3 + duplicate_score * 0.2 + 0.1
         )
 
         # Clamp to 0.0-1.0 range
@@ -317,8 +337,8 @@ def validate_community_report(self, report_id: str) -> ValidationResult:
 
 @celery_app.task(
     bind=True,
-    name='app.workers.report_validator.recalculate_reporter_reputation',
-    queue='default',
+    name="app.workers.report_validator.recalculate_reporter_reputation",
+    queue="default",
     base=CallbackTask,
     time_limit=30,
     soft_time_limit=25,
@@ -385,12 +405,16 @@ def recalculate_reporter_reputation(self, user_id: str) -> dict:
         logger.debug(f"Current reputation for {user.email}: {user.reputation_score}")
 
         # Query all community reports by this user
-        reports = session.query(PriceReport).filter(
-            and_(
-                PriceReport.reporter_user_id == user.id,
-                PriceReport.source == 'community',
+        reports = (
+            session.query(PriceReport)
+            .filter(
+                and_(
+                    PriceReport.reporter_user_id == user.id,
+                    PriceReport.source == "community",
+                )
             )
-        ).all()
+            .all()
+        )
 
         logger.debug(f"Found {len(reports)} reports from user {user.email}")
 
@@ -433,11 +457,11 @@ def recalculate_reporter_reputation(self, user_id: str) -> dict:
             # Calculate new reputation
             # Weighted average of components
             new_reputation = (
-                report_count_score * 0.25 +
-                verification_score * 0.35 +
-                confidence_contribution * 0.25 +
-                recency_score * 0.15 -
-                flag_penalty
+                report_count_score * 0.25
+                + verification_score * 0.35
+                + confidence_contribution * 0.25
+                + recency_score * 0.15
+                - flag_penalty
             )
 
             # Clamp to 0.0-5.0 range
@@ -453,7 +477,9 @@ def recalculate_reporter_reputation(self, user_id: str) -> dict:
 
         # Check for automatic flags
         if new_reputation < 0.5 and not (user.reputation_score < 0.5):
-            logger.warning(f"User {user.email} reputation dropped below threshold: {new_reputation:.2f}")
+            logger.warning(
+                f"User {user.email} reputation dropped below threshold: {new_reputation:.2f}"
+            )
 
         session.commit()
 

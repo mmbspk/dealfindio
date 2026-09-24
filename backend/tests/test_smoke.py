@@ -34,21 +34,39 @@ def seeded(test_db_session):
     from datetime import date
 
     p = Product(
-        id=uuid4(), gtin="9300000000001", name="Smoke Test Milk 2L",
-        brand="Coles", category="dairy",
+        id=uuid4(),
+        gtin="9300000000001",
+        name="Smoke Test Milk 2L",
+        brand="Coles",
+        category="dairy",
     )
     s = Store(
-        id=uuid4(), chain="coles", name="Smoke Coles", suburb="Chatswood",
-        state="NSW", postcode="2067", lat=-33.7969, lon=151.1803, is_active=True,
+        id=uuid4(),
+        chain="coles",
+        name="Smoke Coles",
+        suburb="Chatswood",
+        state="NSW",
+        postcode="2067",
+        lat=-33.7969,
+        lon=151.1803,
+        is_active=True,
     )
     test_db_session.add_all([p, s])
     test_db_session.flush()
     test_db_session.add(
         PriceReport(
-            product_id=p.id, store_id=s.id, price_cents=350, was_price_cents=500,
-            source="flyer_coles", is_on_sale=True, sale_pct_off=30.0,
-            confidence=1.0, is_verified=True, valid_from=date.today(),
-            lat=s.lat, lon=s.lon,
+            product_id=p.id,
+            store_id=s.id,
+            price_cents=350,
+            was_price_cents=500,
+            source="flyer_coles",
+            is_on_sale=True,
+            sale_pct_off=30.0,
+            confidence=1.0,
+            is_verified=True,
+            valid_from=date.today(),
+            lat=s.lat,
+            lon=s.lon,
         )
     )
     test_db_session.commit()

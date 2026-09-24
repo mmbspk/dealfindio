@@ -222,9 +222,7 @@ def create_app() -> FastAPI:
 
         try:
             response = await call_next(request)
-            logger.info(
-                f"{request.method} {request.url.path} - {response.status_code}"
-            )
+            logger.info(f"{request.method} {request.url.path} - {response.status_code}")
             return response
         except Exception as e:
             logger.error(f"Request error: {request.method} {request.url.path} - {e}")
@@ -232,9 +230,7 @@ def create_app() -> FastAPI:
 
     # Exception handlers
     @app.exception_handler(InvalidTokenException)
-    async def invalid_token_exception_handler(
-        request: Request, exc: InvalidTokenException
-    ):
+    async def invalid_token_exception_handler(request: Request, exc: InvalidTokenException):
         """Handle invalid token exceptions."""
         logger.warning(f"Invalid token for {request.method} {request.url.path}")
         return JSONResponse(
@@ -245,9 +241,7 @@ def create_app() -> FastAPI:
     @app.exception_handler(DatabaseException)
     async def database_exception_handler(request: Request, exc: DatabaseException):
         """Handle database exceptions."""
-        logger.error(
-            f"Database error for {request.method} {request.url.path}: {exc.detail}"
-        )
+        logger.error(f"Database error for {request.method} {request.url.path}: {exc.detail}")
         return JSONResponse(
             status_code=exc.status_code,
             content={"detail": exc.detail, "type": "database_error"},
@@ -256,9 +250,7 @@ def create_app() -> FastAPI:
     @app.exception_handler(HTTPException)
     async def http_exception_handler(request: Request, exc: HTTPException):
         """Handle HTTP exceptions."""
-        logger.warning(
-            f"HTTP error {exc.status_code} for {request.method} {request.url.path}"
-        )
+        logger.warning(f"HTTP error {exc.status_code} for {request.method} {request.url.path}")
         return JSONResponse(
             status_code=exc.status_code,
             content={"detail": exc.detail},
@@ -267,9 +259,7 @@ def create_app() -> FastAPI:
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(request: Request, exc: RequestValidationError):
         """Handle request validation errors."""
-        logger.warning(
-            f"Validation error for {request.method} {request.url.path}: {exc.errors()}"
-        )
+        logger.warning(f"Validation error for {request.method} {request.url.path}: {exc.errors()}")
         return JSONResponse(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             content={
@@ -401,17 +391,13 @@ def create_app() -> FastAPI:
         app.include_router(
             products.router, prefix=f"{settings.API_V1_STR}/products", tags=["Products"]
         )
-        app.include_router(
-            stores.router, prefix=f"{settings.API_V1_STR}/stores", tags=["Stores"]
-        )
+        app.include_router(stores.router, prefix=f"{settings.API_V1_STR}/stores", tags=["Stores"])
         app.include_router(
             price_reports.router,
             prefix=f"{settings.API_V1_STR}/price-reports",
             tags=["Price Reports"],
         )
-        app.include_router(
-            users.router, prefix=f"{settings.API_V1_STR}/users", tags=["Users"]
-        )
+        app.include_router(users.router, prefix=f"{settings.API_V1_STR}/users", tags=["Users"])
         app.include_router(
             watchlist.router,
             prefix=f"{settings.API_V1_STR}/watchlist",
@@ -427,9 +413,7 @@ def create_app() -> FastAPI:
             prefix=f"{settings.API_V1_STR}/predictions",
             tags=["Predictions"],
         )
-        app.include_router(
-            deals.router, prefix=f"{settings.API_V1_STR}/deals", tags=["Deals"]
-        )
+        app.include_router(deals.router, prefix=f"{settings.API_V1_STR}/deals", tags=["Deals"])
 
         app.include_router(
             receipts.router,
@@ -438,6 +422,7 @@ def create_app() -> FastAPI:
         )
 
         from app.routers import admin
+
         app.include_router(
             admin.router,
             prefix=f"{settings.API_V1_STR}/admin",

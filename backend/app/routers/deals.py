@@ -77,8 +77,7 @@ def _fetch_deals(
         outer = outer.where(Product.category == category)
 
     rows = db.execute(
-        outer
-        .distinct(PriceReport.product_id)
+        outer.distinct(PriceReport.product_id)
         .order_by(PriceReport.product_id, desc(PriceReport.created_at))
         .limit(max((offset + limit) * 4, 500))
     ).all()
@@ -95,29 +94,31 @@ def _fetch_deals(
             distance_km = haversine_km(lat, lon, store.lat, store.lon)
 
         seen_products.add(product.id)
-        all_deals.append({
-            "id": str(price_report.id),
-            "product_id": str(product.id),
-            "product_name": product.name,
-            "brand": product.brand,
-            "category": product.category,
-            "image_url": product.image_url,
-            "store_id": str(store.id),
-            "store_name": store.name,
-            "chain": store.chain,
-            "suburb": store.suburb,
-            "state": store.state,
-            "price_aud": price_report.price_cents / 100,
-            "was_price_aud": (
-                price_report.was_price_cents / 100
-                if price_report.was_price_cents
-                else None
-            ),
-            "discount_pct": price_report.sale_pct_off,
-            "is_verified": price_report.is_verified,
-            "valid_from": price_report.valid_from.isoformat() if price_report.valid_from else None,
-            "distance_km": round(distance_km, 2) if distance_km is not None else None,
-        })
+        all_deals.append(
+            {
+                "id": str(price_report.id),
+                "product_id": str(product.id),
+                "product_name": product.name,
+                "brand": product.brand,
+                "category": product.category,
+                "image_url": product.image_url,
+                "store_id": str(store.id),
+                "store_name": store.name,
+                "chain": store.chain,
+                "suburb": store.suburb,
+                "state": store.state,
+                "price_aud": price_report.price_cents / 100,
+                "was_price_aud": (
+                    price_report.was_price_cents / 100 if price_report.was_price_cents else None
+                ),
+                "discount_pct": price_report.sale_pct_off,
+                "is_verified": price_report.is_verified,
+                "valid_from": price_report.valid_from.isoformat()
+                if price_report.valid_from
+                else None,
+                "distance_km": round(distance_km, 2) if distance_km is not None else None,
+            }
+        )
 
     # Sort: when geo is provided sort by distance, else by discount
     if lat is not None and lon is not None:
@@ -125,7 +126,7 @@ def _fetch_deals(
     else:
         all_deals.sort(key=lambda d: -(d["discount_pct"] or 0))
 
-    return all_deals[offset: offset + limit]
+    return all_deals[offset : offset + limit]
 
 
 @router.get("/")
@@ -141,8 +142,12 @@ async def list_deals(
     db: Session = Depends(get_db),
 ) -> dict:
     try:
-        effective_days = days if days is not None else (get_runtime_typed("DEALS_FEED_DAYS", db) or 7)
-        deals = _fetch_deals(db, lat, lon, radius_km, limit, effective_days, chain, category, offset)
+        effective_days = (
+            days if days is not None else (get_runtime_typed("DEALS_FEED_DAYS", db) or 7)
+        )
+        deals = _fetch_deals(
+            db, lat, lon, radius_km, limit, effective_days, chain, category, offset
+        )
         return {"count": len(deals), "items": deals}
     except Exception as e:
         logger.error(f"Deals feed failed: {e}")
@@ -165,7 +170,9 @@ async def deals_feed(
     db: Session = Depends(get_db),
 ) -> list[dict]:
     try:
-        effective_days = days if days is not None else (get_runtime_typed("DEALS_FEED_DAYS", db) or 7)
+        effective_days = (
+            days if days is not None else (get_runtime_typed("DEALS_FEED_DAYS", db) or 7)
+        )
         return _fetch_deals(db, lat, lon, radius_km, limit, effective_days, chain, category, offset)
     except Exception as e:
         logger.error(f"Deals feed failed: {e}")

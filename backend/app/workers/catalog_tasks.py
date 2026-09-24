@@ -70,9 +70,9 @@ def get_redis():
     name="app.workers.catalog_tasks.run_catalog_crawl",
     queue="catalog",
     base=CallbackTask,
-    time_limit=28800,      # 8h hard cap — a full crawl is paced over hours
+    time_limit=28800,  # 8h hard cap — a full crawl is paced over hours
     soft_time_limit=28500,
-    max_retries=0,         # crawls are long + idempotent-ish; don't auto-retry
+    max_retries=0,  # crawls are long + idempotent-ish; don't auto-retry
 )
 def run_catalog_crawl(self, chain: str, mode: str = "full") -> CatalogResult:
     """Run a full or delta catalog crawl for one chain.
@@ -94,11 +94,7 @@ def run_catalog_crawl(self, chain: str, mode: str = "full") -> CatalogResult:
     # task_acks_late + task_reject_on_worker_lost will re-queue the message
     # and a new worker picks it up — same celery_task_id, new function invocation.
     # Reuse the existing row instead of creating a phantom duplicate.
-    existing = (
-        session.query(CatalogCrawlRun)
-        .filter_by(celery_task_id=self.request.id)
-        .first()
-    )
+    existing = session.query(CatalogCrawlRun).filter_by(celery_task_id=self.request.id).first()
     if existing:
         run = existing
         run.status = "running"
@@ -118,9 +114,7 @@ def run_catalog_crawl(self, chain: str, mode: str = "full") -> CatalogResult:
     totals = {"new": 0, "updated": 0, "since_commit": 0}
 
     try:
-        scraper = get_catalog_scraper(
-            chain, db_session=session, redis_client=redis
-        )
+        scraper = get_catalog_scraper(chain, db_session=session, redis_client=redis)
 
         async def sink(products, category):
             # Check if a cancel has been requested via Redis flag.
@@ -147,7 +141,9 @@ def run_catalog_crawl(self, chain: str, mode: str = "full") -> CatalogResult:
                 totals["since_commit"] = 0
                 logger.info(
                     "Catalog %s: committed progress (%d new, %d updated)",
-                    chain, totals["new"], totals["updated"],
+                    chain,
+                    totals["new"],
+                    totals["updated"],
                 )
             else:
                 # Always persist the progress counters even if product threshold
@@ -185,10 +181,14 @@ def run_catalog_crawl(self, chain: str, mode: str = "full") -> CatalogResult:
             summary = asyncio.run(runner(product_sink=specials_sink))
         elif mode == "full":
             runner = scraper.run_full
-            summary = asyncio.run(runner(product_sink=sink, on_categories_discovered=on_categories_discovered))
+            summary = asyncio.run(
+                runner(product_sink=sink, on_categories_discovered=on_categories_discovered)
+            )
         else:
             runner = scraper.run_delta
-            summary = asyncio.run(runner(product_sink=sink, on_categories_discovered=on_categories_discovered))
+            summary = asyncio.run(
+                runner(product_sink=sink, on_categories_discovered=on_categories_discovered)
+            )
         session.commit()  # flush any remaining un-committed products
 
         run.status = summary["status"] if not summary["errors"] else "completed_with_errors"
@@ -205,7 +205,11 @@ def run_catalog_crawl(self, chain: str, mode: str = "full") -> CatalogResult:
 
         logger.info(
             "Catalog crawl done chain=%s mode=%s: %d found, %d new, %d updated",
-            chain, mode, summary["products_found"], totals["new"], totals["updated"],
+            chain,
+            mode,
+            summary["products_found"],
+            totals["new"],
+            totals["updated"],
         )
         return CatalogResult(
             chain=chain,
@@ -233,7 +237,9 @@ def run_catalog_crawl(self, chain: str, mode: str = "full") -> CatalogResult:
         except Exception:
             pass
         return CatalogResult(
-            chain=chain, mode=mode, status="cancelled",
+            chain=chain,
+            mode=mode,
+            status="cancelled",
             categories_found=run.categories_found or 0,
             categories_crawled=run.categories_crawled or 0,
             categories_skipped=run.categories_skipped or 0,

@@ -42,9 +42,7 @@ class ProductMatchCandidate(Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
     proposed_by: Mapped[str] = mapped_column(String(50), nullable=False, default="auto")
     reviewed_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    reviewed_at: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # AI judge verdict (nullable — populated only by the Claude dedup pass).
     # Auditable + drives the admin UI chip. See app/services/ai_dedup.py.

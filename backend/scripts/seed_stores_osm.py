@@ -25,32 +25,32 @@ logger = logging.getLogger(__name__)
 BBOX = "-44,113,-10,154"  # Australia
 
 CHAINS = [
-    ("Coles",        "coles"),
-    ("Woolworths",   "woolworths"),
-    ("ALDI",         "aldi"),
-    ("IGA",          "iga"),
+    ("Coles", "coles"),
+    ("Woolworths", "woolworths"),
+    ("ALDI", "aldi"),
+    ("IGA", "iga"),
     ("Dan Murphy's", "dan_murphys"),
-    ("Drakes",       "drakes"),
+    ("Drakes", "drakes"),
 ]
 
 AU_STATE_ABBR = {
-    "New South Wales":           "NSW",
-    "Victoria":                  "VIC",
-    "Queensland":                "QLD",
-    "Western Australia":         "WA",
-    "South Australia":           "SA",
-    "Tasmania":                  "TAS",
+    "New South Wales": "NSW",
+    "Victoria": "VIC",
+    "Queensland": "QLD",
+    "Western Australia": "WA",
+    "South Australia": "SA",
+    "Tasmania": "TAS",
     "Australian Capital Territory": "ACT",
-    "Northern Territory":        "NT",
+    "Northern Territory": "NT",
 }
 
 
 def fetch_osm(brand: str) -> list[dict]:
     query = (
-        f'[out:json][timeout:90];'
+        f"[out:json][timeout:90];"
         f'(node["brand"="{brand}"]({BBOX});'
         f'way["brand"="{brand}"]({BBOX}););'
-        f'out center;'
+        f"out center;"
     )
     for attempt in range(3):
         try:
@@ -83,11 +83,11 @@ def parse_element(el: dict, chain_key: str) -> dict | None:
 
     brand = tags.get("brand", "").strip()
 
-    full_name  = tags.get("full_name", "").strip()
-    branch     = tags.get("branch", "").strip()
+    full_name = tags.get("full_name", "").strip()
+    branch = tags.get("branch", "").strip()
     suburb_tag = (tags.get("addr:suburb") or tags.get("addr:city") or "").strip()
-    street     = tags.get("addr:street", "").strip()
-    postcode   = tags.get("addr:postcode", "").strip()
+    street = tags.get("addr:street", "").strip()
+    postcode = tags.get("addr:postcode", "").strip()
 
     if full_name:
         # full_name is already the complete name e.g. "Coles Kurralta Park"
@@ -111,7 +111,7 @@ def parse_element(el: dict, chain_key: str) -> dict | None:
     ]
     address = " ".join(p for p in addr_parts if p).strip() or None
 
-    suburb   = suburb_tag or None
+    suburb = suburb_tag or None
     postcode = postcode or None
 
     raw_state = tags.get("addr:state", "").strip()
@@ -120,16 +120,16 @@ def parse_element(el: dict, chain_key: str) -> dict | None:
     place_id = f"osm:{el['type'][0]}{el['id']}"
 
     return {
-        "chain":       chain_key,
-        "chain_brand": brand,   # bare brand name — used to detect no-location entries
-        "name":        name or brand,
-        "address":     address,
-        "suburb":      suburb,
-        "state":       state,
-        "postcode":    postcode,
-        "lat":         lat,
-        "lon":         lon,
-        "place_id":    place_id,
+        "chain": chain_key,
+        "chain_brand": brand,  # bare brand name — used to detect no-location entries
+        "name": name or brand,
+        "address": address,
+        "suburb": suburb,
+        "state": state,
+        "postcode": postcode,
+        "lat": lat,
+        "lon": lon,
+        "place_id": place_id,
     }
 
 
@@ -171,12 +171,12 @@ def seed():
 
                 if existing:
                     # Update coordinates and address in case OSM data improved
-                    existing.lat      = parsed["lat"]
-                    existing.lon      = parsed["lon"]
-                    existing.name     = parsed["name"]
-                    existing.address  = parsed["address"]
-                    existing.suburb   = parsed["suburb"]
-                    existing.state    = parsed["state"]
+                    existing.lat = parsed["lat"]
+                    existing.lon = parsed["lon"]
+                    existing.name = parsed["name"]
+                    existing.address = parsed["address"]
+                    existing.suburb = parsed["suburb"]
+                    existing.state = parsed["state"]
                     existing.postcode = parsed["postcode"]
                     updated += 1
                 else:
@@ -198,8 +198,8 @@ def seed():
             session.commit()
             logger.info(f"  {brand}: {inserted} inserted, {updated} updated, {skipped} skipped")
             totals["inserted"] += inserted
-            totals["updated"]  += updated
-            totals["skipped"]  += skipped
+            totals["updated"] += updated
+            totals["skipped"] += skipped
 
             time.sleep(2)  # be polite to Overpass
 
@@ -213,8 +213,11 @@ def seed():
 def _dedup(engine):
     """Remove near-duplicate OSM stores (node + way for same physical location)."""
     from sqlalchemy import text
+
     with engine.connect() as c:
-        deleted = c.execute(text("""
+        deleted = c.execute(
+            text(
+                """
             DELETE FROM stores
             WHERE id IN (
                 SELECT b.id
@@ -226,7 +229,9 @@ def _dedup(engine):
                  AND b.place_id LIKE 'osm:%'
                  AND (point(a.lon,a.lat) <-> point(b.lon,b.lat)) * 111000 < 150
             )
-        """)).rowcount
+        """
+            )
+        ).rowcount
         c.commit()
     if deleted:
         logger.info(f"Dedup: removed {deleted} near-duplicate OSM stores (<150m, same chain)")

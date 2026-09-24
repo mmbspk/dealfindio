@@ -84,6 +84,7 @@ def get_scraper_proxy() -> Optional[str]:
     """
     try:
         from app.config import get_settings
+
         return get_settings().SCRAPER_PROXY_URL or None
     except Exception:
         return None
@@ -109,6 +110,7 @@ def parse_retry_after(value: Optional[str], default: float = 60.0) -> float:
 
 # ── Data structures ──────────────────────────────────────────────────────────
 
+
 @dataclass
 class CatalogProduct(ScrapedProduct):
     """A product from a full-catalog crawl.
@@ -118,7 +120,7 @@ class CatalogProduct(ScrapedProduct):
     """
 
     external_id: Optional[str] = None  # the store's own SKU / stockcode
-    url: Optional[str] = None          # product detail page URL
+    url: Optional[str] = None  # product detail page URL
     in_stock: bool = True
     package_size: Optional[str] = None  # raw size string e.g. "2L", "375mL 24 Pack"
     unit_price: Optional[float] = None  # comparable unit price e.g. 1.50 (per 100g/100ml/ea)
@@ -155,6 +157,7 @@ class CatalogStoreConfig:
 
 
 # ── Human-like pacing ────────────────────────────────────────────────────────
+
 
 class HumanLikeRateLimiter:
     """Paces requests to look like a person browsing, not a bot hammering.
@@ -228,6 +231,7 @@ class HumanLikeRateLimiter:
 
 # ── Scraper ABC ──────────────────────────────────────────────────────────────
 
+
 class CatalogScraper(ABC):
     """Base class for authenticated full-catalog scrapers.
 
@@ -283,9 +287,7 @@ class CatalogScraper(ABC):
         """Fetch all raw pages for one category. Return raw response data."""
 
     @abstractmethod
-    async def parse_products(
-        self, raw: Any, category: CategoryNode
-    ) -> list[CatalogProduct]:
+    async def parse_products(self, raw: Any, category: CategoryNode) -> list[CatalogProduct]:
         """Parse a category's raw response into products."""
 
     async def crawl_specials(self, auth: dict) -> Any:
@@ -395,6 +397,7 @@ class CatalogScraper(ABC):
             return False
         try:
             import time
+
             stamped_at = float(val.decode() if isinstance(val, bytes) else val)
             return (time.time() - stamped_at) < max_age_s
         except (ValueError, TypeError):
@@ -406,6 +409,7 @@ class CatalogScraper(ABC):
             return
         try:
             import time
+
             self.redis_client.setex(
                 self._crawled_key(category_id),
                 self.CRAWLED_TTL_S,
@@ -426,11 +430,19 @@ class CatalogScraper(ABC):
 
         Returns a summary dict with category/product counts and any errors.
         """
-        return await self._run(mode="full", product_sink=product_sink, on_categories_discovered=on_categories_discovered)
+        return await self._run(
+            mode="full",
+            product_sink=product_sink,
+            on_categories_discovered=on_categories_discovered,
+        )
 
     async def run_delta(self, product_sink=None, on_categories_discovered=None) -> dict:
         """Crawl only categories whose response changed since last time."""
-        return await self._run(mode="delta", product_sink=product_sink, on_categories_discovered=on_categories_discovered)
+        return await self._run(
+            mode="delta",
+            product_sink=product_sink,
+            on_categories_discovered=on_categories_discovered,
+        )
 
     async def run_specials(self, product_sink=None) -> dict:
         """Fetch only on-special products via the store's promotions endpoint.
@@ -490,7 +502,9 @@ class CatalogScraper(ABC):
         try:
             categories = await self.discover_categories()
         except AuthExpiredError:
-            self.logger.info("Auth expired during category discovery for %s; re-authenticating", self.chain)
+            self.logger.info(
+                "Auth expired during category discovery for %s; re-authenticating", self.chain
+            )
             await self._invalidate_auth()
             auth = await self._get_or_refresh_auth()
             try:

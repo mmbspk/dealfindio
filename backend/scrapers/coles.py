@@ -87,14 +87,14 @@ class ColesScraper(Scraper):
                     html = resp.text
 
                 if "Pardon Our Interruption" in html or "imperva" in html.lower():
-                    self.logger.warning(f"Attempt {attempt}: Imperva bot-protection page — retrying")
+                    self.logger.warning(
+                        f"Attempt {attempt}: Imperva bot-protection page — retrying"
+                    )
                     last_err = ScraperError("Coles bot-protection page returned — retry later")
                     continue
 
                 product_count = html.count('data-testid="product-tile"')
-                self.logger.info(
-                    f"Fetched {len(html)} bytes, {product_count} product-tile markers"
-                )
+                self.logger.info(f"Fetched {len(html)} bytes, {product_count} product-tile markers")
                 if product_count == 0:
                     self.logger.warning(f"Attempt {attempt}: no product tiles found — retrying")
                     last_err = ScraperError("No product tiles found in Coles response")
@@ -160,17 +160,17 @@ class ColesScraper(Scraper):
                         was_text = was_el.get_text(strip=True)
                         was_match = re.search(r"\$?([\d,]+\.?\d*)", was_text)
                         if was_match:
-                            was_price_cents = int(
-                                float(was_match.group(1).replace(",", "")) * 100
-                            )
+                            was_price_cents = int(float(was_match.group(1).replace(",", "")) * 100)
 
-                    products.append(ScrapedProduct(
-                        product_name=product_name,
-                        price_cents=price_cents,
-                        was_price_cents=was_price_cents,
-                        valid_from=date.today(),
-                        valid_to=date.today() + timedelta(days=7),
-                    ))
+                    products.append(
+                        ScrapedProduct(
+                            product_name=product_name,
+                            price_cents=price_cents,
+                            was_price_cents=was_price_cents,
+                            valid_from=date.today(),
+                            valid_to=date.today() + timedelta(days=7),
+                        )
+                    )
                     self.logger.debug(
                         f"Tile {idx}: {product_name!r} ${price_cents/100:.2f}"
                         + (f" (was ${was_price_cents/100:.2f})" if was_price_cents else "")

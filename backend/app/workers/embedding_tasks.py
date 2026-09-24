@@ -81,11 +81,15 @@ def backfill_product_embeddings(self, batch_size: int = 512) -> dict:
     try:
         with _SessionLocal() as session:
             while True:
-                products = session.execute(
-                    select(Product)
-                    .where(Product.name_embedding == None)  # noqa: E711
-                    .limit(batch_size)
-                ).scalars().all()
+                products = (
+                    session.execute(
+                        select(Product)
+                        .where(Product.name_embedding == None)  # noqa: E711
+                        .limit(batch_size)
+                    )
+                    .scalars()
+                    .all()
+                )
 
                 if not products:
                     break

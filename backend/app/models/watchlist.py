@@ -32,9 +32,7 @@ class UserWatchlist(Base):
 
     __tablename__ = "user_watchlist"
 
-    user_id: Mapped[UUID] = mapped_column(
-        ForeignKey("user_profiles.id", ondelete="CASCADE")
-    )
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("user_profiles.id", ondelete="CASCADE"))
     product_id: Mapped[UUID] = mapped_column(ForeignKey("products.id"))
     list_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("watchlist_lists.id", ondelete="CASCADE"), nullable=True

@@ -125,8 +125,8 @@ class TestReceiptParserUnit:
             {
                 "products": [
                     {"name": "Milk", "price": 3.5},
-                    {"name": "NoPrice"},          # missing price -> skipped
-                    {"price": 2.0},               # missing name -> skipped
+                    {"name": "NoPrice"},  # missing price -> skipped
+                    {"price": 2.0},  # missing name -> skipped
                     {"name": "Bad", "price": "x"},  # non-numeric -> skipped
                 ]
             }

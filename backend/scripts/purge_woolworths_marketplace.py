@@ -82,8 +82,7 @@ def run(dry_run: bool) -> None:
 
         # Count affected price_reports
         pr_count = session.execute(
-            select(func.count(PriceReport.id))
-            .where(
+            select(func.count(PriceReport.id)).where(
                 PriceReport.product_id.in_(
                     select(Product.id).where(
                         Product.external_source == "catalog_woolworths",

@@ -44,8 +44,8 @@ class TestHaversineKm:
         pairs = [
             (0, 0, 0, 0),
             (-33.87, 151.21, -33.8700001, 151.2100001),  # near-identical
-            (0, 0, 0, 180),      # antipodal-ish across dateline
-            (90, 0, -90, 0),     # pole to pole
+            (0, 0, 0, 180),  # antipodal-ish across dateline
+            (90, 0, -90, 0),  # pole to pole
             (-33.87, 179.99, -33.87, -179.99),  # dateline crossing
             (10, 20, -10, -20),  # equator crossing
         ]

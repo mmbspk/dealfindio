@@ -27,25 +27,25 @@ from sqlalchemy.orm import Session
 
 from app.models import PriceReport, Product, Store
 
-_TRGM_THRESHOLD = 0.15   # word_similarity floor — permissive for grocery name noise
-_CANDIDATE_POOL = 150    # candidates per lane before RRF fusion
-_RRF_K = 60              # standard RRF constant (Cormack et al. 2009)
+_TRGM_THRESHOLD = 0.15  # word_similarity floor — permissive for grocery name noise
+_CANDIDATE_POOL = 150  # candidates per lane before RRF fusion
+_RRF_K = 60  # standard RRF constant (Cormack et al. 2009)
 
 # Asymmetric RRF: when the query has 2+ meaningful words (intent query), we trust the
 # semantic lane more by using a larger k for the trigram lane — each trigram rank is worth less.
-_RRF_K_TRGM_INTENT = 120   # used for trigram lane when query has 2+ non-stopwords
+_RRF_K_TRGM_INTENT = 120  # used for trigram lane when query has 2+ non-stopwords
 
 # Geo decay: at this distance (km) the geo bonus is halved.
 _GEO_HALF_LIFE_KM = 5.0
 
 # Score bonus weights (additive on top of RRF score ~0.01–0.03)
-_SALE_BONUS_MAX = 0.008   # applied at 100% off, linear interpolation
-_GEO_BONUS_MAX  = 0.006   # applied at distance=0
+_SALE_BONUS_MAX = 0.008  # applied at 100% off, linear interpolation
+_GEO_BONUS_MAX = 0.006  # applied at distance=0
 
 # Negation patterns: "X free" means "without X"
 # Map negator → the word it negates in the product name.
 # e.g. "dairy free" → penalise products containing "dairy" without "free" nearby.
-_NEGATION_PENALTY = 0.2   # trigram score multiplied by this when negation mismatch
+_NEGATION_PENALTY = 0.2  # trigram score multiplied by this when negation mismatch
 _NEGATION_STOPWORDS = {"a", "an", "the", "and", "or", "of", "with", "in", "for", "to"}
 _NEGATION_MODIFIERS = {"free", "without", "no", "non"}
 
@@ -161,7 +161,10 @@ def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     R = 6371.0
     dlat = math.radians(lat2 - lat1)
     dlon = math.radians(lon2 - lon1)
-    a = math.sin(dlat / 2) ** 2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2
+    a = (
+        math.sin(dlat / 2) ** 2
+        + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2
+    )
     return R * 2 * math.asin(math.sqrt(a))
 
 
@@ -181,6 +184,7 @@ def _trigram_lane(
     session, q: str, filters, on_sale, negated_words: list[str]
 ) -> list[tuple[Product, float]]:
     from app.services.embeddings import normalise_product_name
+
     normalised_q = normalise_product_name(q)
 
     # Primary score: word_similarity against name (fast, GIN-indexed).
@@ -189,11 +193,9 @@ def _trigram_lane(
     # similarity() counts shared trigrams across the whole string, so "huggies" appearing
     # in both the query and the brand field lifts Huggies products above generic "Premium
     # Nappies Size 5" which also matches on "nappies size 5" alone.
-    brand_name = func.concat(
-        func.coalesce(Product.brand, ""), " ", Product.name
-    )
-    similarity_name  = func.word_similarity(normalised_q, Product.name)
-    full_sim_brand   = func.similarity(func.lower(normalised_q), func.lower(brand_name))
+    brand_name = func.concat(func.coalesce(Product.brand, ""), " ", Product.name)
+    similarity_name = func.word_similarity(normalised_q, Product.name)
+    full_sim_brand = func.similarity(func.lower(normalised_q), func.lower(brand_name))
     # Blend: word_sim dominates threshold/recall; full_sim breaks ties within a score band
     similarity_score = similarity_name * literal(0.7) + full_sim_brand * literal(0.3)
 
@@ -208,12 +210,14 @@ def _trigram_lane(
     if not rows:
         stmt = (
             select(Product, literal(0.0).label("score"), on_sale.label("on_sale_flag"))
-            .where(and_(
-                Product.name.ilike(f"%{normalised_q}%")
-                | Product.brand.ilike(f"%{normalised_q}%")
-                | Product.package_size.ilike(f"%{normalised_q}%"),
-                *filters,
-            ))
+            .where(
+                and_(
+                    Product.name.ilike(f"%{normalised_q}%")
+                    | Product.brand.ilike(f"%{normalised_q}%")
+                    | Product.package_size.ilike(f"%{normalised_q}%"),
+                    *filters,
+                )
+            )
             .order_by(on_sale.desc(), Product.name)
             .limit(_CANDIDATE_POOL)
         )
@@ -309,8 +313,10 @@ def _enrich_scores(
     enriched = []
     for product, rrf in fused:
         pid = str(product.id)
-        score = rrf + _sale_bonus(sale_map.get(pid)) + (
-            _geo_bonus(geo_map[pid]) if pid in geo_map else 0.0
+        score = (
+            rrf
+            + _sale_bonus(sale_map.get(pid))
+            + (_geo_bonus(geo_map[pid]) if pid in geo_map else 0.0)
         )
         enriched.append((product, score))
 
@@ -351,7 +357,7 @@ def search_products_ranked(
             .limit(_CANDIDATE_POOL)
         )
         rows = session.execute(stmt).all()
-        return [row[0] for row in rows][offset: offset + limit]
+        return [row[0] for row in rows][offset : offset + limit]
 
     on_sale = _on_sale_subquery()
 
@@ -361,17 +367,19 @@ def search_products_ranked(
     intent = _is_intent_query(query_words)
 
     trgm_results = _trigram_lane(session, q, filters, on_sale, negated_words)
-    vec_results  = _vector_lane(session, q, filters, on_sale)
+    vec_results = _vector_lane(session, q, filters, on_sale)
 
-    fused = _fuse_rrf(trgm_results, vec_results, intent_query=intent) if vec_results else list(trgm_results)
+    fused = (
+        _fuse_rrf(trgm_results, vec_results, intent_query=intent)
+        if vec_results
+        else list(trgm_results)
+    )
 
     # Phase C enrichment: sale magnitude + geo proximity
     fused = _enrich_scores(session, fused, lat, lon, radius_km)
 
-    return [p for p, _ in fused][offset: offset + limit]
+    return [p for p, _ in fused][offset : offset + limit]
 
 
 def search_products_by_gtin(session: Session, *, gtin: str) -> list[Product]:
-    return list(
-        session.execute(select(Product).where(Product.gtin == gtin)).scalars().all()
-    )
+    return list(session.execute(select(Product).where(Product.gtin == gtin)).scalars().all())

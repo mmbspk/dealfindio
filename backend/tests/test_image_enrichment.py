@@ -35,6 +35,7 @@ from app.services.oft_image_enricher import (
 
 # ── object_store ─────────────────────────────────────────────────────────────
 
+
 class TestObjectStoreHelpers:
     @pytest.mark.unit
     def test_extension_for_known_types(self):
@@ -145,6 +146,7 @@ class TestS3ObjectStore:
 
 # ── OFTRateLimiter ───────────────────────────────────────────────────────────
 
+
 class TestOFTRateLimiter:
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -170,6 +172,7 @@ class TestOFTRateLimiter:
 
 
 # ── OFTImageEnricher ─────────────────────────────────────────────────────────
+
 
 def _enricher():
     settings = MagicMock()
@@ -198,15 +201,20 @@ class TestOFTImageEnricher:
             if "api/v2/search" in str(request.url):
                 return httpx.Response(
                     200,
-                    json={"products": [{
-                        "code": "9300617006552",
-                        "product_name": "Full Cream Milk 2L",
-                        "image_front_url": img_url,
-                    }]},
+                    json={
+                        "products": [
+                            {
+                                "code": "9300617006552",
+                                "product_name": "Full Cream Milk 2L",
+                                "image_front_url": img_url,
+                            }
+                        ]
+                    },
                 )
             if str(request.url) == img_url:
                 return httpx.Response(
-                    200, content=b"\xff\xd8\xff\xe0jpegbytes",
+                    200,
+                    content=b"\xff\xd8\xff\xe0jpegbytes",
                     headers={"Content-Type": "image/jpeg"},
                 )
             return httpx.Response(404)
@@ -224,9 +232,7 @@ class TestOFTImageEnricher:
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_no_search_results_returns_none(self):
-        transport = httpx.MockTransport(
-            lambda req: httpx.Response(200, json={"products": []})
-        )
+        transport = httpx.MockTransport(lambda req: httpx.Response(200, json={"products": []}))
         async with httpx.AsyncClient(transport=transport) as client:
             assert await _enricher().enrich("Nonexistent", client) is None
 
@@ -234,9 +240,7 @@ class TestOFTImageEnricher:
     @pytest.mark.asyncio
     async def test_match_without_image_returns_none(self):
         transport = httpx.MockTransport(
-            lambda req: httpx.Response(
-                200, json={"products": [{"code": "1", "product_name": "X"}]}
-            )
+            lambda req: httpx.Response(200, json={"products": [{"code": "1", "product_name": "X"}]})
         )
         async with httpx.AsyncClient(transport=transport) as client:
             assert await _enricher().enrich("X", client) is None
@@ -248,9 +252,9 @@ class TestOFTImageEnricher:
 
         def handler(request: httpx.Request) -> httpx.Response:
             if "api/v2/search" in str(request.url):
-                return httpx.Response(200, json={"products": [
-                    {"code": "1", "image_front_url": img_url}
-                ]})
+                return httpx.Response(
+                    200, json={"products": [{"code": "1", "image_front_url": img_url}]}
+                )
             return httpx.Response(200, content=b"<html>", headers={"Content-Type": "text/html"})
 
         transport = httpx.MockTransport(handler)
@@ -282,11 +286,10 @@ class TestOFTImageEnricher:
 
 # ── image_tasks ──────────────────────────────────────────────────────────────
 
+
 class TestFindProductsMissingImages:
     @pytest.mark.integration
-    def test_filters_by_chain_and_null_image(
-        self, test_db_session, sample_store: Store
-    ):
+    def test_filters_by_chain_and_null_image(self, test_db_session, sample_store: Store):
         from app.workers.image_tasks import _find_products_missing_images
 
         # p1: coles, no image -> candidate.  p2: coles, has image -> excluded.
@@ -297,10 +300,15 @@ class TestFindProductsMissingImages:
         test_db_session.add_all([p1, p2, p3])
         test_db_session.flush()
         for prod, source in [(p1, "flyer_coles"), (p2, "flyer_coles"), (p3, "flyer_woolworths")]:
-            test_db_session.add(PriceReport(
-                product_id=prod.id, store_id=sample_store.id, price_cents=350,
-                source=source, valid_from=date.today(),
-            ))
+            test_db_session.add(
+                PriceReport(
+                    product_id=prod.id,
+                    store_id=sample_store.id,
+                    price_cents=350,
+                    source=source,
+                    valid_from=date.today(),
+                )
+            )
         test_db_session.commit()
 
         found = _find_products_missing_images(test_db_session, "coles", 50)
@@ -310,9 +318,7 @@ class TestFindProductsMissingImages:
         assert p3.id not in ids  # wrong chain
 
     @pytest.mark.integration
-    def test_all_chains_sweep_ignores_source(
-        self, test_db_session, sample_store: Store
-    ):
+    def test_all_chains_sweep_ignores_source(self, test_db_session, sample_store: Store):
         from app.workers.image_tasks import _find_products_missing_images
 
         p1 = Product(id=uuid4(), name="A", gtin=None)
@@ -325,6 +331,7 @@ class TestFindProductsMissingImages:
 class TestEnrichProductImagesTask:
     def _fn(self):
         from app.workers.image_tasks import enrich_product_images
+
         return enrich_product_images
 
     @pytest.mark.integration
@@ -343,25 +350,30 @@ class TestEnrichProductImagesTask:
         assert result["enriched"] == 0
 
     @pytest.mark.integration
-    def test_enriches_and_writes_image_url(
-        self, test_db_session, sample_store: Store
-    ):
+    def test_enriches_and_writes_image_url(self, test_db_session, sample_store: Store):
         from app.services.oft_image_enricher import EnrichedImage
         from app.workers import image_tasks
 
         product = Product(id=uuid4(), name="Coles Milk 2L", gtin=None)
         test_db_session.add(product)
         test_db_session.flush()
-        test_db_session.add(PriceReport(
-            product_id=product.id, store_id=sample_store.id, price_cents=350,
-            source="flyer_coles", valid_from=date.today(),
-        ))
+        test_db_session.add(
+            PriceReport(
+                product_id=product.id,
+                store_id=sample_store.id,
+                price_cents=350,
+                source="flyer_coles",
+                valid_from=date.today(),
+            )
+        )
         test_db_session.commit()
         product_id = product.id
 
         fake_image = EnrichedImage(
-            image_bytes=b"jpegbytes", content_type="image/jpeg",
-            source_url="https://static.oft/x.jpg", off_code="1",
+            image_bytes=b"jpegbytes",
+            content_type="image/jpeg",
+            source_url="https://static.oft/x.jpg",
+            off_code="1",
         )
         fake_store = MagicMock()
         fake_store.put_object.return_value = "https://images.dealfindio.com.au/products/xx/abc.jpg"
@@ -369,9 +381,11 @@ class TestEnrichProductImagesTask:
         async def fake_enrich_all(targets):
             return [(pid, fake_image) for pid, _name in targets]
 
-        with patch.object(image_tasks, "get_db_session", return_value=test_db_session), \
-             patch.object(image_tasks, "get_object_store", return_value=fake_store), \
-             patch.object(image_tasks, "_enrich_all", side_effect=fake_enrich_all):
+        with patch.object(
+            image_tasks, "get_db_session", return_value=test_db_session
+        ), patch.object(image_tasks, "get_object_store", return_value=fake_store), patch.object(
+            image_tasks, "_enrich_all", side_effect=fake_enrich_all
+        ):
             result = self._fn().run("coles")
 
         assert result["status"] == "success"
@@ -382,27 +396,32 @@ class TestEnrichProductImagesTask:
         assert refreshed.image_enriched_at is not None
 
     @pytest.mark.integration
-    def test_no_match_counts_as_skipped(
-        self, test_db_session, sample_store: Store
-    ):
+    def test_no_match_counts_as_skipped(self, test_db_session, sample_store: Store):
         from app.workers import image_tasks
 
         product = Product(id=uuid4(), name="Obscure Item", gtin=None)
         test_db_session.add(product)
         test_db_session.flush()
-        test_db_session.add(PriceReport(
-            product_id=product.id, store_id=sample_store.id, price_cents=999,
-            source="flyer_coles", valid_from=date.today(),
-        ))
+        test_db_session.add(
+            PriceReport(
+                product_id=product.id,
+                store_id=sample_store.id,
+                price_cents=999,
+                source="flyer_coles",
+                valid_from=date.today(),
+            )
+        )
         test_db_session.commit()
 
         async def fake_enrich_all(targets):
             return [(pid, None) for pid, _name in targets]
 
         fake_store = MagicMock()
-        with patch.object(image_tasks, "get_db_session", return_value=test_db_session), \
-             patch.object(image_tasks, "get_object_store", return_value=fake_store), \
-             patch.object(image_tasks, "_enrich_all", side_effect=fake_enrich_all):
+        with patch.object(
+            image_tasks, "get_db_session", return_value=test_db_session
+        ), patch.object(image_tasks, "get_object_store", return_value=fake_store), patch.object(
+            image_tasks, "_enrich_all", side_effect=fake_enrich_all
+        ):
             result = self._fn().run("coles")
 
         assert result["enriched"] == 0

@@ -39,6 +39,7 @@ router = APIRouter(tags=["Notifications"])
 
 # ─── helpers ─────────────────────────────────────────────────────────────────
 
+
 def _require_profile(current_user: User) -> UserProfile:
     if not current_user.profile:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User profile not found")
@@ -66,6 +67,7 @@ def _notif_to_response(notif: Notification) -> NotificationResponse:
 
 # ─── list / read / delete ─────────────────────────────────────────────────────
 
+
 @router.get("/", response_model=list[NotificationResponse], summary="List notifications")
 async def list_notifications(
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
@@ -74,13 +76,17 @@ async def list_notifications(
     db: Session = Depends(get_db),
 ) -> list[NotificationResponse]:
     profile = _require_profile(current_user)
-    notifications = db.execute(
-        select(Notification)
-        .where(Notification.user_id == profile.id)
-        .order_by(desc(Notification.sent_at))
-        .limit(limit)
-        .offset(offset)
-    ).scalars().all()
+    notifications = (
+        db.execute(
+            select(Notification)
+            .where(Notification.user_id == profile.id)
+            .order_by(desc(Notification.sent_at))
+            .limit(limit)
+            .offset(offset)
+        )
+        .scalars()
+        .all()
+    )
     return [_notif_to_response(n) for n in notifications]
 
 
@@ -155,6 +161,7 @@ async def delete_notification(
 
 # ─── push token ───────────────────────────────────────────────────────────────
 
+
 @router.post("/fcm-token", status_code=200, summary="Register push token")
 async def register_fcm_token(
     request: FCMTokenRequest,
@@ -166,7 +173,9 @@ async def register_fcm_token(
     if not token:
         raise HTTPException(status_code=400, detail="fcm_token cannot be empty")
 
-    user_profile = db.execute(select(UserProfile).where(UserProfile.id == profile.id)).scalar_one_or_none()
+    user_profile = db.execute(
+        select(UserProfile).where(UserProfile.id == profile.id)
+    ).scalar_one_or_none()
     if not user_profile:
         raise HTTPException(status_code=404, detail="User profile not found")
 
@@ -176,6 +185,7 @@ async def register_fcm_token(
 
     # Send test push via Expo (graceful on failure)
     from app.services.push_sender import is_expo_token, send_expo_push_sync
+
     if is_expo_token(token):
         try:
             ok, _ = send_expo_push_sync(
@@ -194,26 +204,37 @@ async def register_fcm_token(
 
 # ─── preferences ──────────────────────────────────────────────────────────────
 
-@router.get("/preferences", response_model=NotificationPreferences, summary="Get notification preferences")
+
+@router.get(
+    "/preferences", response_model=NotificationPreferences, summary="Get notification preferences"
+)
 async def get_preferences(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> NotificationPreferences:
     profile = _require_profile(current_user)
-    user_profile = db.execute(select(UserProfile).where(UserProfile.id == profile.id)).scalar_one_or_none()
+    user_profile = db.execute(
+        select(UserProfile).where(UserProfile.id == profile.id)
+    ).scalar_one_or_none()
     if not user_profile:
         raise HTTPException(status_code=404, detail="User profile not found")
     return NotificationPreferences.model_validate(user_profile)
 
 
-@router.put("/preferences", response_model=NotificationPreferences, summary="Update notification preferences")
+@router.put(
+    "/preferences",
+    response_model=NotificationPreferences,
+    summary="Update notification preferences",
+)
 async def update_preferences(
     prefs: NotificationPreferences,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> NotificationPreferences:
     profile = _require_profile(current_user)
-    user_profile = db.execute(select(UserProfile).where(UserProfile.id == profile.id)).scalar_one_or_none()
+    user_profile = db.execute(
+        select(UserProfile).where(UserProfile.id == profile.id)
+    ).scalar_one_or_none()
     if not user_profile:
         raise HTTPException(status_code=404, detail="User profile not found")
 
@@ -225,6 +246,7 @@ async def update_preferences(
 
 
 # ─── one-click unsubscribe (no auth) ─────────────────────────────────────────
+
 
 @router.get("/unsubscribe", response_class=HTMLResponse, include_in_schema=False)
 async def unsubscribe(
@@ -243,6 +265,7 @@ async def unsubscribe(
     user_id, channel = result
     try:
         from uuid import UUID as _UUID
+
         user_profile = db.execute(
             select(UserProfile).where(UserProfile.id == _UUID(user_id))
         ).scalar_one_or_none()
@@ -259,7 +282,9 @@ async def unsubscribe(
                 user_profile.notif_email_prediction = False
                 user_profile.notif_email_weekly_digest = False
             db.commit()
-        return HTMLResponse(content=_unsub_page("You've been unsubscribed successfully.", success=True))
+        return HTMLResponse(
+            content=_unsub_page("You've been unsubscribed successfully.", success=True)
+        )
     except Exception as e:
         logger.error(f"Unsubscribe failed: {e}")
         db.rollback()

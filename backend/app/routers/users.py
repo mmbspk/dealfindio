@@ -186,12 +186,16 @@ async def get_user_profile(
             )
 
         # Get top 5 recent reports by this user
-        top_reports = db.execute(
-            select(PriceReport)
-            .where(PriceReport.reporter_user_id == user_id)
-            .order_by(PriceReport.created_at.desc())
-            .limit(5)
-        ).scalars().all()
+        top_reports = (
+            db.execute(
+                select(PriceReport)
+                .where(PriceReport.reporter_user_id == user_id)
+                .order_by(PriceReport.created_at.desc())
+                .limit(5)
+            )
+            .scalars()
+            .all()
+        )
 
         tier = calculate_tier(user_profile.contribution_count)
 

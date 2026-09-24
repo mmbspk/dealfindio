@@ -119,9 +119,7 @@ async def create_price_report(
             )
 
         # Validate store exists
-        store = db.execute(
-            select(Store).where(Store.id == request.store_id)
-        ).scalar_one_or_none()
+        store = db.execute(select(Store).where(Store.id == request.store_id)).scalar_one_or_none()
 
         if not store or not store.is_active:
             logger.warning(f"Store not found or inactive: {request.store_id}")
@@ -138,9 +136,7 @@ async def create_price_report(
                 detail="Store location data unavailable",
             )
 
-        distance = haversine_distance(
-            request.latitude, request.longitude, store.lat, store.lon
-        )
+        distance = haversine_distance(request.latitude, request.longitude, store.lat, store.lon)
 
         if distance > GEOFENCE_RADIUS_METERS:
             logger.warning(
@@ -210,7 +206,9 @@ async def create_price_report(
         db.flush()  # Get ID without committing
 
         report_id = price_report.id
-        logger.info(f"Created price report {report_id} for product {product.id} at store {store.id}")
+        logger.info(
+            f"Created price report {report_id} for product {product.id} at store {store.id}"
+        )
 
         # Update rate limit counter
         if current_count:
@@ -291,9 +289,11 @@ async def get_flagged_reports(
         ).scalar()
 
         # Get paginated results
-        reports = db.execute(
-            query.order_by(desc(PriceReport.created_at)).limit(limit).offset(offset)
-        ).scalars().all()
+        reports = (
+            db.execute(query.order_by(desc(PriceReport.created_at)).limit(limit).offset(offset))
+            .scalars()
+            .all()
+        )
 
         # Build responses with reporter details
         report_responses = []
@@ -311,17 +311,22 @@ async def get_flagged_reports(
             ).scalar_one_or_none()
 
             # Calculate stats: 30-day mean and stdev
-            historical = db.execute(
-                select(PriceReport).where(
-                    and_(
-                        PriceReport.product_id == report.product_id,
-                        PriceReport.store_id == report.store_id,
-                        PriceReport.created_at >= datetime.now(timezone.utc).__sub__(
-                            __import__("datetime").timedelta(days=30)
-                        ),
+            historical = (
+                db.execute(
+                    select(PriceReport).where(
+                        and_(
+                            PriceReport.product_id == report.product_id,
+                            PriceReport.store_id == report.store_id,
+                            PriceReport.created_at
+                            >= datetime.now(timezone.utc).__sub__(
+                                __import__("datetime").timedelta(days=30)
+                            ),
+                        )
                     )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
 
             mean_price = (
                 sum(p.price_cents for p in historical) / len(historical)
@@ -411,9 +416,7 @@ async def upvote_report(
 
         # Increase reporter's reputation
         if report.reporter:
-            report.reporter.reputation_score = min(
-                5.0, report.reporter.reputation_score + 0.01
-            )
+            report.reporter.reputation_score = min(5.0, report.reporter.reputation_score + 0.01)
             logger.debug(
                 f"Increased reputation for {report.reporter.email}: {report.reporter.reputation_score:.2f}"
             )

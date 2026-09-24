@@ -39,6 +39,7 @@ router = APIRouter(tags=["Watchlist"])
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
+
 def _require_profile(user: User):
     if not user.profile:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "User profile not found")
@@ -101,34 +102,45 @@ def _enrich_item(item: UserWatchlist, db: Session) -> WatchlistItemResponse:
 
 # ── Lists ─────────────────────────────────────────────────────────────────────
 
+
 @router.get("/", response_model=list[WatchlistListResponse])
 def list_watchlist_lists(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     profile = _require_profile(current_user)
-    lists = db.execute(
-        select(WatchlistList)
-        .where(WatchlistList.user_id == profile.id)
-        .order_by(WatchlistList.created_at)
-    ).scalars().all()
+    lists = (
+        db.execute(
+            select(WatchlistList)
+            .where(WatchlistList.user_id == profile.id)
+            .order_by(WatchlistList.created_at)
+        )
+        .scalars()
+        .all()
+    )
 
     result = []
     for lst in lists:
-        count = db.execute(
-            select(UserWatchlist).where(
-                UserWatchlist.list_id == lst.id,
-                UserWatchlist.is_active.is_(True),
+        count = (
+            db.execute(
+                select(UserWatchlist).where(
+                    UserWatchlist.list_id == lst.id,
+                    UserWatchlist.is_active.is_(True),
+                )
             )
-        ).scalars().all()
-        result.append(WatchlistListResponse(
-            id=lst.id,
-            user_id=lst.user_id,
-            name=lst.name,
-            emoji=lst.emoji,
-            item_count=len(count),
-            created_at=lst.created_at,
-        ))
+            .scalars()
+            .all()
+        )
+        result.append(
+            WatchlistListResponse(
+                id=lst.id,
+                user_id=lst.user_id,
+                name=lst.name,
+                emoji=lst.emoji,
+                item_count=len(count),
+                created_at=lst.created_at,
+            )
+        )
     return result
 
 
@@ -144,8 +156,12 @@ def create_watchlist_list(
     db.commit()
     db.refresh(lst)
     return WatchlistListResponse(
-        id=lst.id, user_id=lst.user_id, name=lst.name,
-        emoji=lst.emoji, item_count=0, created_at=lst.created_at,
+        id=lst.id,
+        user_id=lst.user_id,
+        name=lst.name,
+        emoji=lst.emoji,
+        item_count=0,
+        created_at=lst.created_at,
     )
 
 
@@ -163,6 +179,7 @@ def delete_watchlist_list(
 
 # ── Items ─────────────────────────────────────────────────────────────────────
 
+
 @router.get("/{list_id}/items", response_model=list[WatchlistItemResponse])
 def list_items(
     list_id: UUID,
@@ -171,12 +188,18 @@ def list_items(
 ):
     profile = _require_profile(current_user)
     _require_list(list_id, profile.id, db)
-    items = db.execute(
-        select(UserWatchlist).where(
-            UserWatchlist.list_id == list_id,
-            UserWatchlist.is_active.is_(True),
-        ).order_by(desc(UserWatchlist.created_at))
-    ).scalars().all()
+    items = (
+        db.execute(
+            select(UserWatchlist)
+            .where(
+                UserWatchlist.list_id == list_id,
+                UserWatchlist.is_active.is_(True),
+            )
+            .order_by(desc(UserWatchlist.created_at))
+        )
+        .scalars()
+        .all()
+    )
     return [_enrich_item(i, db) for i in items]
 
 
@@ -274,6 +297,7 @@ def update_item(
 
 # ── Product status (for Save-to-list popover) ─────────────────────────────────
 
+
 @router.get("/product/{product_id}/status", response_model=list[ProductWatchlistStatus])
 def product_watchlist_status(
     product_id: UUID,
@@ -282,11 +306,15 @@ def product_watchlist_status(
 ):
     """Return all the user's lists, flagging which ones contain this product."""
     profile = _require_profile(current_user)
-    lists = db.execute(
-        select(WatchlistList)
-        .where(WatchlistList.user_id == profile.id)
-        .order_by(WatchlistList.created_at)
-    ).scalars().all()
+    lists = (
+        db.execute(
+            select(WatchlistList)
+            .where(WatchlistList.user_id == profile.id)
+            .order_by(WatchlistList.created_at)
+        )
+        .scalars()
+        .all()
+    )
 
     result = []
     for lst in lists:
@@ -297,11 +325,13 @@ def product_watchlist_status(
                 UserWatchlist.is_active.is_(True),
             )
         ).scalar_one_or_none()
-        result.append(ProductWatchlistStatus(
-            list_id=lst.id,
-            list_name=lst.name,
-            list_emoji=lst.emoji,
-            in_list=item is not None,
-            item_id=item.id if item else None,
-        ))
+        result.append(
+            ProductWatchlistStatus(
+                list_id=lst.id,
+                list_name=lst.name,
+                list_emoji=lst.emoji,
+                in_list=item is not None,
+                item_id=item.id if item else None,
+            )
+        )
     return result

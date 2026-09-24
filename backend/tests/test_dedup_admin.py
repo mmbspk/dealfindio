@@ -140,21 +140,34 @@ class TestDecideCandidateApprove:
 
     def _seed_pair(self, session):
         store = Store(id=uuid4(), chain="coles", name="Coles Test")
-        keep = Product(id=uuid4(), name="Coca-Cola 1.25L", brand="Coca-Cola",
-                       external_source="catalog_woolworths")
-        drop = Product(id=uuid4(), name="Coca Cola 1.25L", brand="Coca-Cola",
-                       external_source="catalog_coles")
+        keep = Product(
+            id=uuid4(),
+            name="Coca-Cola 1.25L",
+            brand="Coca-Cola",
+            external_source="catalog_woolworths",
+        )
+        drop = Product(
+            id=uuid4(), name="Coca Cola 1.25L", brand="Coca-Cola", external_source="catalog_coles"
+        )
         session.add_all([store, keep, drop])
         session.flush()
 
         # Price report on the DROPPED product — must be re-pointed to keep on merge.
         pr = PriceReport(
-            id=uuid4(), product_id=drop.id, store_id=store.id,
-            price_cents=250, source="catalog_coles", valid_from=datetime.now(timezone.utc),
+            id=uuid4(),
+            product_id=drop.id,
+            store_id=store.id,
+            price_cents=250,
+            source="catalog_coles",
+            valid_from=datetime.now(timezone.utc),
         )
         candidate = ProductMatchCandidate(
-            id=uuid4(), product_a_id=keep.id, product_b_id=drop.id,
-            score=96.0, status="pending", proposed_by="auto",
+            id=uuid4(),
+            product_a_id=keep.id,
+            product_b_id=drop.id,
+            score=96.0,
+            status="pending",
+            proposed_by="auto",
         )
         session.add_all([pr, candidate])
         session.commit()
@@ -167,9 +180,7 @@ class TestDecideCandidateApprove:
         from sqlalchemy import select
 
         keep, drop, candidate, pr = self._seed_pair(test_db_session)
-        keep_id, drop_id, cand_id, pr_id = (
-            str(keep.id), str(drop.id), str(candidate.id), pr.id
-        )
+        keep_id, drop_id, cand_id, pr_id = (str(keep.id), str(drop.id), str(candidate.id), pr.id)
 
         resp = admin_client.post(
             f"/api/v1/admin/dedup/candidates/{cand_id}/decide",
@@ -186,12 +197,18 @@ class TestDecideCandidateApprove:
         # Merge applied: dropped product gone, its price report re-pointed to keep.
         # Query by captured UUIDs (the ORM instances are now stale/deleted).
         test_db_session.expire_all()
-        assert test_db_session.execute(
-            select(Product).where(Product.id == _uuid.UUID(drop_id))
-        ).scalar_one_or_none() is None
-        assert test_db_session.execute(
-            select(Product).where(Product.id == _uuid.UUID(keep_id))
-        ).scalar_one_or_none() is not None
+        assert (
+            test_db_session.execute(
+                select(Product).where(Product.id == _uuid.UUID(drop_id))
+            ).scalar_one_or_none()
+            is None
+        )
+        assert (
+            test_db_session.execute(
+                select(Product).where(Product.id == _uuid.UUID(keep_id))
+            ).scalar_one_or_none()
+            is not None
+        )
         moved = test_db_session.execute(
             select(PriceReport).where(PriceReport.id == pr_id)
         ).scalar_one()

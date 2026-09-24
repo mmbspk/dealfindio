@@ -39,9 +39,7 @@ class TestWatchlistCrud:
         return resp.json()
 
     @pytest.mark.integration
-    def test_create_list_add_update_delete_item(
-        self, authed_client, sample_product: Product
-    ):
+    def test_create_list_add_update_delete_item(self, authed_client, sample_product: Product):
         # Create a list.
         lst = self._make_list(authed_client)
         list_id = lst["id"]
@@ -77,17 +75,13 @@ class TestWatchlistCrud:
         assert resp.json()["target_price_cents"] == 300
 
         # Soft-delete the item -> no longer in active items.
-        resp = authed_client.delete(
-            f"/api/v1/watchlist/{list_id}/items/{sample_product.id}"
-        )
+        resp = authed_client.delete(f"/api/v1/watchlist/{list_id}/items/{sample_product.id}")
         assert resp.status_code == 204
         resp = authed_client.get(f"/api/v1/watchlist/{list_id}/items")
         assert all(i["product_id"] != str(sample_product.id) for i in resp.json())
 
     @pytest.mark.integration
-    def test_add_item_without_target_succeeds(
-        self, authed_client, sample_product: Product
-    ):
+    def test_add_item_without_target_succeeds(self, authed_client, sample_product: Product):
         # target_price_cents is optional in the item schema — an item can watch a
         # product for any price drop / prediction without a hard target.
         list_id = self._make_list(authed_client)["id"]
@@ -116,9 +110,7 @@ class TestWatchlistCrud:
         assert resp.status_code == 404
 
     @pytest.mark.integration
-    def test_duplicate_product_is_idempotent(
-        self, authed_client, sample_product: Product
-    ):
+    def test_duplicate_product_is_idempotent(self, authed_client, sample_product: Product):
         # Adding the same product to a list twice returns the same item (the
         # endpoint reactivates/returns the existing row rather than erroring).
         list_id = self._make_list(authed_client)["id"]
@@ -179,9 +171,7 @@ class TestAuthedReceiptUpload:
             ):
                 resp = authed_client.post(
                     "/api/v1/receipts/upload",
-                    files={
-                        "file": ("r.jpg", io.BytesIO(b"\xff\xd8\xffdata"), "image/jpeg")
-                    },
+                    files={"file": ("r.jpg", io.BytesIO(b"\xff\xd8\xffdata"), "image/jpeg")},
                     data={"store_id": str(sample_store.id)},
                 )
         finally:
@@ -194,9 +184,7 @@ class TestAuthedReceiptUpload:
         assert data["created_reports"][0]["product_name"] == sample_product.name
 
     @pytest.mark.integration
-    def test_upload_unmatched_line_item(
-        self, authed_client, sample_store: Store
-    ):
+    def test_upload_unmatched_line_item(self, authed_client, sample_store: Store):
         from app.deps import get_anthropic_client
         from app.main import app
         from app.services.receipt_parser import ParsedProduct, ParsedReceipt
@@ -217,9 +205,7 @@ class TestAuthedReceiptUpload:
             ):
                 resp = authed_client.post(
                     "/api/v1/receipts/upload",
-                    files={
-                        "file": ("r.jpg", io.BytesIO(b"\xff\xd8\xffdata"), "image/jpeg")
-                    },
+                    files={"file": ("r.jpg", io.BytesIO(b"\xff\xd8\xffdata"), "image/jpeg")},
                     data={"store_id": str(sample_store.id)},
                 )
         finally:

@@ -32,6 +32,7 @@ def get_model() -> "SentenceTransformer":
         with _model_lock:
             if _model is None:
                 from sentence_transformers import SentenceTransformer
+
                 _model = SentenceTransformer(_MODEL_NAME)
     return _model
 

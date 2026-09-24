@@ -137,9 +137,7 @@ async def upload_receipt(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"Invalid store_id: {store_id}",
             )
-        store = db.execute(
-            select(Store).where(Store.id == store_uuid)
-        ).scalar_one_or_none()
+        store = db.execute(select(Store).where(Store.id == store_uuid)).scalar_one_or_none()
         if not store:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -149,9 +147,7 @@ async def upload_receipt(
     # --- parse the receipt image ---
     parser = ReceiptParser(anthropic_client)
     try:
-        parsed: ParsedReceipt = await parser.parse_receipt_image(
-            image_bytes, file.content_type
-        )
+        parsed: ParsedReceipt = await parser.parse_receipt_image(image_bytes, file.content_type)
     except ReceiptParseError as exc:
         logger.warning("Receipt parse failed: %s", exc)
         raise HTTPException(

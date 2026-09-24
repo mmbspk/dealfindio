@@ -88,6 +88,7 @@ def _send_email(to: str, subject: str, html: str) -> str | None:
 
 # ─── HTML template helpers ────────────────────────────────────────────────────
 
+
 def _html_wrapper(content: str, unsubscribe_url: str) -> str:
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -138,10 +139,13 @@ def _price_badge(price: float, was_price: float | None) -> str:
     was = ""
     if was_price:
         was = f'<span style="font-size:16px;color:#9ca3af;text-decoration:line-through;margin-left:8px;">${was_price:.2f}</span>'
-    return f'<span style="font-size:28px;font-weight:800;color:#059669;">${price:.2f}</span>{was}{pct}'
+    return (
+        f'<span style="font-size:28px;font-weight:800;color:#059669;">${price:.2f}</span>{was}{pct}'
+    )
 
 
 # ─── Public API ───────────────────────────────────────────────────────────────
+
 
 def send_price_alert_email(
     to: str,
@@ -207,7 +211,11 @@ def send_weekly_digest_email(
 
     rows = ""
     for d in deals[:5]:
-        pct = f' &nbsp;<span style="background:#fee2e2;color:#dc2626;font-size:11px;font-weight:700;padding:2px 6px;border-radius:10px;">-{d["pct_off"]}%</span>' if d.get("pct_off") else ""
+        pct = (
+            f' &nbsp;<span style="background:#fee2e2;color:#dc2626;font-size:11px;font-weight:700;padding:2px 6px;border-radius:10px;">-{d["pct_off"]}%</span>'
+            if d.get("pct_off")
+            else ""
+        )
         rows += f"""
         <tr>
           <td style="padding:12px 0;border-bottom:1px solid #f3f4f6;">

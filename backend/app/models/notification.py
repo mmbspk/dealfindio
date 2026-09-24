@@ -39,9 +39,7 @@ class Notification(Base):
 
     __tablename__ = "notifications_log"
 
-    user_id: Mapped[UUID] = mapped_column(
-        ForeignKey("user_profiles.id", ondelete="CASCADE")
-    )
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("user_profiles.id", ondelete="CASCADE"))
     watchlist_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("user_watchlist.id"), nullable=True
     )
@@ -54,9 +52,7 @@ class Notification(Base):
     fcm_message_id: Mapped[str | None] = mapped_column(String(500))
     email_message_id: Mapped[str | None] = mapped_column(String(500))
     channel: Mapped[str] = mapped_column(String(20), default="push")  # push | email | in_app
-    sent_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     opened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     is_delivered: Mapped[bool] = mapped_column(default=False)
 
@@ -76,4 +72,6 @@ class Notification(Base):
     __table_args__ = (Index("idx_notif_user", "user_id", "sent_at"),)
 
     def __repr__(self) -> str:
-        return f"<Notification user_id={self.user_id} trigger_type={self.trigger_type} id={self.id}>"
+        return (
+            f"<Notification user_id={self.user_id} trigger_type={self.trigger_type} id={self.id}>"
+        )

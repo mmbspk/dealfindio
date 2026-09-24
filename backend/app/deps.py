@@ -109,6 +109,7 @@ def init_database(database_url: str, pool_size: int, echo: bool):
             try:
                 from sqlalchemy.ext.asyncio import async_sessionmaker as _asm
                 from sqlalchemy.ext.asyncio import create_async_engine as _cae
+
                 _async_engine = _cae(
                     async_url,
                     pool_size=pool_size,
@@ -157,7 +158,9 @@ def init_redis(redis_url: str, socket_timeout: int):
                 1: 1,  # TCP_KEEPIDLE
                 2: 1,  # TCP_KEEPINTVL
                 3: 3,  # TCP_KEEPCNT
-            } if hasattr(Redis, "socket_keepalive_options") else None,
+            }
+            if hasattr(Redis, "socket_keepalive_options")
+            else None,
             decode_responses=True,
         )
 
@@ -372,9 +375,9 @@ async def get_current_user(
         from app.models.user import User, UserProfile
 
         # Query UserProfile by firebase_uid
-        user_profile = db.query(UserProfile).filter(
-            UserProfile.firebase_uid == firebase_uid
-        ).first()
+        user_profile = (
+            db.query(UserProfile).filter(UserProfile.firebase_uid == firebase_uid).first()
+        )
 
         if not user_profile:
             # First login: auto-create a UserProfile row from Firebase claims
@@ -427,6 +430,7 @@ async def verify_token_param(
     auth_header = authorization or (f"Bearer {token}" if token else None)
     if not auth_header:
         from app.deps import InvalidTokenException
+
         raise InvalidTokenException("Missing authorization header or token param")
     return await verify_firebase_token(auth_header)
 
@@ -439,9 +443,7 @@ async def require_admin_sse(
     from app.models.user import User, UserProfile
 
     firebase_uid = token_data.get("firebase_uid")
-    user_profile = db.query(UserProfile).filter(
-        UserProfile.firebase_uid == firebase_uid
-    ).first()
+    user_profile = db.query(UserProfile).filter(UserProfile.firebase_uid == firebase_uid).first()
     if not user_profile:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
     user = User(

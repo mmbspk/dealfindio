@@ -126,17 +126,13 @@ class TestComputeConfidence:
         outlier = compute_confidence(MAX_REPUTATION, is_outlier=True)
         assert outlier.confidence < clean.confidence
         # Outlier zeroes the 30% outlier weight.
-        assert outlier.confidence == pytest.approx(
-            clean.confidence - CONFIDENCE_WEIGHTS["outlier"]
-        )
+        assert outlier.confidence == pytest.approx(clean.confidence - CONFIDENCE_WEIGHTS["outlier"])
 
     @pytest.mark.unit
     def test_duplicate_reduces_confidence(self):
         clean = compute_confidence(MAX_REPUTATION, is_duplicate=False)
         dup = compute_confidence(MAX_REPUTATION, is_duplicate=True)
-        assert dup.confidence == pytest.approx(
-            clean.confidence - CONFIDENCE_WEIGHTS["duplicate"]
-        )
+        assert dup.confidence == pytest.approx(clean.confidence - CONFIDENCE_WEIGHTS["duplicate"])
 
     @pytest.mark.unit
     def test_new_user_reputation_capped(self):
@@ -151,9 +147,7 @@ class TestComputeConfidence:
 
     @pytest.mark.unit
     def test_confidence_never_below_zero(self):
-        result = compute_confidence(
-            0.0, is_outlier=True, is_duplicate=True, is_new_user=True
-        )
+        result = compute_confidence(0.0, is_outlier=True, is_duplicate=True, is_new_user=True)
         assert result.confidence >= 0.0
 
     @pytest.mark.unit

@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 class ScraperError(Exception):
     """Base exception for scraper errors."""
+
     pass
 
 
@@ -39,6 +40,7 @@ class ScrapedProduct:
         category: Source category/department name (optional)
         brand: Brand/manufacturer name (optional)
     """
+
     product_name: str
     price_cents: int
     was_price_cents: Optional[int] = None

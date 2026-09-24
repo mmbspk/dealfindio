@@ -153,9 +153,7 @@ class DrakesScraper(Scraper):
             List of raw HTML strings, one per page.
         """
         pages: list[str] = []
-        async with httpx.AsyncClient(
-            follow_redirects=True, timeout=self.TIMEOUT_S
-        ) as client:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=self.TIMEOUT_S) as client:
             # Bootstrap session / cookies
             await client.get(
                 _BASE_URL,
@@ -180,9 +178,7 @@ class DrakesScraper(Scraper):
         wait=wait_exponential(multiplier=2, min=2, max=30),
         reraise=True,
     )
-    async def _fetch_page(
-        self, client: httpx.AsyncClient, page: int
-    ) -> Optional[str]:
+    async def _fetch_page(self, client: httpx.AsyncClient, page: int) -> Optional[str]:
         params = {
             "page": page,
             "q[]": "special:1",

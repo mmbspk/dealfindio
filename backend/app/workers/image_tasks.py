@@ -36,6 +36,7 @@ VALID_CHAINS = {"coles", "woolworths", "aldi", "iga", "dan_murphys"}
 
 class EnrichResult(TypedDict):
     """Result dictionary for the image enrichment task."""
+
     chain: Optional[str]
     candidates: int
     enriched: int
@@ -100,9 +101,7 @@ def enrich_product_images(
         raise ValueError(f"Invalid chain: {chain}. Must be one of {VALID_CHAINS}")
 
     run_limit = limit or settings.OFT_ENRICH_LIMIT_PER_RUN
-    logger.info(
-        "Starting image enrichment (chain=%s, limit=%d)", chain or "all", run_limit
-    )
+    logger.info("Starting image enrichment (chain=%s, limit=%d)", chain or "all", run_limit)
 
     session = get_db_session()
     enriched = 0
@@ -111,9 +110,7 @@ def enrich_product_images(
         products = _find_products_missing_images(session, chain, run_limit)
         candidates = len(products)
         if not candidates:
-            return EnrichResult(
-                chain=chain, candidates=0, enriched=0, skipped=0, status="success"
-            )
+            return EnrichResult(chain=chain, candidates=0, enriched=0, skipped=0, status="success")
 
         # Snapshot the plain (id, name) tuples so the async loop doesn't hold
         # ORM instances across await points / session state changes.

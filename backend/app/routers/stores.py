@@ -132,9 +132,7 @@ async def get_store(
         HTTPException: 404 if store not found
     """
     try:
-        store = db.execute(
-            select(Store).where(Store.id == store_id)
-        ).scalar_one_or_none()
+        store = db.execute(select(Store).where(Store.id == store_id)).scalar_one_or_none()
 
         if not store:
             raise HTTPException(
@@ -143,17 +141,18 @@ async def get_store(
             )
 
         # Count unique products with prices at this store
-        product_count = db.execute(
-            select(func.count(func.distinct(PriceReport.product_id))).where(
-                PriceReport.store_id == store_id
-            )
-        ).scalar() or 0
+        product_count = (
+            db.execute(
+                select(func.count(func.distinct(PriceReport.product_id))).where(
+                    PriceReport.store_id == store_id
+                )
+            ).scalar()
+            or 0
+        )
 
         # Find last price update
         last_update = db.execute(
-            select(func.max(PriceReport.created_at)).where(
-                PriceReport.store_id == store_id
-            )
+            select(func.max(PriceReport.created_at)).where(PriceReport.store_id == store_id)
         ).scalar()
 
         return StoreDetailResponse(
@@ -208,9 +207,7 @@ async def get_store_deals(
     """
     try:
         # Verify store exists
-        store = db.execute(
-            select(Store).where(Store.id == store_id)
-        ).scalar_one_or_none()
+        store = db.execute(select(Store).where(Store.id == store_id)).scalar_one_or_none()
 
         if not store:
             raise HTTPException(
@@ -243,9 +240,7 @@ async def get_store_deals(
                 product_name=product.name,
                 price_aud=price_report.price_cents / 100,
                 was_price_aud=(
-                    price_report.was_price_cents / 100
-                    if price_report.was_price_cents
-                    else None
+                    price_report.was_price_cents / 100 if price_report.was_price_cents else None
                 ),
                 discount_pct=price_report.sale_pct_off,
             )

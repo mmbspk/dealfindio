@@ -98,9 +98,7 @@ class OFTImageEnricher:
         self._timeout = self._settings.OFT_SEARCH_TIMEOUT_S
         self._user_agent = self._settings.OPEN_FOOD_FACTS_USER_AGENT
 
-    async def enrich(
-        self, product_name: str, client: httpx.AsyncClient
-    ) -> Optional[EnrichedImage]:
+    async def enrich(self, product_name: str, client: httpx.AsyncClient) -> Optional[EnrichedImage]:
         """Find and download an image for ``product_name``.
 
         Returns ``None`` (never raises) when no image is found or a network
@@ -130,9 +128,7 @@ class OFTImageEnricher:
             off_code=match.get("code"),
         )
 
-    async def _search(
-        self, name: str, client: httpx.AsyncClient
-    ) -> Optional[dict]:
+    async def _search(self, name: str, client: httpx.AsyncClient) -> Optional[dict]:
         """Return the first OFF product for ``name`` that has an image."""
         await self._rate_limiter.wait()
         params = {

@@ -128,13 +128,7 @@ async def scraper_status(db: Session = Depends(get_db)) -> Dict[str, Any]:
     """
     try:
         # Query last 4 scraper runs
-        last_runs = (
-            await db.execute(
-                desc(FlyScrapeRun.run_started_at)
-            )
-            .scalars()
-            .all()
-        )
+        last_runs = await db.execute(desc(FlyScrapeRun.run_started_at)).scalars().all()
 
         # Convert to list with limit
         runs_list = last_runs[:4] if last_runs else []
@@ -146,12 +140,8 @@ async def scraper_status(db: Session = Depends(get_db)) -> Dict[str, Any]:
                 {
                     "chain": r.chain,
                     "status": r.status,
-                    "started_at": r.run_started_at.isoformat()
-                    if r.run_started_at
-                    else None,
-                    "finished_at": r.run_finished_at.isoformat()
-                    if r.run_finished_at
-                    else None,
+                    "started_at": r.run_started_at.isoformat() if r.run_started_at else None,
+                    "finished_at": r.run_finished_at.isoformat() if r.run_finished_at else None,
                     "products_found": r.products_found,
                     "products_new": r.products_new,
                     "products_updated": r.products_updated,
@@ -239,9 +229,7 @@ async def redis_status(redis=Depends(get_redis)) -> Dict[str, Any]:
             "uptime_seconds": info.get("uptime_in_seconds", 0),
             "connected_clients": info.get("connected_clients", 0),
             "used_memory_mb": round(info.get("used_memory", 0) / (1024 * 1024), 2),
-            "total_system_memory_mb": round(
-                info.get("total_system_memory", 0) / (1024 * 1024), 2
-            ),
+            "total_system_memory_mb": round(info.get("total_system_memory", 0) / (1024 * 1024), 2),
             "eviction_policy": info.get("maxmemory_policy", "unknown"),
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
@@ -366,7 +354,9 @@ async def metrics_summary(db: Session = Depends(get_db)) -> Dict[str, Any]:
         # Last scrape run
         try:
             result = await db.execute(
-                text("SELECT run_started_at FROM fly_scrape_run ORDER BY run_started_at DESC LIMIT 1")
+                text(
+                    "SELECT run_started_at FROM fly_scrape_run ORDER BY run_started_at DESC LIMIT 1"
+                )
             )
             last_scrape = result.scalar()
             if last_scrape:

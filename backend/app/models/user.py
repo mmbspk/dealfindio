@@ -99,9 +99,7 @@ class User:
         profile: Associated UserProfile from database (optional)
     """
 
-    def __init__(
-        self, firebase_uid: str, email: str, user_profile: UserProfile | None = None
-    ):
+    def __init__(self, firebase_uid: str, email: str, user_profile: UserProfile | None = None):
         """
         Initialize User DTO.
 

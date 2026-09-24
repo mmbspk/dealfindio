@@ -36,10 +36,7 @@ def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     dlat = math.radians(lat2 - lat1)
     dlon = math.radians(lon2 - lon1)
 
-    a = (
-        math.sin(dlat / 2) ** 2
-        + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(dlon / 2) ** 2
-    )
+    a = math.sin(dlat / 2) ** 2 + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(dlon / 2) ** 2
     # Guard against tiny negative/over-one values from float error.
     a = min(1.0, max(0.0, a))
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))

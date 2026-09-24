@@ -30,6 +30,7 @@ class _StubSession:
 
 # ── get_runtime_typed: coercion ───────────────────────────────────────────────
 
+
 class TestGetRuntimeTyped:
     def test_bool_true_variants(self):
         for raw in ("true", "1", "yes", "on", "TRUE", "  True "):
@@ -68,6 +69,7 @@ class TestGetRuntimeTyped:
 
 # ── validate_value ────────────────────────────────────────────────────────────
 
+
 class TestValidateValue:
     def test_bool_normalizes(self):
         assert config_store.validate_value("AI_DEDUP_ENABLED", "yes") == "true"
@@ -103,5 +105,8 @@ class TestValidateValue:
 
     def test_plain_string_passthrough(self):
         # Unknown / plain-string keys are returned unchanged.
-        assert config_store.validate_value("ANTHROPIC_BASE_URL", "https://proxy.example.com") == "https://proxy.example.com"
+        assert (
+            config_store.validate_value("ANTHROPIC_BASE_URL", "https://proxy.example.com")
+            == "https://proxy.example.com"
+        )
         assert config_store.validate_value("EMAIL_FROM_NAME", "DealFindio") == "DealFindio"

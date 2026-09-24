@@ -92,6 +92,7 @@ def send_expo_push_sync(
 ) -> tuple[bool, str | None]:
     """Synchronous wrapper for use in Celery tasks."""
     import asyncio
+
     try:
         loop = asyncio.get_event_loop()
         if loop.is_closed():

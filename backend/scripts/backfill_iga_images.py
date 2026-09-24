@@ -52,7 +52,7 @@ async def _get_nav_categories(client: httpx.AsyncClient, store_id: str) -> list[
     for top in data:
         if not isinstance(top, dict):
             continue
-        for nav in (top.get("children") or []):
+        for nav in top.get("children") or []:
             if not isinstance(nav, dict):
                 continue
             cat_id = str(
@@ -112,9 +112,7 @@ async def _fetch_all_images(
             skip += len(items)
             if skip >= total or not items:
                 break
-        log.info(
-            "  → %d images collected so far (category done: %s)", len(images), cat["name"]
-        )
+        log.info("  → %d images collected so far (category done: %s)", len(images), cat["name"])
     return images
 
 
@@ -140,9 +138,7 @@ def _apply_backfill(session: Session, images: dict[str, str], dry_run: bool) -> 
         log.info("[dry-run] Would update %d rows.", len(to_update))
         return len(to_update)
 
-    batch: list[dict] = [
-        {"sku": sku, "url": url} for sku, url in to_update.items()
-    ]
+    batch: list[dict] = [{"sku": sku, "url": url} for sku, url in to_update.items()]
     if batch:
         session.execute(
             text(

@@ -41,12 +41,14 @@ def _set_progress(redis_client, task_id: str, pct: int, stage: str, message: str
     except Exception:
         pass  # never let progress reporting crash the task
 
+
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
 class ScrapResult(TypedDict):
     """Result dictionary for scraper tasks."""
+
     products_found: int
     products_new: int
     status: str
@@ -58,6 +60,7 @@ class ScrapResult(TypedDict):
 def get_db_session():
     """Get a synchronous database session for use in Celery tasks."""
     from app.deps import _SessionLocal
+
     if not _SessionLocal:
         raise RuntimeError("Database not initialized")
     return _SessionLocal()
@@ -66,6 +69,7 @@ def get_db_session():
 def get_async_session():
     """Get async session context manager for ingest operations."""
     from app.deps import _AsyncSessionLocal
+
     if not _AsyncSessionLocal:
         raise RuntimeError("Async DB session not initialized")
     return _AsyncSessionLocal()
@@ -74,6 +78,7 @@ def get_async_session():
 def get_redis():
     """Get Redis client for use in Celery tasks."""
     from app.deps import _redis_pool
+
     if not _redis_pool:
         raise RuntimeError("Redis not initialized")
     return _redis_pool
@@ -81,8 +86,8 @@ def get_redis():
 
 @celery_app.task(
     bind=True,
-    name='app.workers.scraper_tasks.run_flyer_scrape',
-    queue='scraper',
+    name="app.workers.scraper_tasks.run_flyer_scrape",
+    queue="scraper",
     base=CallbackTask,
     time_limit=3600,
     soft_time_limit=3000,
@@ -140,7 +145,7 @@ def run_flyer_scrape(self, chain: str) -> ScrapResult:
     try:
         # Validate chain parameter — only ALDI remains in the flyer pipeline.
         # Coles, Woolworths, IGA, and Drakes now use run_catalog_crawl(mode="specials").
-        valid_chains = {'aldi'}
+        valid_chains = {"aldi"}
         if chain not in valid_chains:
             raise ValueError(f"Invalid chain: {chain}. Must be one of {valid_chains}")
 
@@ -151,20 +156,16 @@ def run_flyer_scrape(self, chain: str) -> ScrapResult:
         _set_progress(redis, task_id, 5, "starting", f"Initialising {chain} scraper…")
 
         # Guard against re-delivery duplicates (same logic as catalog_tasks).
-        existing_run = (
-            session.query(FlyScrapeRun)
-            .filter_by(celery_task_id=task_id)
-            .first()
-        )
+        existing_run = session.query(FlyScrapeRun).filter_by(celery_task_id=task_id).first()
         if existing_run:
             scrape_run = existing_run
-            scrape_run.status = 'running'
+            scrape_run.status = "running"
             session.commit()
         else:
             scrape_run = FlyScrapeRun(
                 id=uuid4(),
                 chain=chain,
-                status='running',
+                status="running",
                 celery_task_id=task_id,
                 run_started_at=datetime.now(timezone.utc),
             )
@@ -175,7 +176,7 @@ def run_flyer_scrape(self, chain: str) -> ScrapResult:
 
         # Only ALDI uses the flyer pipeline.
         scraper_map = {
-            'aldi': ALDIScraper,
+            "aldi": ALDIScraper,
         }
 
         ScraperClass = scraper_map.get(chain)
@@ -197,12 +198,17 @@ def run_flyer_scrape(self, chain: str) -> ScrapResult:
         _set_progress(redis, task_id, 15, "scraping", f"Fetching products from {chain}…")
         scraper_result = asyncio.run(scraper.run())
 
-        products_found = scraper_result.get('products_found', 0)
-        scraped_products = scraper_result.get('products', [])
-        scraper_errors = scraper_result.get('errors', [])
+        products_found = scraper_result.get("products_found", 0)
+        scraped_products = scraper_result.get("products", [])
+        scraper_errors = scraper_result.get("errors", [])
 
-        _set_progress(redis, task_id, 50, "ingesting",
-                      f"Scraped {products_found} products — ingesting into database…")
+        _set_progress(
+            redis,
+            task_id,
+            50,
+            "ingesting",
+            f"Scraped {products_found} products — ingesting into database…",
+        )
 
         # Ingest each scraped product using an async session (ingest_scraped_price uses AsyncSession)
         products_new = 0
@@ -247,8 +253,13 @@ def run_flyer_scrape(self, chain: str) -> ScrapResult:
 
                     if total > 0 and (i % 10 == 0 or i == total - 1):
                         ingest_pct = 50 + int(45 * (i + 1) / total)
-                        _set_progress(redis, task_id, ingest_pct, "ingesting",
-                                      f"Ingesting {i + 1}/{total} — {products_new} new, {duplicates} duplicates")
+                        _set_progress(
+                            redis,
+                            task_id,
+                            ingest_pct,
+                            "ingesting",
+                            f"Ingesting {i + 1}/{total} — {products_new} new, {duplicates} duplicates",
+                        )
                 await async_session.commit()
 
         asyncio.run(_ingest_all())
@@ -266,7 +277,7 @@ def run_flyer_scrape(self, chain: str) -> ScrapResult:
         )
 
         # Update scrape run record
-        scrape_run.status = 'completed' if not all_errors else 'completed_with_errors'
+        scrape_run.status = "completed" if not all_errors else "completed_with_errors"
         scrape_run.products_found = products_found
         scrape_run.products_new = products_new
         scrape_run.run_finished_at = datetime.now(timezone.utc)
@@ -289,9 +300,7 @@ def run_flyer_scrape(self, chain: str) -> ScrapResult:
             try:
                 from app.workers.image_tasks import enrich_product_images
 
-                enrich_product_images.apply_async(
-                    args=[chain], queue="image", countdown=60
-                )
+                enrich_product_images.apply_async(args=[chain], queue="image", countdown=60)
                 logger.info("Queued image enrichment for %s", chain)
             except Exception as enqueue_err:
                 logger.warning("Failed to queue image enrichment: %s", enqueue_err)
@@ -311,9 +320,12 @@ def run_flyer_scrape(self, chain: str) -> ScrapResult:
             if settings.SLACK_WEBHOOK_URL:
                 try:
                     import requests
+
                     requests.post(
                         settings.SLACK_WEBHOOK_URL,
-                        json={"text": f"Scraper {chain} completed with errors: {', '.join(all_errors[:3])}"},
+                        json={
+                            "text": f"Scraper {chain} completed with errors: {', '.join(all_errors[:3])}"
+                        },
                         timeout=5,
                     )
                 except Exception as e:
@@ -325,12 +337,17 @@ def run_flyer_scrape(self, chain: str) -> ScrapResult:
         logger.info(f"Scrape cancelled for {chain}: {e}")
         cancel_msg = f"Cancelled after ingesting {products_new} new / {products_found} found"
         if redis:
-            _set_progress(redis, task_id, 100, "cancelled",
-                          f"Cancelled — {products_found} found, {products_new} new so far")
+            _set_progress(
+                redis,
+                task_id,
+                100,
+                "cancelled",
+                f"Cancelled — {products_found} found, {products_new} new so far",
+            )
             redis.delete(f"scrape_active:{chain}")
             redis.delete(f"scrape_cancel:{task_id}")
         if scrape_run and session:
-            scrape_run.status = 'cancelled'
+            scrape_run.status = "cancelled"
             scrape_run.run_finished_at = datetime.now(timezone.utc)
             scrape_run.products_found = products_found
             scrape_run.products_new = products_new
@@ -341,9 +358,12 @@ def run_flyer_scrape(self, chain: str) -> ScrapResult:
             except Exception:
                 pass
         return {
-            "products_found": products_found, "products_new": products_new,
-            "status": "cancelled", "chain": chain,
-            "duplicates": duplicates, "errors": [cancel_msg],
+            "products_found": products_found,
+            "products_new": products_new,
+            "status": "cancelled",
+            "chain": chain,
+            "duplicates": duplicates,
+            "errors": [cancel_msg],
         }
 
     except ScraperError as e:
@@ -352,7 +372,7 @@ def run_flyer_scrape(self, chain: str) -> ScrapResult:
             _set_progress(redis, task_id, 100, "failed", f"Scraper error: {e}")
             redis.delete(f"scrape_active:{chain}")
         if scrape_run:
-            scrape_run.status = 'failed'
+            scrape_run.status = "failed"
             scrape_run.errors_json = {"error": str(e)}
             scrape_run.run_finished_at = datetime.now(timezone.utc)
             try:
@@ -369,7 +389,7 @@ def run_flyer_scrape(self, chain: str) -> ScrapResult:
             _set_progress(redis, task_id, 100, "failed", f"Unexpected error: {e}")
             redis.delete(f"scrape_active:{chain}")
         if scrape_run:
-            scrape_run.status = 'failed'
+            scrape_run.status = "failed"
             scrape_run.errors_json = {"error": str(e)}
             scrape_run.run_finished_at = datetime.now(timezone.utc)
             try:
@@ -387,8 +407,8 @@ def run_flyer_scrape(self, chain: str) -> ScrapResult:
 
 @celery_app.task(
     bind=True,
-    name='app.workers.scraper_tasks.expire_stale_specials',
-    queue='scraper',
+    name="app.workers.scraper_tasks.expire_stale_specials",
+    queue="scraper",
     max_retries=3,
     default_retry_delay=60,
 )
@@ -420,7 +440,7 @@ def expire_stale_specials(self, chains: list[str] | None = None) -> dict:
 
     # Only ALDI flyer-sourced specials need expiry here.
     # Coles/Woolworths/IGA/Drakes specials are managed by catalog ingest (valid_to set at parse time).
-    target_chains = chains or ['aldi']
+    target_chains = chains or ["aldi"]
     now = datetime.now(timezone.utc)
     result: dict[str, int] = {}
 
@@ -456,8 +476,8 @@ def expire_stale_specials(self, chains: list[str] | None = None) -> dict:
 
 @celery_app.task(
     bind=True,
-    name='app.workers.scraper_tasks.run_all_scrapers',
-    queue='scraper',
+    name="app.workers.scraper_tasks.run_all_scrapers",
+    queue="scraper",
     base=CallbackTask,
     time_limit=14400,
     soft_time_limit=14100,
@@ -489,7 +509,7 @@ def run_all_scrapers(self) -> list[ScrapResult]:
         # Only ALDI remains in the flyer pipeline.
         # Other chains use run_catalog_crawl(mode="specials") via the catalog queue.
         job = group(
-            run_flyer_scrape.s('aldi'),
+            run_flyer_scrape.s("aldi"),
         )
 
         # Execute group and wait for all results
@@ -503,8 +523,8 @@ def run_all_scrapers(self) -> list[ScrapResult]:
         logger.info(
             "All scrapers completed",
             extra={
-                "total_products": sum(r.get('products_found', 0) for r in scraper_results),
-                "total_new": sum(r.get('products_new', 0) for r in scraper_results),
+                "total_products": sum(r.get("products_found", 0) for r in scraper_results),
+                "total_new": sum(r.get("products_new", 0) for r in scraper_results),
             },
         )
 

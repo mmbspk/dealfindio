@@ -93,12 +93,16 @@ def _attach_prices(db: Session, products: list[Product]) -> list[ProductResponse
 @router.get("/categories", response_model=list[str])
 async def list_categories(db: Session = Depends(get_db)) -> list[str]:
     """Return all distinct non-null product categories, sorted."""
-    rows = db.execute(
-        select(Product.category)
-        .where(Product.category.isnot(None))
-        .distinct()
-        .order_by(Product.category)
-    ).scalars().all()
+    rows = (
+        db.execute(
+            select(Product.category)
+            .where(Product.category.isnot(None))
+            .distinct()
+            .order_by(Product.category)
+        )
+        .scalars()
+        .all()
+    )
     return list(rows)
 
 
@@ -233,9 +237,7 @@ async def get_product(
         HTTPException: 404 if product not found
     """
     try:
-        product = db.execute(
-            select(Product).where(Product.id == product_id)
-        ).scalar_one_or_none()
+        product = db.execute(select(Product).where(Product.id == product_id)).scalar_one_or_none()
 
         if not product:
             raise HTTPException(
@@ -253,8 +255,7 @@ async def get_product(
             .where(
                 and_(
                     PriceReport.product_id == product_id,
-                    PriceReport.created_at
-                    >= datetime.now(timezone.utc) - timedelta(days=90),
+                    PriceReport.created_at >= datetime.now(timezone.utc) - timedelta(days=90),
                 )
             )
             .group_by(PriceReport.store_id)
@@ -302,11 +303,7 @@ async def get_product(
                     lowest_price_aud=min(prices),
                     highest_price_aud=max(prices),
                     avg_price_aud=sum(prices) / len(prices),
-                    is_on_sale=any(
-                        pr.is_on_sale
-                        for pr, s in price_reports
-                        if s.chain == chain
-                    ),
+                    is_on_sale=any(pr.is_on_sale for pr, s in price_reports if s.chain == chain),
                 )
             )
 
@@ -358,9 +355,7 @@ async def get_price_history(
     """
     try:
         # Verify product exists
-        product = db.execute(
-            select(Product).where(Product.id == product_id)
-        ).scalar_one_or_none()
+        product = db.execute(select(Product).where(Product.id == product_id)).scalar_one_or_none()
 
         if not product:
             raise HTTPException(
@@ -384,9 +379,7 @@ async def get_price_history(
         if chain:
             query = query.where(Store.chain == chain)
 
-        price_reports = db.execute(
-            query.order_by(PriceReport.created_at)
-        ).all()
+        price_reports = db.execute(query.order_by(PriceReport.created_at)).all()
 
         # Convert to response format
         data = []
@@ -453,9 +446,7 @@ async def get_product_stores(
     Without lat/lon, returns all stores with any price in the last 30 days.
     """
     try:
-        product = db.execute(
-            select(Product).where(Product.id == product_id)
-        ).scalar_one_or_none()
+        product = db.execute(select(Product).where(Product.id == product_id)).scalar_one_or_none()
 
         if not product:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
@@ -498,26 +489,33 @@ async def get_product_stores(
             seen_store_ids.add(store.id)
 
             distance_km: float | None = None
-            if lat is not None and lon is not None and store.lat is not None and store.lon is not None:
+            if (
+                lat is not None
+                and lon is not None
+                and store.lat is not None
+                and store.lon is not None
+            ):
                 distance_km = haversine_km(lat, lon, store.lat, store.lon)
                 if distance_km > radius_km:
                     continue
 
-            stores.append({
-                "id": str(store.id),
-                "chain": store.chain,
-                "name": store.name,
-                "address": store.address,
-                "suburb": store.suburb,
-                "state": store.state,
-                "postcode": store.postcode,
-                "lat": store.lat,
-                "lon": store.lon,
-                "price_aud": price_report.price_cents / 100,
-                "is_on_sale": price_report.is_on_sale,
-                "discount_pct": price_report.sale_pct_off,
-                "distance_km": round(distance_km, 2) if distance_km is not None else None,
-            })
+            stores.append(
+                {
+                    "id": str(store.id),
+                    "chain": store.chain,
+                    "name": store.name,
+                    "address": store.address,
+                    "suburb": store.suburb,
+                    "state": store.state,
+                    "postcode": store.postcode,
+                    "lat": store.lat,
+                    "lon": store.lon,
+                    "price_aud": price_report.price_cents / 100,
+                    "is_on_sale": price_report.is_on_sale,
+                    "discount_pct": price_report.sale_pct_off,
+                    "distance_km": round(distance_km, 2) if distance_km is not None else None,
+                }
+            )
 
         # Sort by distance if provided (stores without coords go last), else by price
         if lat is not None and lon is not None:
@@ -546,9 +544,7 @@ async def get_product_predictions_nested(
     Nested alias for GET /api/v1/predictions/{product_id}.
     Returns upcoming ML price predictions for this product, grouped by chain.
     """
-    product = db.execute(
-        select(Product).where(Product.id == product_id)
-    ).scalar_one_or_none()
+    product = db.execute(select(Product).where(Product.id == product_id)).scalar_one_or_none()
 
     if not product:
         raise HTTPException(
@@ -557,14 +553,17 @@ async def get_product_predictions_nested(
         )
 
     now = datetime.now(timezone.utc)
-    rows = db.execute(
-        select(PricePrediction)
-        .where(
-            PricePrediction.product_id == product_id,
-            PricePrediction.prediction_week >= now,
+    rows = (
+        db.execute(
+            select(PricePrediction)
+            .where(
+                PricePrediction.product_id == product_id,
+                PricePrediction.prediction_week >= now,
+            )
+            .order_by(PricePrediction.prediction_week, PricePrediction.chain)
         )
-        .order_by(PricePrediction.prediction_week, PricePrediction.chain)
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     return [PricePredictionResponse.from_orm(r) for r in rows]
-

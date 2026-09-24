@@ -52,9 +52,7 @@ async def seed_stores():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-    async_session = sessionmaker(
-        engine, class_=AsyncSession, expire_on_commit=False
-    )
+    async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
     async with async_session() as session:
         stores = []
@@ -163,9 +161,7 @@ async def fetch_coles_stores(stores: list) -> int:
             )
 
             if response.status_code != 200:
-                logger.warning(
-                    f"Coles API returned status {response.status_code}"
-                )
+                logger.warning(f"Coles API returned status {response.status_code}")
                 return 0
 
             data = response.json()
@@ -186,8 +182,7 @@ async def fetch_coles_stores(stores: list) -> int:
                         lon=float(store_data.get("longitude", 0))
                         if store_data.get("longitude")
                         else None,
-                        place_id=store_data.get("place_id")
-                        or store_data.get("storeNumber"),
+                        place_id=store_data.get("place_id") or store_data.get("storeNumber"),
                         is_active=store_data.get("status") != "closed",
                     )
                     stores.append(store)
@@ -228,9 +223,7 @@ async def fetch_woolworths_stores(stores: list) -> int:
             )
 
             if response.status_code != 200:
-                logger.warning(
-                    f"Woolworths API returned status {response.status_code}"
-                )
+                logger.warning(f"Woolworths API returned status {response.status_code}")
                 return 0
 
             data = response.json()
@@ -251,8 +244,7 @@ async def fetch_woolworths_stores(stores: list) -> int:
                         lon=float(store_data.get("longitude", 0))
                         if store_data.get("longitude")
                         else None,
-                        place_id=store_data.get("placeId")
-                        or store_data.get("storeId"),
+                        place_id=store_data.get("placeId") or store_data.get("storeId"),
                         is_active=store_data.get("status") != "closed",
                     )
                     stores.append(store)
@@ -292,9 +284,7 @@ async def fetch_aldi_stores(stores: list) -> int:
             )
 
             if response.status_code != 200:
-                logger.warning(
-                    f"ALDI store directory returned status {response.status_code}"
-                )
+                logger.warning(f"ALDI store directory returned status {response.status_code}")
                 # Fall back to curated list
                 aldi_stores = await get_aldi_fallback_stores()
             else:
@@ -338,12 +328,8 @@ async def fetch_aldi_stores(stores: list) -> int:
                     suburb=store_data.get("suburb"),
                     state=store_data.get("state"),
                     postcode=store_data.get("postcode"),
-                    lat=float(store_data.get("lat", 0))
-                    if store_data.get("lat")
-                    else None,
-                    lon=float(store_data.get("lon", 0))
-                    if store_data.get("lon")
-                    else None,
+                    lat=float(store_data.get("lat", 0)) if store_data.get("lat") else None,
+                    lon=float(store_data.get("lon", 0)) if store_data.get("lon") else None,
                     is_active=True,
                 )
                 stores.append(store)
@@ -380,9 +366,7 @@ async def fetch_iga_stores(stores: list) -> int:
             )
 
             if response.status_code != 200:
-                logger.warning(
-                    f"IGA store directory returned status {response.status_code}"
-                )
+                logger.warning(f"IGA store directory returned status {response.status_code}")
                 return 0
 
             # IGA may return JSON or HTML - handle both
@@ -409,8 +393,7 @@ async def fetch_iga_stores(stores: list) -> int:
                         lon=float(store_data.get("longitude", 0))
                         if store_data.get("longitude")
                         else None,
-                        place_id=store_data.get("place_id")
-                        or store_data.get("storeId"),
+                        place_id=store_data.get("place_id") or store_data.get("storeId"),
                         is_active=store_data.get("status") != "closed",
                     )
                     stores.append(store)
@@ -441,30 +424,163 @@ async def fetch_dan_murphys_stores(stores: list) -> int:
     """
     fallback = [
         # New South Wales
-        {"name": "Dan Murphy's Alexandria", "suburb": "Alexandria", "state": "NSW", "postcode": "2015", "lat": -33.9053, "lon": 151.1938},
-        {"name": "Dan Murphy's Bondi Junction", "suburb": "Bondi Junction", "state": "NSW", "postcode": "2022", "lat": -33.8921, "lon": 151.2478},
-        {"name": "Dan Murphy's Chatswood", "suburb": "Chatswood", "state": "NSW", "postcode": "2067", "lat": -33.7966, "lon": 151.1831},
-        {"name": "Dan Murphy's Parramatta", "suburb": "Parramatta", "state": "NSW", "postcode": "2150", "lat": -33.8151, "lon": 151.0001},
-        {"name": "Dan Murphy's Penrith", "suburb": "Penrith", "state": "NSW", "postcode": "2750", "lat": -33.7535, "lon": 150.6913},
-        {"name": "Dan Murphy's Newcastle", "suburb": "Newcastle", "state": "NSW", "postcode": "2300", "lat": -32.9265, "lon": 151.7673},
+        {
+            "name": "Dan Murphy's Alexandria",
+            "suburb": "Alexandria",
+            "state": "NSW",
+            "postcode": "2015",
+            "lat": -33.9053,
+            "lon": 151.1938,
+        },
+        {
+            "name": "Dan Murphy's Bondi Junction",
+            "suburb": "Bondi Junction",
+            "state": "NSW",
+            "postcode": "2022",
+            "lat": -33.8921,
+            "lon": 151.2478,
+        },
+        {
+            "name": "Dan Murphy's Chatswood",
+            "suburb": "Chatswood",
+            "state": "NSW",
+            "postcode": "2067",
+            "lat": -33.7966,
+            "lon": 151.1831,
+        },
+        {
+            "name": "Dan Murphy's Parramatta",
+            "suburb": "Parramatta",
+            "state": "NSW",
+            "postcode": "2150",
+            "lat": -33.8151,
+            "lon": 151.0001,
+        },
+        {
+            "name": "Dan Murphy's Penrith",
+            "suburb": "Penrith",
+            "state": "NSW",
+            "postcode": "2750",
+            "lat": -33.7535,
+            "lon": 150.6913,
+        },
+        {
+            "name": "Dan Murphy's Newcastle",
+            "suburb": "Newcastle",
+            "state": "NSW",
+            "postcode": "2300",
+            "lat": -32.9265,
+            "lon": 151.7673,
+        },
         # Victoria
-        {"name": "Dan Murphy's Melbourne CBD", "suburb": "Melbourne", "state": "VIC", "postcode": "3000", "lat": -37.8162, "lon": 144.9554},
-        {"name": "Dan Murphy's Richmond", "suburb": "Richmond", "state": "VIC", "postcode": "3121", "lat": -37.8218, "lon": 145.0012},
-        {"name": "Dan Murphy's Chadstone", "suburb": "Chadstone", "state": "VIC", "postcode": "3148", "lat": -37.8876, "lon": 145.0804},
-        {"name": "Dan Murphy's Ringwood", "suburb": "Ringwood", "state": "VIC", "postcode": "3134", "lat": -37.8142, "lon": 145.2272},
+        {
+            "name": "Dan Murphy's Melbourne CBD",
+            "suburb": "Melbourne",
+            "state": "VIC",
+            "postcode": "3000",
+            "lat": -37.8162,
+            "lon": 144.9554,
+        },
+        {
+            "name": "Dan Murphy's Richmond",
+            "suburb": "Richmond",
+            "state": "VIC",
+            "postcode": "3121",
+            "lat": -37.8218,
+            "lon": 145.0012,
+        },
+        {
+            "name": "Dan Murphy's Chadstone",
+            "suburb": "Chadstone",
+            "state": "VIC",
+            "postcode": "3148",
+            "lat": -37.8876,
+            "lon": 145.0804,
+        },
+        {
+            "name": "Dan Murphy's Ringwood",
+            "suburb": "Ringwood",
+            "state": "VIC",
+            "postcode": "3134",
+            "lat": -37.8142,
+            "lon": 145.2272,
+        },
         # Queensland
-        {"name": "Dan Murphy's Brisbane City", "suburb": "Brisbane City", "state": "QLD", "postcode": "4000", "lat": -27.4728, "lon": 153.0233},
-        {"name": "Dan Murphy's Fortitude Valley", "suburb": "Fortitude Valley", "state": "QLD", "postcode": "4006", "lat": -27.4567, "lon": 153.0387},
-        {"name": "Dan Murphy's Chermside", "suburb": "Chermside", "state": "QLD", "postcode": "4032", "lat": -27.3867, "lon": 153.0287},
-        {"name": "Dan Murphy's Gold Coast", "suburb": "Southport", "state": "QLD", "postcode": "4215", "lat": -27.9664, "lon": 153.3913},
+        {
+            "name": "Dan Murphy's Brisbane City",
+            "suburb": "Brisbane City",
+            "state": "QLD",
+            "postcode": "4000",
+            "lat": -27.4728,
+            "lon": 153.0233,
+        },
+        {
+            "name": "Dan Murphy's Fortitude Valley",
+            "suburb": "Fortitude Valley",
+            "state": "QLD",
+            "postcode": "4006",
+            "lat": -27.4567,
+            "lon": 153.0387,
+        },
+        {
+            "name": "Dan Murphy's Chermside",
+            "suburb": "Chermside",
+            "state": "QLD",
+            "postcode": "4032",
+            "lat": -27.3867,
+            "lon": 153.0287,
+        },
+        {
+            "name": "Dan Murphy's Gold Coast",
+            "suburb": "Southport",
+            "state": "QLD",
+            "postcode": "4215",
+            "lat": -27.9664,
+            "lon": 153.3913,
+        },
         # Western Australia
-        {"name": "Dan Murphy's Perth CBD", "suburb": "Perth", "state": "WA", "postcode": "6000", "lat": -31.9543, "lon": 115.8611},
-        {"name": "Dan Murphy's Cannington", "suburb": "Cannington", "state": "WA", "postcode": "6107", "lat": -31.9997, "lon": 115.9360},
+        {
+            "name": "Dan Murphy's Perth CBD",
+            "suburb": "Perth",
+            "state": "WA",
+            "postcode": "6000",
+            "lat": -31.9543,
+            "lon": 115.8611,
+        },
+        {
+            "name": "Dan Murphy's Cannington",
+            "suburb": "Cannington",
+            "state": "WA",
+            "postcode": "6107",
+            "lat": -31.9997,
+            "lon": 115.9360,
+        },
         # South Australia
-        {"name": "Dan Murphy's Adelaide CBD", "suburb": "Adelaide", "state": "SA", "postcode": "5000", "lat": -34.9295, "lon": 138.6002},
-        {"name": "Dan Murphy's Marion", "suburb": "Marion", "state": "SA", "postcode": "5043", "lat": -35.0143, "lon": 138.5637},
+        {
+            "name": "Dan Murphy's Adelaide CBD",
+            "suburb": "Adelaide",
+            "state": "SA",
+            "postcode": "5000",
+            "lat": -34.9295,
+            "lon": 138.6002,
+        },
+        {
+            "name": "Dan Murphy's Marion",
+            "suburb": "Marion",
+            "state": "SA",
+            "postcode": "5043",
+            "lat": -35.0143,
+            "lon": 138.5637,
+        },
         # Australian Capital Territory
-        {"name": "Dan Murphy's Fyshwick", "suburb": "Fyshwick", "state": "ACT", "postcode": "2609", "lat": -35.3278, "lon": 149.1695},
+        {
+            "name": "Dan Murphy's Fyshwick",
+            "suburb": "Fyshwick",
+            "state": "ACT",
+            "postcode": "2609",
+            "lat": -35.3278,
+            "lon": 149.1695,
+        },
     ]
 
     count = 0
@@ -501,22 +617,106 @@ async def get_aldi_fallback_stores() -> list:
     """
     return [
         # New South Wales
-        {"name": "ALDI Chatswood", "suburb": "Chatswood", "state": "NSW", "postcode": "2067", "lat": -33.7962, "lon": 151.1849},
-        {"name": "ALDI Parramatta", "suburb": "Parramatta", "state": "NSW", "postcode": "2150", "lat": -33.8143, "lon": 151.0033},
-        {"name": "ALDI Bondi", "suburb": "Bondi", "state": "NSW", "postcode": "2026", "lat": -33.8911, "lon": 151.2767},
-        {"name": "ALDI Penrith", "suburb": "Penrith", "state": "NSW", "postcode": "2750", "lat": -33.7567, "lon": 150.6914},
-        {"name": "ALDI Newcastle", "suburb": "Newcastle", "state": "NSW", "postcode": "2300", "lat": -32.9232, "lon": 151.7827},
+        {
+            "name": "ALDI Chatswood",
+            "suburb": "Chatswood",
+            "state": "NSW",
+            "postcode": "2067",
+            "lat": -33.7962,
+            "lon": 151.1849,
+        },
+        {
+            "name": "ALDI Parramatta",
+            "suburb": "Parramatta",
+            "state": "NSW",
+            "postcode": "2150",
+            "lat": -33.8143,
+            "lon": 151.0033,
+        },
+        {
+            "name": "ALDI Bondi",
+            "suburb": "Bondi",
+            "state": "NSW",
+            "postcode": "2026",
+            "lat": -33.8911,
+            "lon": 151.2767,
+        },
+        {
+            "name": "ALDI Penrith",
+            "suburb": "Penrith",
+            "state": "NSW",
+            "postcode": "2750",
+            "lat": -33.7567,
+            "lon": 150.6914,
+        },
+        {
+            "name": "ALDI Newcastle",
+            "suburb": "Newcastle",
+            "state": "NSW",
+            "postcode": "2300",
+            "lat": -32.9232,
+            "lon": 151.7827,
+        },
         # Victoria
-        {"name": "ALDI Melbourne CBD", "suburb": "Melbourne", "state": "VIC", "postcode": "3000", "lat": -37.8136, "lon": 144.9631},
-        {"name": "ALDI Southbank", "suburb": "Southbank", "state": "VIC", "postcode": "3006", "lat": -37.8214, "lon": 144.9688},
-        {"name": "ALDI Ringwood", "suburb": "Ringwood", "state": "VIC", "postcode": "3134", "lat": -37.8289, "lon": 145.2302},
+        {
+            "name": "ALDI Melbourne CBD",
+            "suburb": "Melbourne",
+            "state": "VIC",
+            "postcode": "3000",
+            "lat": -37.8136,
+            "lon": 144.9631,
+        },
+        {
+            "name": "ALDI Southbank",
+            "suburb": "Southbank",
+            "state": "VIC",
+            "postcode": "3006",
+            "lat": -37.8214,
+            "lon": 144.9688,
+        },
+        {
+            "name": "ALDI Ringwood",
+            "suburb": "Ringwood",
+            "state": "VIC",
+            "postcode": "3134",
+            "lat": -37.8289,
+            "lon": 145.2302,
+        },
         # Queensland
-        {"name": "ALDI Brisbane CBD", "suburb": "Brisbane", "state": "QLD", "postcode": "4000", "lat": -27.4705, "lon": 153.0260},
-        {"name": "ALDI Southside", "suburb": "Southside", "state": "QLD", "postcode": "4168", "lat": -27.6244, "lon": 153.1173},
+        {
+            "name": "ALDI Brisbane CBD",
+            "suburb": "Brisbane",
+            "state": "QLD",
+            "postcode": "4000",
+            "lat": -27.4705,
+            "lon": 153.0260,
+        },
+        {
+            "name": "ALDI Southside",
+            "suburb": "Southside",
+            "state": "QLD",
+            "postcode": "4168",
+            "lat": -27.6244,
+            "lon": 153.1173,
+        },
         # Western Australia
-        {"name": "ALDI Perth CBD", "suburb": "Perth", "state": "WA", "postcode": "6000", "lat": -31.9454, "lon": 115.8581},
+        {
+            "name": "ALDI Perth CBD",
+            "suburb": "Perth",
+            "state": "WA",
+            "postcode": "6000",
+            "lat": -31.9454,
+            "lon": 115.8581,
+        },
         # South Australia
-        {"name": "ALDI Adelaide CBD", "suburb": "Adelaide", "state": "SA", "postcode": "5000", "lat": -34.9285, "lon": 138.6007},
+        {
+            "name": "ALDI Adelaide CBD",
+            "suburb": "Adelaide",
+            "state": "SA",
+            "postcode": "5000",
+            "lat": -34.9285,
+            "lon": 138.6007,
+        },
     ]
 
 

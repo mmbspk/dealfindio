@@ -75,36 +75,51 @@ _BASE_HEADERS = {
 # Verified against live API 2026-09-16 — counts in comments.
 _CATEGORIES: list[dict] = [
     # Top-level groups
-    {"id": "wine",               "name": "Wine",                 "parent": None},        # 6700
-    {"id": "beer",               "name": "Beer & Cider",         "parent": None},        # 735  (was beer-cider)
-    {"id": "spirits",            "name": "Spirits",              "parent": None},        # 2091
-    {"id": "champagne-sparkling","name": "Champagne & Sparkling","parent": None},        # 750
-    {"id": "food-snacks",        "name": "Food & Snacks",        "parent": None},        # 77
+    {"id": "wine", "name": "Wine", "parent": None},  # 6700
+    {"id": "beer", "name": "Beer & Cider", "parent": None},  # 735  (was beer-cider)
+    {"id": "spirits", "name": "Spirits", "parent": None},  # 2091
+    {"id": "champagne-sparkling", "name": "Champagne & Sparkling", "parent": None},  # 750
+    {"id": "food-snacks", "name": "Food & Snacks", "parent": None},  # 77
     # Wine sub-categories
-    {"id": "red-wine",           "name": "Red Wine",             "parent": "wine"},      # 6827
-    {"id": "white-wine",         "name": "White Wine",           "parent": "wine"},      # 2372
-    {"id": "rose",               "name": "Rosé Wine",            "parent": "wine"},      # 271  (was rose-wine)
-    {"id": "dessert-wine",       "name": "Dessert & Fortified",  "parent": "wine"},      # 153  (was dessert-fortified)
+    {"id": "red-wine", "name": "Red Wine", "parent": "wine"},  # 6827
+    {"id": "white-wine", "name": "White Wine", "parent": "wine"},  # 2372
+    {"id": "rose", "name": "Rosé Wine", "parent": "wine"},  # 271  (was rose-wine)
+    {
+        "id": "dessert-wine",
+        "name": "Dessert & Fortified",
+        "parent": "wine",
+    },  # 153  (was dessert-fortified)
     # Spirits sub-categories
-    {"id": "whisky",             "name": "Whisky",               "parent": "spirits"},   # 658
-    {"id": "bourbon",            "name": "Bourbon",              "parent": "spirits"},   # 70
-    {"id": "gin",                "name": "Gin",                  "parent": "spirits"},   # 461
-    {"id": "vodka",              "name": "Vodka",                "parent": "spirits"},   # 162
-    {"id": "rum",                "name": "Rum",                  "parent": "spirits"},   # 136
-    {"id": "tequila",            "name": "Tequila & Mezcal",     "parent": "spirits"},   # 188  (was tequila-mezcal)
-    {"id": "brandy-cognac",      "name": "Brandy & Cognac",      "parent": "spirits"},   # 65
-    {"id": "liqueurs",           "name": "Liqueur",              "parent": "spirits"},   # 237  (was liqueur)
+    {"id": "whisky", "name": "Whisky", "parent": "spirits"},  # 658
+    {"id": "bourbon", "name": "Bourbon", "parent": "spirits"},  # 70
+    {"id": "gin", "name": "Gin", "parent": "spirits"},  # 461
+    {"id": "vodka", "name": "Vodka", "parent": "spirits"},  # 162
+    {"id": "rum", "name": "Rum", "parent": "spirits"},  # 136
+    {"id": "tequila", "name": "Tequila & Mezcal", "parent": "spirits"},  # 188  (was tequila-mezcal)
+    {"id": "brandy-cognac", "name": "Brandy & Cognac", "parent": "spirits"},  # 65
+    {"id": "liqueurs", "name": "Liqueur", "parent": "spirits"},  # 237  (was liqueur)
     # Beer sub-categories
-    {"id": "lager",              "name": "Lager & Pilsner",      "parent": "beer"},      # 240  (was lager-pilsner)
-    {"id": "ipa-beer",           "name": "IPA",                  "parent": "beer"},      # 33   (was ipa)
-    {"id": "cider",              "name": "Cider",                "parent": "beer"},      # 151
-    {"id": "craft-beer",         "name": "Craft Beer",           "parent": "beer"},      # 372
+    {"id": "lager", "name": "Lager & Pilsner", "parent": "beer"},  # 240  (was lager-pilsner)
+    {"id": "ipa-beer", "name": "IPA", "parent": "beer"},  # 33   (was ipa)
+    {"id": "cider", "name": "Cider", "parent": "beer"},  # 151
+    {"id": "craft-beer", "name": "Craft Beer", "parent": "beer"},  # 372
 ]
 
 # Slugs that the API confirms return 0 products — skip them entirely.
-_SKIP_SLUGS = {"accessories", "other-drinks", "gifts-occassions", "other-drinks-accessories",
-               "beer-cider", "rose-wine", "dessert-fortified", "tequila-mezcal", "liqueur",
-               "lager-pilsner", "pale-ale", "stout-porter"}
+_SKIP_SLUGS = {
+    "accessories",
+    "other-drinks",
+    "gifts-occassions",
+    "other-drinks-accessories",
+    "beer-cider",
+    "rose-wine",
+    "dessert-fortified",
+    "tequila-mezcal",
+    "liqueur",
+    "lager-pilsner",
+    "pale-ale",
+    "stout-porter",
+}
 
 
 def _build_category_nodes() -> list[CategoryNode]:
@@ -142,7 +157,10 @@ class DanMurphysCatalogScraper(CatalogScraper):
         the same session rather than triggering another Cloudflare check.
         """
         async with httpx.AsyncClient(
-            headers={**_BASE_HEADERS, "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"},
+            headers={
+                **_BASE_HEADERS,
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            },
             follow_redirects=True,
             timeout=self.TIMEOUT_S,
         ) as client:
@@ -245,6 +263,7 @@ class DanMurphysCatalogScraper(CatalogScraper):
 
 # ── Response helpers ─────────────────────────────────────────────────────────
 
+
 def _extract_items(page: dict) -> list[dict]:
     """Flatten Items[*].Products into a single list of product dicts."""
     products: list[dict] = []
@@ -265,7 +284,9 @@ def _parse_item(
         return None
 
     # Clean HTML from Description, prefer AdditionalDetails productname if present
-    details = {d["Name"]: d["Value"] for d in (item.get("AdditionalDetails") or []) if d.get("Name")}
+    details = {
+        d["Name"]: d["Value"] for d in (item.get("AdditionalDetails") or []) if d.get("Name")
+    }
     name = (
         details.get("webproductname")
         or details.get("producttitle")
@@ -273,6 +294,7 @@ def _parse_item(
     ).strip()
     # Strip residual HTML tags (Description sometimes contains <br>)
     import re as _re
+
     name = _re.sub(r"<[^>]+>", " ", name).strip()
     name = _re.sub(r"\s+", " ", name).strip()
     if not name:
@@ -343,4 +365,3 @@ def _parse_item(
         unit_price=unit_price_val,
         unit_price_label="any 6" if unit_price_val is not None else None,
     )
-

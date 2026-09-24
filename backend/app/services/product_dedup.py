@@ -273,6 +273,7 @@ class FuzzyMatcher:
 
         # Remove special characters but keep spaces
         import re
+
         normalized = re.sub(r"[^a-z0-9\s]", "", normalized)
 
         # Remove pack size suffixes (e.g., "2l", "500g", "1kg")
@@ -350,8 +351,7 @@ class FuzzyMatcher:
             matched_product = candidates[idx]
 
             logger.debug(
-                f"Fuzzy matched '{name}' -> '{matched_product.name}' "
-                f"(score={score * 100:.1f}%)"
+                f"Fuzzy matched '{name}' -> '{matched_product.name}' " f"(score={score * 100:.1f}%)"
             )
 
             return matched_product
@@ -427,9 +427,7 @@ class RedisDedup:
             logger.error(f"Error checking dedup status: {e}")
             raise
 
-    async def mark_ingested(
-        self, key: str, redis: Redis, ttl_days: int = DEFAULT_TTL_DAYS
-    ) -> None:
+    async def mark_ingested(self, key: str, redis: Redis, ttl_days: int = DEFAULT_TTL_DAYS) -> None:
         """
         Mark as ingested with TTL.
 
@@ -557,10 +555,14 @@ async def ingest_scraped_price(
         # Priority 1: store's own product ID — matches what the catalog scraper stored
         if store_product_id:
             external_source = f"catalog_{chain}"
-            stmt = select(Product).where(
-                Product.external_source == external_source,
-                Product.external_id == str(store_product_id),
-            ).limit(1)
+            stmt = (
+                select(Product)
+                .where(
+                    Product.external_source == external_source,
+                    Product.external_id == str(store_product_id),
+                )
+                .limit(1)
+            )
             result = await session.execute(stmt)
             product = result.scalar_one_or_none()
 
@@ -573,9 +575,7 @@ async def ingest_scraped_price(
         # Priority 3: fuzzy name match (skipped for flyer ingest — too slow)
         if not product:
             if not skip_fuzzy:
-                product = await fuzzy_matcher.match_product_by_name(
-                    product_name, None, session
-                )
+                product = await fuzzy_matcher.match_product_by_name(product_name, None, session)
 
         # Priority 4: create a new product record
         if not product:
@@ -599,9 +599,7 @@ async def ingest_scraped_price(
             await session.flush()
 
         # Step 3: Check deduplication (Redis)
-        dedup_key = redis_dedup.dedup_key(
-            product.id, store.id, price_cents, valid_from
-        )
+        dedup_key = redis_dedup.dedup_key(product.id, store.id, price_cents, valid_from)
 
         if await redis_dedup.is_duplicate(dedup_key, redis):
             error_msg = f"Duplicate price report: {dedup_key}"
@@ -614,23 +612,19 @@ async def ingest_scraped_price(
 
         if was_price_cents and price_cents < was_price_cents:
             is_on_sale = True
-            sale_pct_off = (
-                (was_price_cents - price_cents) / was_price_cents * 100
-            )
+            sale_pct_off = (was_price_cents - price_cents) / was_price_cents * 100
 
         # Determine valid_to (typically end of catalogue cycle)
         valid_to = None
         if valid_from:
             # Assume 7-day catalogue cycle
             valid_to = datetime.combine(
-                valid_from + timedelta(days=7),
-                datetime.min.time()
+                valid_from + timedelta(days=7), datetime.min.time()
             ).replace(tzinfo=timezone.utc)
 
-        valid_from_dt = datetime.combine(
-            valid_from,
-            datetime.min.time()
-        ).replace(tzinfo=timezone.utc)
+        valid_from_dt = datetime.combine(valid_from, datetime.min.time()).replace(
+            tzinfo=timezone.utc
+        )
 
         # Step 5: INSERT price_report
         price_report = PriceReport(
@@ -669,6 +663,7 @@ async def ingest_scraped_price(
         try:
             if product.name_embedding is None:
                 from app.workers.embedding_tasks import embed_product
+
                 embed_product.delay(str(product.id))
         except Exception as e:
             logger.warning(f"Failed to queue embed_product: {e}")

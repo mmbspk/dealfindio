@@ -143,11 +143,15 @@ def _match_product(
     # Exclude products already owned by this chain's SKU namespace so we don't
     # accidentally merge two different ALDI products via fuzzy name.
     external_source = f"catalog_{chain}"
-    candidates = list(session.execute(
-        select(Product).where(
-            or_(Product.external_source != external_source, Product.external_source.is_(None))
+    candidates = list(
+        session.execute(
+            select(Product).where(
+                or_(Product.external_source != external_source, Product.external_source.is_(None))
+            )
         )
-    ).scalars().all())
+        .scalars()
+        .all()
+    )
     if not candidates:
         return None, 0.0, None
     from rapidfuzz.process import extractOne
@@ -174,7 +178,10 @@ def _match_product(
     if brands_conflict(cp.brand, matched.brand):
         logger.debug(
             "Brand conflict veto: '%s' [%s] vs '%s' [%s]",
-            cp.product_name, cp.brand, matched.name, matched.brand,
+            cp.product_name,
+            cp.brand,
+            matched.name,
+            matched.brand,
         )
         return None, 0.0, None
 
@@ -202,12 +209,15 @@ def _match_product(
     a_price = cp.price_cents / 100.0 if cp.price_cents else None
     if a_price is not None and a_price > 0:
         from sqlalchemy import text as sa_text
+
         row = session.execute(
-            sa_text("""
+            sa_text(
+                """
                 SELECT price_cents FROM price_reports
                 WHERE product_id = :pid
                 ORDER BY created_at DESC LIMIT 1
-            """),
+            """
+            ),
             {"pid": str(matched.id)},
         ).fetchone()
         if row is not None:
@@ -286,7 +296,9 @@ def ingest_catalog_product(
         if cp.package_size and not product.package_size:
             product.package_size = cp.package_size
             updated = True
-        if cp.unit_price is not None and (product.unit_price is None or product.unit_price != cp.unit_price):
+        if cp.unit_price is not None and (
+            product.unit_price is None or product.unit_price != cp.unit_price
+        ):
             product.unit_price = cp.unit_price
             updated = True
         if cp.unit_price_label and product.unit_price_label != cp.unit_price_label:
@@ -302,9 +314,7 @@ def ingest_catalog_product(
     is_on_sale = bool(was and cp.price_cents < was)
     sale_pct_off = ((was - cp.price_cents) / was * 100) if is_on_sale else None
     valid_from = cp.valid_from or date.today()
-    valid_from_dt = datetime.combine(valid_from, datetime.min.time()).replace(
-        tzinfo=timezone.utc
-    )
+    valid_from_dt = datetime.combine(valid_from, datetime.min.time()).replace(tzinfo=timezone.utc)
 
     price_report = PriceReport(
         product_id=product.id,
@@ -326,6 +336,7 @@ def ingest_catalog_product(
     if is_on_sale:
         try:
             from app.workers.notification_tasks import check_watchlist_for_price
+
             check_watchlist_for_price.delay(str(price_report.id))
         except Exception as exc:
             logger.warning("Failed to enqueue watchlist check for %s: %s", price_report.id, exc)

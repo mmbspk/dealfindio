@@ -21,8 +21,8 @@ from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
-MIN_OBSERVATIONS = 8       # skip a product/chain pair below this
-FORECAST_WEEKS = 2         # how many future weeks to predict
+MIN_OBSERVATIONS = 8  # skip a product/chain pair below this
+FORECAST_WEEKS = 2  # how many future weeks to predict
 SIGNIFICANT_DROP_PCT = 0.05  # 5% below recent median → is_likely_sale
 
 
@@ -44,7 +44,8 @@ def _upsert_prediction(
         select(PricePrediction).where(
             PricePrediction.product_id == product_id,
             PricePrediction.chain == chain,
-            PricePrediction.prediction_week == datetime.combine(prediction_week, datetime.min.time()).replace(tzinfo=timezone.utc),
+            PricePrediction.prediction_week
+            == datetime.combine(prediction_week, datetime.min.time()).replace(tzinfo=timezone.utc),
         )
     ).scalar_one_or_none()
 
@@ -58,10 +59,13 @@ def _upsert_prediction(
         existing.generated_at = now
     else:
         from app.models import PricePrediction
+
         pred = PricePrediction(
             product_id=product_id,
             chain=chain,
-            prediction_week=datetime.combine(prediction_week, datetime.min.time()).replace(tzinfo=timezone.utc),
+            prediction_week=datetime.combine(prediction_week, datetime.min.time()).replace(
+                tzinfo=timezone.utc
+            ),
             predicted_price_cents=predicted_price_cents,
             confidence_interval_low=ci_low_cents,
             confidence_interval_high=ci_high_cents,
@@ -116,6 +120,7 @@ def fit_and_forecast(df: pd.DataFrame) -> pd.DataFrame:
     with columns: ds, yhat, yhat_lower, yhat_upper.
     """
     import warnings
+
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         model = Prophet(
@@ -170,12 +175,16 @@ def run_predictions_for_product(db: Session, product_id: UUID) -> list[dict]:
     from app.models import PriceReport, Store
 
     # Find all chains with data for this product
-    chains = db.execute(
-        select(Store.chain)
-        .join(PriceReport, PriceReport.store_id == Store.id)
-        .where(PriceReport.product_id == product_id)
-        .distinct()
-    ).scalars().all()
+    chains = (
+        db.execute(
+            select(Store.chain)
+            .join(PriceReport, PriceReport.store_id == Store.id)
+            .where(PriceReport.product_id == product_id)
+            .distinct()
+        )
+        .scalars()
+        .all()
+    )
 
     results = []
     model_version = f"prophet-1.1-{date.today().strftime('%Y%m%d')}"
@@ -189,12 +198,14 @@ def run_predictions_for_product(db: Session, product_id: UUID) -> list[dict]:
                     f"Skipping {product_id}/{chain}: only {len(df)} observations "
                     f"(need {MIN_OBSERVATIONS})"
                 )
-                results.append({
-                    "product_id": str(product_id),
-                    "chain": chain,
-                    "status": "skipped_insufficient_data",
-                    "observations": len(df),
-                })
+                results.append(
+                    {
+                        "product_id": str(product_id),
+                        "chain": chain,
+                        "status": "skipped_insufficient_data",
+                        "observations": len(df),
+                    }
+                )
                 continue
 
             median_price = _recent_median(df)
@@ -225,21 +236,25 @@ def run_predictions_for_product(db: Session, product_id: UUID) -> list[dict]:
                 )
                 weeks_written += 1
 
-            results.append({
-                "product_id": str(product_id),
-                "chain": chain,
-                "status": "ok",
-                "observations": len(df),
-                "predictions_written": weeks_written,
-            })
+            results.append(
+                {
+                    "product_id": str(product_id),
+                    "chain": chain,
+                    "status": "ok",
+                    "observations": len(df),
+                    "predictions_written": weeks_written,
+                }
+            )
 
         except Exception as exc:
             logger.exception(f"Prediction failed for {product_id}/{chain}: {exc}")
-            results.append({
-                "product_id": str(product_id),
-                "chain": chain,
-                "status": "error",
-                "error": str(exc),
-            })
+            results.append(
+                {
+                    "product_id": str(product_id),
+                    "chain": chain,
+                    "status": "error",
+                    "error": str(exc),
+                }
+            )
 
     return results
