@@ -135,10 +135,10 @@ export const Watchlist: React.FC = () => {
   if (error) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="bg-white rounded-xl shadow p-10 text-center max-w-sm">
+        <div className="bg-white rounded-2xl shadow p-10 text-center max-w-sm">
           <p className="text-gray-600 mb-4">{error}</p>
           {error.includes('Sign in') && (
-            <Link to="/login?next=/watchlist" className="px-5 py-2.5 bg-amber-500 text-gray-900 rounded-lg font-semibold hover:bg-amber-600 transition text-sm">
+            <Link to="/login?next=/watchlist" className="px-5 py-2.5 bg-lime-300 text-gray-900 rounded-lg font-semibold hover:bg-lime-400 transition text-sm">
               Sign in
             </Link>
           )}
@@ -155,7 +155,7 @@ export const Watchlist: React.FC = () => {
           <h1 className="text-3xl font-bold text-gray-900">My Lists</h1>
           <button
             onClick={() => setShowNewList(v => !v)}
-            className="flex items-center gap-1.5 px-4 py-2 bg-amber-500 text-gray-900 rounded-lg font-semibold hover:bg-amber-600 transition text-sm"
+            className="flex items-center gap-1.5 px-4 py-2 bg-lime-300 text-gray-900 rounded-lg font-semibold hover:bg-lime-400 transition text-sm"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -166,7 +166,7 @@ export const Watchlist: React.FC = () => {
 
         {/* New list form */}
         {showNewList && (
-          <div className="bg-white border border-gray-200 rounded-xl p-5 mb-6 shadow-sm">
+          <div className="bg-white border border-gray-200 rounded-2xl p-5 mb-6 shadow-sm">
             <form onSubmit={createList} className="flex gap-3 items-end flex-wrap">
               <div>
                 <label className="block text-xs font-semibold text-gray-500 mb-1">Emoji (optional)</label>
@@ -193,7 +193,7 @@ export const Watchlist: React.FC = () => {
               <button
                 type="submit"
                 disabled={creatingList || !newListName.trim()}
-                className="px-4 py-2 bg-amber-500 text-gray-900 rounded-lg text-sm font-semibold hover:bg-amber-600 transition disabled:opacity-40"
+                className="px-4 py-2 bg-lime-300 text-gray-900 rounded-lg text-sm font-semibold hover:bg-lime-400 transition disabled:opacity-40"
               >
                 {creatingList ? 'Creating…' : 'Create'}
               </button>
@@ -210,7 +210,7 @@ export const Watchlist: React.FC = () => {
 
         {lists.length === 0 ? (
           /* Empty state: no lists at all */
-          <div className="bg-white rounded-xl shadow-sm p-14 text-center border border-gray-100">
+          <div className="bg-white rounded-2xl shadow-sm p-14 text-center border border-gray-100">
             <svg className="w-14 h-14 text-gray-300 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
             </svg>
@@ -225,9 +225,9 @@ export const Watchlist: React.FC = () => {
                 <div key={l.id} className="group relative">
                   <button
                     onClick={() => switchList(l.id)}
-                    className={`w-full text-left flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium transition ${
+                    className={`w-full text-left flex items-center gap-2.5 px-3 py-2.5 rounded-2xl text-sm font-medium transition ${
                       activeListId === l.id
-                        ? 'bg-emerald-600 text-white shadow-sm'
+                        ? 'bg-[#176f50] text-white shadow-sm'
                         : 'text-gray-700 hover:bg-gray-100'
                     }`}
                   >
@@ -268,7 +268,7 @@ export const Watchlist: React.FC = () => {
                   <div className="w-8 h-8 border-4 border-emerald-200 border-t-emerald-600 rounded-full animate-spin" />
                 </div>
               ) : items.length === 0 ? (
-                <div className="bg-white rounded-xl border border-dashed border-gray-200 p-10 text-center">
+                <div className="bg-white rounded-2xl border border-dashed border-gray-200 p-10 text-center">
                   <p className="text-gray-500 text-sm">This list is empty.</p>
                   <p className="text-xs text-gray-400 mt-1">Browse deals and hit the bookmark icon to save here.</p>
                 </div>
@@ -277,7 +277,7 @@ export const Watchlist: React.FC = () => {
                   {items.map(item => (
                     <div
                       key={item.id}
-                      className="bg-white border border-gray-200 rounded-xl p-4 flex gap-3 items-start hover:border-emerald-200 hover:shadow-sm transition"
+                      className="bg-white border border-gray-200 rounded-2xl p-4 flex gap-3 items-start hover:border-emerald-200 hover:shadow-sm transition"
                     >
                       {/* Product image */}
                       <Link to={`/product/${item.product_id}`} className="flex-shrink-0">
@@ -294,7 +294,7 @@ export const Watchlist: React.FC = () => {
 
                       {/* Info */}
                       <div className="flex-1 min-w-0">
-                        <Link to={`/product/${item.product_id}`} className="font-semibold text-gray-900 hover:text-emerald-600 transition text-sm leading-tight block truncate">
+                        <Link to={`/product/${item.product_id}`} className="font-semibold text-gray-900 hover:text-[#176f50] transition text-sm leading-tight block truncate">
                           {item.product_name ?? item.product_id}
                         </Link>
                         {item.product_brand && (
@@ -302,7 +302,7 @@ export const Watchlist: React.FC = () => {
                         )}
                         <div className="mt-1.5 flex flex-wrap items-center gap-2">
                           {item.current_price_aud != null && (
-                            <span className={`text-sm font-bold ${item.is_on_sale ? 'text-red-500' : 'text-emerald-600'}`}>
+                            <span className={`text-sm font-bold ${item.is_on_sale ? 'text-red-500' : 'text-[#176f50]'}`}>
                               ${item.current_price_aud.toFixed(2)}
                               {item.is_on_sale && <span className="ml-1 text-xs font-semibold">ON SALE</span>}
                             </span>
@@ -313,12 +313,12 @@ export const Watchlist: React.FC = () => {
                             </span>
                           )}
                           {item.target_price_cents != null && (
-                            <span className="text-xs px-2 py-0.5 bg-emerald-50 text-emerald-700 rounded-full font-medium">
+                            <span className="text-xs px-2 py-0.5 bg-emerald-50 text-[#135d46] rounded-full font-medium">
                               Target ${(item.target_price_cents / 100).toFixed(2)}
                             </span>
                           )}
                           {item.target_pct_off != null && (
-                            <span className="text-xs px-2 py-0.5 bg-emerald-50 text-emerald-700 rounded-full font-medium">
+                            <span className="text-xs px-2 py-0.5 bg-emerald-50 text-[#135d46] rounded-full font-medium">
                               Target {item.target_pct_off}% off
                             </span>
                           )}
