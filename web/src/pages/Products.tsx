@@ -126,7 +126,7 @@ export const Products: React.FC = () => {
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Filter bar */}
-      <div className="bg-white border-b sticky top-[65px] z-40 shadow-sm">
+      <div className="bg-white border-b sticky top-[72px] z-40 shadow-sm">
         <div className="max-w-[1280px] mx-auto px-6 sm:px-8 lg:px-10 py-3">
           <div className="flex flex-wrap gap-3 items-center">
             {/* Search */}
@@ -201,7 +201,7 @@ export const Products: React.FC = () => {
             {position ? (
               <Link
                 to="/stores"
-                className="flex items-center gap-1.5 text-xs text-emerald-600 bg-emerald-50 px-2.5 py-1.5 rounded-full border border-emerald-100 hover:bg-emerald-100 transition whitespace-nowrap"
+                className="flex items-center gap-1.5 text-xs text-[#176f50] bg-emerald-50 px-2.5 py-1.5 rounded-full border border-emerald-100 hover:bg-emerald-100 transition whitespace-nowrap"
                 title="Change location"
               >
                 <svg className="w-3 h-3 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
@@ -212,7 +212,7 @@ export const Products: React.FC = () => {
             ) : (
               <Link
                 to="/stores"
-                className="flex items-center gap-1.5 text-xs text-gray-500 bg-gray-50 px-2.5 py-1.5 rounded-full border border-gray-200 hover:border-emerald-300 hover:text-emerald-600 transition whitespace-nowrap"
+                className="flex items-center gap-1.5 text-xs text-gray-500 bg-gray-50 px-2.5 py-1.5 rounded-full border border-gray-200 hover:border-[#a8cdb1] hover:text-[#176f50] transition whitespace-nowrap"
               >
                 <svg className="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/>
@@ -228,7 +228,7 @@ export const Products: React.FC = () => {
               <button
                 onClick={() => setViewMode('compact')}
                 title="Compact"
-                className={`p-1.5 rounded cursor-pointer transition ${viewMode === 'compact' ? 'bg-white shadow-sm text-emerald-600' : 'text-gray-400 hover:text-gray-600'}`}
+                className={`p-1.5 rounded cursor-pointer transition ${viewMode === 'compact' ? 'bg-white shadow-sm text-[#176f50]' : 'text-gray-400 hover:text-gray-600'}`}
               >
                 <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 16 16">
                   <rect x="0" y="0" width="4" height="4" rx="0.5" />
@@ -246,7 +246,7 @@ export const Products: React.FC = () => {
               <button
                 onClick={() => setViewMode('comfortable')}
                 title="Comfortable"
-                className={`p-1.5 rounded cursor-pointer transition ${viewMode === 'comfortable' ? 'bg-white shadow-sm text-emerald-600' : 'text-gray-400 hover:text-gray-600'}`}
+                className={`p-1.5 rounded cursor-pointer transition ${viewMode === 'comfortable' ? 'bg-white shadow-sm text-[#176f50]' : 'text-gray-400 hover:text-gray-600'}`}
               >
                 <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 16 16">
                   <rect x="0" y="0" width="7" height="7" rx="0.5" />
@@ -259,7 +259,7 @@ export const Products: React.FC = () => {
               <button
                 onClick={() => setViewMode('list')}
                 title="List"
-                className={`p-1.5 rounded cursor-pointer transition ${viewMode === 'list' ? 'bg-white shadow-sm text-emerald-600' : 'text-gray-400 hover:text-gray-600'}`}
+                className={`p-1.5 rounded cursor-pointer transition ${viewMode === 'list' ? 'bg-white shadow-sm text-[#176f50]' : 'text-gray-400 hover:text-gray-600'}`}
               >
                 <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 16 16">
                   <rect x="0" y="1" width="16" height="3" rx="0.5" />
@@ -288,7 +288,7 @@ export const Products: React.FC = () => {
           }>
             {Array.from({ length: 24 }).map((_, i) => (
               viewMode === 'list' ? (
-                <div key={i} className="bg-white rounded-xl p-4 animate-pulse flex gap-4">
+                <div key={i} className="bg-white rounded-2xl p-4 animate-pulse flex gap-4">
                   <div className="w-16 h-16 bg-gray-100 rounded-lg flex-shrink-0" />
                   <div className="flex-1 space-y-2 pt-1">
                     <div className="h-3 bg-gray-100 rounded w-3/4" />
@@ -297,7 +297,7 @@ export const Products: React.FC = () => {
                   </div>
                 </div>
               ) : (
-                <div key={i} className="bg-white rounded-xl p-3 animate-pulse">
+                <div key={i} className="bg-white rounded-2xl p-3 animate-pulse">
                   <div className="aspect-square bg-gray-100 rounded-lg mb-3" />
                   <div className="h-3 bg-gray-100 rounded mb-2 w-3/4" />
                   <div className="h-3 bg-gray-100 rounded w-1/2" />
@@ -312,7 +312,7 @@ export const Products: React.FC = () => {
             </svg>
             <p className="font-medium">No products found</p>
             {hasActiveFilters && (
-              <button onClick={clearFilters} className="mt-2 text-emerald-600 text-sm hover:underline">
+              <button onClick={clearFilters} className="mt-2 text-[#176f50] text-sm hover:underline">
                 Clear filters
               </button>
             )}
@@ -335,7 +335,7 @@ export const Products: React.FC = () => {
                 <button
                   onClick={loadMore}
                   disabled={loadingMore}
-                  className="px-6 py-2.5 bg-amber-500 text-gray-900 rounded-lg font-medium text-sm hover:bg-amber-600 disabled:opacity-60 transition"
+                  className="px-6 py-2.5 bg-lime-300 text-gray-900 rounded-lg font-medium text-sm hover:bg-lime-400 disabled:opacity-60 transition"
                 >
                   {loadingMore ? 'Loading...' : 'Load more'}
                 </button>
@@ -356,7 +356,7 @@ function ProductTile({ product, viewMode }: { product: Product; viewMode: ViewMo
     return (
       <Link
         to={`/product/${product.id}`}
-        className="group bg-white rounded-xl p-4 hover:shadow-md transition-shadow border border-gray-100 flex gap-4 items-center"
+        className="group bg-white rounded-2xl p-4 hover:shadow-md transition-shadow border border-gray-100 flex gap-4 items-center"
       >
         <div className="w-16 h-16 flex-shrink-0 bg-gray-50 rounded-lg overflow-hidden flex items-center justify-center">
           {product.image_url && !imgError ? (
@@ -374,12 +374,12 @@ function ProductTile({ product, viewMode }: { product: Product; viewMode: ViewMo
           )}
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-gray-900 group-hover:text-emerald-600 transition-colors line-clamp-1">
+          <p className="text-sm font-medium text-gray-900 group-hover:text-[#176f50] transition-colors line-clamp-1">
             {product.name}
           </p>
           <div className="flex items-center gap-2 mt-0.5">
             {product.brand && <span className="text-xs text-gray-400">{product.brand}</span>}
-            {product.category && <span className="text-xs bg-emerald-50 text-emerald-600 rounded px-1.5 py-0.5">{product.category}</span>}
+            {product.category && <span className="text-xs bg-emerald-50 text-[#176f50] rounded px-1.5 py-0.5">{product.category}</span>}
           </div>
         </div>
         <div className="flex-shrink-0 flex flex-col items-end gap-1">
@@ -414,7 +414,7 @@ function ProductTile({ product, viewMode }: { product: Product; viewMode: ViewMo
   return (
     <Link
       to={`/product/${product.id}`}
-      className="relative group bg-white rounded-xl p-3 hover:shadow-md transition-shadow border border-gray-100 flex flex-col"
+      className="relative group bg-white rounded-2xl p-3 hover:shadow-md transition-shadow border border-gray-100 flex flex-col"
     >
       <div
         className="absolute top-2 right-2 z-10"
@@ -444,7 +444,7 @@ function ProductTile({ product, viewMode }: { product: Product; viewMode: ViewMo
       </div>
 
       <div className="flex-1 min-w-0">
-        <p className={`font-medium text-gray-900 leading-snug line-clamp-2 group-hover:text-emerald-600 transition-colors ${viewMode === 'comfortable' ? 'text-sm' : 'text-xs'}`}>
+        <p className={`font-medium text-gray-900 leading-snug line-clamp-2 group-hover:text-[#176f50] transition-colors ${viewMode === 'comfortable' ? 'text-sm' : 'text-xs'}`}>
           {product.name}
         </p>
         {product.brand && (
@@ -464,7 +464,7 @@ function ProductTile({ product, viewMode }: { product: Product; viewMode: ViewMo
           </div>
         ) : (
           product.category && (
-            <span className="inline-block mt-1.5 text-[10px] bg-emerald-50 text-emerald-600 rounded px-1.5 py-0.5 truncate max-w-full">
+            <span className="inline-block mt-1.5 text-[10px] bg-emerald-50 text-[#176f50] rounded px-1.5 py-0.5 truncate max-w-full">
               {product.category}
             </span>
           )
