@@ -189,7 +189,7 @@ export const Product: React.FC = () => {
           <div className="grid grid-cols-1 lg:grid-cols-5 gap-8">
             <div className="lg:col-span-2">
               <div className="bg-white rounded-2xl p-6 animate-pulse space-y-4">
-                <div className="aspect-square bg-gray-100 rounded-xl max-w-[200px]" />
+                <div className="aspect-square bg-gray-100 rounded-2xl max-w-[200px]" />
                 <div className="h-6 bg-gray-100 rounded w-3/4" />
                 <div className="h-4 bg-gray-100 rounded w-1/2" />
                 <div className="h-4 bg-gray-100 rounded w-1/3" />
@@ -198,7 +198,7 @@ export const Product: React.FC = () => {
             <div className="lg:col-span-3">
               <div className="bg-white rounded-2xl p-6 animate-pulse space-y-3">
                 {Array.from({ length: 4 }).map((_, i) => (
-                  <div key={i} className="h-16 bg-gray-100 rounded-xl" />
+                  <div key={i} className="h-16 bg-gray-100 rounded-2xl" />
                 ))}
               </div>
             </div>
@@ -216,7 +216,7 @@ export const Product: React.FC = () => {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
           </svg>
           <h2 className="text-xl font-semibold text-gray-900 mb-2">Product not found</h2>
-          <button onClick={() => navigate(-1)} className="mt-4 text-emerald-600 hover:underline text-sm font-medium">
+          <button onClick={() => navigate(-1)} className="mt-4 text-[#176f50] hover:underline text-sm font-medium">
             Go back
           </button>
         </div>
@@ -237,7 +237,7 @@ export const Product: React.FC = () => {
         <div className="max-w-[1280px] mx-auto px-6 sm:px-8 lg:px-10 py-3 flex items-center gap-2 text-sm">
           <button
             onClick={() => navigate(-1)}
-            className="flex items-center gap-1 text-gray-500 hover:text-emerald-600 transition font-medium cursor-pointer"
+            className="flex items-center gap-1 text-gray-500 hover:text-[#176f50] transition font-medium cursor-pointer"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
@@ -245,14 +245,14 @@ export const Product: React.FC = () => {
             Back
           </button>
           <span className="text-gray-300">/</span>
-          <Link to="/products" className="text-gray-500 hover:text-emerald-600 transition">Products</Link>
+          <Link to="/products" className="text-gray-500 hover:text-[#176f50] transition">Products</Link>
           <span className="text-gray-300">/</span>
           <span className="text-gray-900 font-medium truncate max-w-[200px] sm:max-w-sm">{product.name}</span>
 
           {/* Location indicator / prompt */}
           <div className="ml-auto flex items-center gap-2">
             {geoStatus === 'granted' && position ? (
-              <span className="flex items-center gap-1.5 text-xs text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-full">
+              <span className="flex items-center gap-1.5 text-xs text-[#176f50] bg-emerald-50 px-2.5 py-1 rounded-full">
                 <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
                   <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z" />
                 </svg>
@@ -261,7 +261,7 @@ export const Product: React.FC = () => {
             ) : geoStatus !== 'requesting' ? (
               <button
                 onClick={requestLocation}
-                className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-emerald-600 border border-gray-200 hover:border-emerald-300 px-2.5 py-1 rounded-full transition cursor-pointer"
+                className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-[#176f50] border border-gray-200 hover:border-[#a8cdb1] px-2.5 py-1 rounded-full transition cursor-pointer"
               >
                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
@@ -283,7 +283,7 @@ export const Product: React.FC = () => {
           <div className="lg:col-span-2 space-y-4">
             <div className="bg-white rounded-2xl border border-gray-100 p-6">
               {/* Image */}
-              <div className="w-40 h-40 mx-auto bg-gray-50 rounded-xl overflow-hidden flex items-center justify-center mb-5 border border-gray-100">
+              <div className="w-40 h-40 mx-auto bg-gray-50 rounded-2xl overflow-hidden flex items-center justify-center mb-5 border border-gray-100">
                 {product.image_url && !imgError ? (
                   <img
                     src={product.image_url}
@@ -306,7 +306,7 @@ export const Product: React.FC = () => {
               )}
 
               {product.category && (
-                <span className="inline-block px-3 py-1 bg-emerald-50 text-emerald-600 text-xs font-medium rounded-full mb-4">
+                <span className="inline-block px-3 py-1 bg-emerald-50 text-[#176f50] text-xs font-medium rounded-full mb-4">
                   {product.category}
                 </span>
               )}
@@ -333,11 +333,11 @@ export const Product: React.FC = () => {
                     {position ? 'Best price nearby' : 'Best price available'}
                   </p>
                   <div className="flex items-baseline gap-2">
-                    <span className={`text-3xl font-bold ${onSaleStores.length > 0 ? 'text-emerald-600' : 'text-gray-900'}`}>
+                    <span className={`text-3xl font-bold ${onSaleStores.length > 0 ? 'text-[#176f50]' : 'text-gray-900'}`}>
                       ${lowestPrice.toFixed(2)}
                     </span>
                     {onSaleStores.length > 0 && (
-                      <span className="text-xs text-emerald-600 font-medium">
+                      <span className="text-xs text-[#176f50] font-medium">
                         On sale at {onSaleStores.length} store{onSaleStores.length > 1 ? 's' : ''}
                       </span>
                     )}
@@ -395,7 +395,7 @@ export const Product: React.FC = () => {
                       className="flex-1 h-1.5 rounded-full appearance-none cursor-pointer accent-emerald-600"
                       aria-label="Search radius in kilometres"
                     />
-                    <span className="text-xs font-semibold text-emerald-700 w-12 text-right whitespace-nowrap">
+                    <span className="text-xs font-semibold text-[#135d46] w-12 text-right whitespace-nowrap">
                       {pendingRadius} km
                     </span>
                   </div>
@@ -405,7 +405,7 @@ export const Product: React.FC = () => {
               {storesLoading ? (
                 <div className="p-4 space-y-3">
                   {Array.from({ length: 4 }).map((_, i) => (
-                    <div key={i} className="flex items-center gap-4 p-3 rounded-xl animate-pulse">
+                    <div key={i} className="flex items-center gap-4 p-3 rounded-2xl animate-pulse">
                       <div className="w-10 h-10 bg-gray-100 rounded-lg flex-shrink-0" />
                       <div className="flex-1 space-y-1.5">
                         <div className="h-3 bg-gray-100 rounded w-1/2" />
@@ -430,7 +430,7 @@ export const Product: React.FC = () => {
                   {!position && (
                     <button
                       onClick={requestLocation}
-                      className="mt-3 text-emerald-600 text-sm font-medium hover:underline cursor-pointer"
+                      className="mt-3 text-[#176f50] text-sm font-medium hover:underline cursor-pointer"
                     >
                       Enable location to find nearby stores
                     </button>
@@ -466,11 +466,11 @@ export const Product: React.FC = () => {
                         </div>
 
                         <div className="text-right flex-shrink-0">
-                          <p className={`text-base font-bold ${store.is_on_sale ? 'text-emerald-600' : 'text-gray-900'}`}>
+                          <p className={`text-base font-bold ${store.is_on_sale ? 'text-[#176f50]' : 'text-gray-900'}`}>
                             ${store.price_aud.toFixed(2)}
                           </p>
                           {store.is_on_sale ? (
-                            <span className="text-[10px] text-emerald-600 font-semibold">
+                            <span className="text-[10px] text-[#176f50] font-semibold">
                               {store.discount_pct ? `-${Math.round(store.discount_pct)}%` : 'On Sale'}
                             </span>
                           ) : (
@@ -485,7 +485,7 @@ export const Product: React.FC = () => {
                     <div className="px-5 py-3 text-center">
                       <button
                         onClick={() => setShowAllStores(v => !v)}
-                        className="text-sm text-emerald-600 hover:text-emerald-700 font-medium transition cursor-pointer"
+                        className="text-sm text-[#176f50] hover:text-[#135d46] font-medium transition cursor-pointer"
                       >
                         {showAllStores ? 'Show fewer stores' : `Show all ${stores.length} stores`}
                       </button>
@@ -508,7 +508,7 @@ export const Product: React.FC = () => {
                 </div>
                 <button
                   onClick={requestLocation}
-                  className="flex-shrink-0 bg-amber-500 text-gray-900 text-sm font-medium px-4 py-2 rounded-lg hover:bg-amber-600 transition cursor-pointer"
+                  className="flex-shrink-0 bg-lime-300 text-gray-900 text-sm font-medium px-4 py-2 rounded-lg hover:bg-lime-400 transition cursor-pointer"
                 >
                   Enable
                 </button>
