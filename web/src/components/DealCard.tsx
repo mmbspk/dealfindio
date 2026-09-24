@@ -32,7 +32,7 @@ export const DealCard: React.FC<Props> = ({ deal, viewMode = 'list' }) => {
       <div className="relative group">
         <Link
           to={`/product/${deal.product_id}`}
-          className="block bg-white border border-gray-100 rounded-xl p-3 hover:shadow-md hover:border-emerald-300 transition flex flex-col"
+          className="block bg-white border border-gray-100 rounded-2xl p-3 hover:shadow-md hover:border-[#a8cdb1] transition flex flex-col"
         >
           <div className="aspect-square bg-gray-50 rounded-lg mb-2 overflow-hidden flex items-center justify-center relative">
             {deal.image_url ? (
@@ -41,20 +41,20 @@ export const DealCard: React.FC<Props> = ({ deal, viewMode = 'list' }) => {
               <PlaceholderIcon className="w-8 h-8 text-gray-200" />
             )}
             {pctOff && pctOff > 0 && (
-              <span className="absolute top-1.5 left-1.5 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded">
+              <span className="absolute top-1.5 left-1.5 bg-red-500 text-white text-xs font-bold px-1.5 py-0.5 rounded">
                 -{pctOff}%
               </span>
             )}
           </div>
-          <p className="text-xs font-semibold text-gray-900 leading-snug line-clamp-2 group-hover:text-emerald-600 transition">
+          <p className="text-xs font-semibold text-gray-900 leading-snug line-clamp-2 group-hover:text-[#176f50] transition">
             {deal.product_name}
           </p>
-          {deal.brand && <p className="text-[10px] text-gray-400 mt-0.5 truncate">{deal.brand}</p>}
-          <p className="text-[10px] text-gray-400 mt-0.5">{chainLabel}</p>
+          {deal.brand && <p className="text-xs text-gray-400 mt-0.5 truncate">{deal.brand}</p>}
+          <p className="text-xs text-gray-400 mt-0.5">{chainLabel}</p>
           <div className="mt-1.5 flex items-baseline gap-1 flex-wrap">
-            <span className="text-sm font-bold text-emerald-600">${deal.price_aud.toFixed(2)}</span>
+            <span className="text-sm font-bold text-[#176f50]">${deal.price_aud.toFixed(2)}</span>
             {deal.was_price_aud && (
-              <span className="text-[10px] text-gray-400 line-through">${deal.was_price_aud.toFixed(2)}</span>
+              <span className="text-xs text-gray-400 line-through">${deal.was_price_aud.toFixed(2)}</span>
             )}
           </div>
         </Link>
@@ -71,7 +71,7 @@ export const DealCard: React.FC<Props> = ({ deal, viewMode = 'list' }) => {
       <div className="relative group">
         <Link
           to={`/product/${deal.product_id}`}
-          className="block bg-white border border-gray-100 rounded-xl p-4 hover:shadow-md hover:border-emerald-300 transition flex flex-col h-full"
+          className="block bg-white border border-gray-100 rounded-2xl p-4 hover:shadow-md hover:border-[#a8cdb1] transition flex flex-col h-full"
         >
           <div className="aspect-square bg-gray-50 rounded-lg mb-3 overflow-hidden flex items-center justify-center relative">
             {deal.image_url ? (
@@ -86,13 +86,13 @@ export const DealCard: React.FC<Props> = ({ deal, viewMode = 'list' }) => {
             )}
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold text-gray-900 leading-snug line-clamp-2 group-hover:text-emerald-600 transition mb-1">
+            <p className="text-sm font-semibold text-gray-900 leading-snug line-clamp-2 group-hover:text-[#176f50] transition mb-1">
               {deal.product_name}
             </p>
             {deal.brand && <p className="text-xs text-gray-400 mb-1">{deal.brand}</p>}
             <p className="text-xs text-gray-500 truncate mb-2">{chainLabel}</p>
             <div className="flex items-baseline gap-2 flex-wrap">
-              <span className="text-base font-bold text-emerald-600">${deal.price_aud.toFixed(2)}</span>
+              <span className="text-base font-bold text-[#176f50]">${deal.price_aud.toFixed(2)}</span>
               {deal.was_price_aud && (
                 <span className="text-xs text-gray-400 line-through">${deal.was_price_aud.toFixed(2)}</span>
               )}
@@ -110,7 +110,7 @@ export const DealCard: React.FC<Props> = ({ deal, viewMode = 'list' }) => {
   return (
     <Link
       to={`/product/${deal.product_id}`}
-      className="flex gap-4 items-center bg-white border border-gray-200 rounded-xl p-4 hover:border-emerald-300 hover:shadow-md transition group"
+      className="flex gap-4 items-center bg-white border border-gray-200 rounded-2xl p-4 hover:border-[#a8cdb1] hover:shadow-md transition group"
     >
       <div className="w-16 h-16 flex-shrink-0 bg-gray-50 rounded-lg overflow-hidden flex items-center justify-center border border-gray-100">
         {deal.image_url ? (
@@ -121,13 +121,13 @@ export const DealCard: React.FC<Props> = ({ deal, viewMode = 'list' }) => {
       </div>
 
       <div className="flex-1 min-w-0">
-        <p className="font-semibold text-gray-900 leading-tight text-sm group-hover:text-emerald-600 transition line-clamp-2 mb-0.5">
+        <p className="font-semibold text-gray-900 leading-tight text-sm group-hover:text-[#176f50] transition line-clamp-2 mb-0.5">
           {deal.product_name}
         </p>
         {deal.brand && <p className="text-xs text-gray-400">{deal.brand}</p>}
         <p className="text-xs text-gray-400">{chainLabel}</p>
         <div className="flex items-baseline gap-2 mt-1.5">
-          <span className="text-base font-bold text-emerald-600">${deal.price_aud.toFixed(2)}</span>
+          <span className="text-base font-bold text-[#176f50]">${deal.price_aud.toFixed(2)}</span>
           {deal.was_price_aud && (
             <span className="text-xs text-gray-400 line-through">${deal.was_price_aud.toFixed(2)}</span>
           )}
