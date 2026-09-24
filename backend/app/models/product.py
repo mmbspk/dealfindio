@@ -5,11 +5,11 @@ Models grocery products with identifiers (GTIN), brand, category, and unit infor
 Products are shared across stores and price reports.
 """
 
+from datetime import datetime
+
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import Boolean, DateTime, Index, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-
-from datetime import datetime
 
 from .base import Base
 

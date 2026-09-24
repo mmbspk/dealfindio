@@ -5,8 +5,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-
 # ── Lists ────────────────────────────────────────────────────────────────────
+
 
 class WatchlistListCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
@@ -26,6 +26,7 @@ class WatchlistListResponse(BaseModel):
 
 
 # ── Items ────────────────────────────────────────────────────────────────────
+
 
 class WatchlistItemCreate(BaseModel):
     product_id: UUID
@@ -73,8 +74,10 @@ class WatchlistDetailResponse(WatchlistItemResponse):
 
 # ── Product watchlist status (for the Save-to-list popover) ──────────────────
 
+
 class ProductWatchlistStatus(BaseModel):
     """Which of the user's lists contain a given product."""
+
     list_id: UUID
     list_name: str
     list_emoji: str | None = None

@@ -177,7 +177,7 @@ export default function NotificationsScreen() {
       </View>
 
       {loading ? (
-        <ActivityIndicator size="large" color="#4f46e5" style={styles.spinner} />
+        <ActivityIndicator size="large" color="#164b40" style={styles.spinner} />
       ) : error ? (
         <View style={styles.emptyState}>
           <Text style={styles.emptyText}>{error}</Text>
@@ -204,25 +204,25 @@ export default function NotificationsScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f9fafb' },
+  container: { flex: 1, backgroundColor: '#f5f7f2' },
   toolbar: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 16, paddingVertical: 10,
-    backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#f3f4f6',
+    backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#edf2e9',
   },
   toolbarLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   toolbarRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  unreadBadge: { backgroundColor: '#4f46e5', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2 },
+  unreadBadge: { backgroundColor: '#164b40', borderRadius: 14, paddingHorizontal: 8, paddingVertical: 2 },
   unreadBadgeText: { color: '#fff', fontSize: 12, fontWeight: '700' },
   actionBtn: { paddingHorizontal: 10, paddingVertical: 6 },
-  actionBtnText: { color: '#4f46e5', fontSize: 13, fontWeight: '600' },
+  actionBtnText: { color: '#164b40', fontSize: 13, fontWeight: '600' },
   prefsBtn: { padding: 6 },
-  prefsBtnText: { fontSize: 18, color: '#6b7280' },
+  prefsBtnText: { fontSize: 18, color: '#5d7469' },
   spinner: { marginTop: 48 },
   emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 },
   emptyIcon: { fontSize: 48, marginBottom: 12 },
-  emptyTitle: { fontSize: 17, fontWeight: '700', color: '#111827', marginBottom: 6, textAlign: 'center' },
-  emptyText: { fontSize: 14, color: '#9ca3af', textAlign: 'center', lineHeight: 20 },
+  emptyTitle: { fontSize: 17, fontWeight: '700', color: '#122923', marginBottom: 6, textAlign: 'center' },
+  emptyText: { fontSize: 14, color: '#71877b', textAlign: 'center', lineHeight: 20 },
   list: { padding: 12 },
   card: {
     flexDirection: 'row',
@@ -230,24 +230,24 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     marginBottom: 8,
     borderWidth: 1,
-    borderColor: '#f3f4f6',
+    borderColor: '#edf2e9',
     overflow: 'hidden',
     alignItems: 'flex-start',
   },
-  cardUnread: { borderColor: '#c7d2fe', backgroundColor: '#fafbff' },
+  cardUnread: { borderColor: '#afd2b2', backgroundColor: '#fafbff' },
   cardLeft: { paddingTop: 16, paddingLeft: 12, paddingRight: 6 },
   dot: { width: 8, height: 8, borderRadius: 4 },
-  dotActive: { backgroundColor: '#4f46e5' },
+  dotActive: { backgroundColor: '#164b40' },
   dotRead: { backgroundColor: 'transparent' },
   cardBody: { flex: 1, padding: 12, paddingLeft: 4 },
   headerRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
-  triggerBadge: { backgroundColor: '#d1fae5', borderRadius: 10, paddingHorizontal: 7, paddingVertical: 2 },
+  triggerBadge: { backgroundColor: '#d1fae5', borderRadius: 14, paddingHorizontal: 7, paddingVertical: 2 },
   triggerText: { fontSize: 11, fontWeight: '600', color: '#065f46' },
-  timeText: { fontSize: 11, color: '#9ca3af', marginLeft: 'auto' },
-  title: { fontSize: 14, fontWeight: '700', color: '#111827', lineHeight: 20 },
-  titleRead: { color: '#374151', fontWeight: '600' },
-  body: { fontSize: 13, color: '#6b7280', marginTop: 2, lineHeight: 18 },
-  meta: { fontSize: 11, color: '#9ca3af', marginTop: 4 },
+  timeText: { fontSize: 11, color: '#71877b', marginLeft: 'auto' },
+  title: { fontSize: 14, fontWeight: '700', color: '#122923', lineHeight: 20 },
+  titleRead: { color: '#29463a', fontWeight: '600' },
+  body: { fontSize: 13, color: '#5d7469', marginTop: 2, lineHeight: 18 },
+  meta: { fontSize: 11, color: '#71877b', marginTop: 4 },
   deleteBtn: { padding: 12, paddingTop: 14 },
   deleteIcon: { fontSize: 14, color: '#d1d5db' },
 })

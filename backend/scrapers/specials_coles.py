@@ -31,7 +31,7 @@ from tenacity import (
     wait_exponential,
 )
 
-from scrapers.base import Scraper, ScrapedProduct, ScraperError
+from scrapers.base import ScrapedProduct, Scraper, ScraperError
 
 _HOME_URL = "https://www.coles.com.au/"
 _IMAGE_CDN_BASE = "https://productimages.coles.com.au/productimages"
@@ -148,9 +148,7 @@ class ColesSpecialsScraper(Scraper):
         self.logger.info("Fetched %d pages from Coles /on-special", len(pages))
         return pages
 
-    async def _fetch_page(
-        self, client: httpx.AsyncClient, build_id: str, page: int
-    ) -> dict:
+    async def _fetch_page(self, client: httpx.AsyncClient, build_id: str, page: int) -> dict:
         url = self._data_url(build_id, "on-special.json")
         try:
             resp = await client.get(url, params={"page": page})
@@ -190,6 +188,7 @@ class ColesSpecialsScraper(Scraper):
 
 
 # ── Response helpers ──────────────────────────────────────────────────────────
+
 
 def _extract_results(page: dict) -> list[dict]:
     if not isinstance(page, dict):

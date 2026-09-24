@@ -10,14 +10,13 @@ Covers:
   dropped product's price_reports onto the kept product.
 """
 
+import os
 from datetime import datetime, timezone
 from uuid import uuid4
 
-import os
-
 import pytest
 
-from app.deps import get_current_user, get_db, get_redis, require_admin
+from app.deps import get_current_user, get_db, require_admin
 from app.main import app
 from app.models import PriceReport, Product, Store
 from app.models.product_match import ProductMatchCandidate
@@ -123,6 +122,7 @@ class TestDecideCandidateApprove:
     @pytest.fixture
     def admin_client(self, test_db_session):
         from fastapi.testclient import TestClient
+
         from app.models.user import User
 
         def override_get_db():
@@ -140,21 +140,34 @@ class TestDecideCandidateApprove:
 
     def _seed_pair(self, session):
         store = Store(id=uuid4(), chain="coles", name="Coles Test")
-        keep = Product(id=uuid4(), name="Coca-Cola 1.25L", brand="Coca-Cola",
-                       external_source="catalog_woolworths")
-        drop = Product(id=uuid4(), name="Coca Cola 1.25L", brand="Coca-Cola",
-                       external_source="catalog_coles")
+        keep = Product(
+            id=uuid4(),
+            name="Coca-Cola 1.25L",
+            brand="Coca-Cola",
+            external_source="catalog_woolworths",
+        )
+        drop = Product(
+            id=uuid4(), name="Coca Cola 1.25L", brand="Coca-Cola", external_source="catalog_coles"
+        )
         session.add_all([store, keep, drop])
         session.flush()
 
         # Price report on the DROPPED product — must be re-pointed to keep on merge.
         pr = PriceReport(
-            id=uuid4(), product_id=drop.id, store_id=store.id,
-            price_cents=250, source="catalog_coles", valid_from=datetime.now(timezone.utc),
+            id=uuid4(),
+            product_id=drop.id,
+            store_id=store.id,
+            price_cents=250,
+            source="catalog_coles",
+            valid_from=datetime.now(timezone.utc),
         )
         candidate = ProductMatchCandidate(
-            id=uuid4(), product_a_id=keep.id, product_b_id=drop.id,
-            score=96.0, status="pending", proposed_by="auto",
+            id=uuid4(),
+            product_a_id=keep.id,
+            product_b_id=drop.id,
+            score=96.0,
+            status="pending",
+            proposed_by="auto",
         )
         session.add_all([pr, candidate])
         session.commit()
@@ -163,12 +176,11 @@ class TestDecideCandidateApprove:
     @pytest.mark.integration
     def test_approve_returns_200_and_merges(self, admin_client, test_db_session):
         import uuid as _uuid
+
         from sqlalchemy import select
 
         keep, drop, candidate, pr = self._seed_pair(test_db_session)
-        keep_id, drop_id, cand_id, pr_id = (
-            str(keep.id), str(drop.id), str(candidate.id), pr.id
-        )
+        keep_id, drop_id, cand_id, pr_id = (str(keep.id), str(drop.id), str(candidate.id), pr.id)
 
         resp = admin_client.post(
             f"/api/v1/admin/dedup/candidates/{cand_id}/decide",
@@ -185,12 +197,18 @@ class TestDecideCandidateApprove:
         # Merge applied: dropped product gone, its price report re-pointed to keep.
         # Query by captured UUIDs (the ORM instances are now stale/deleted).
         test_db_session.expire_all()
-        assert test_db_session.execute(
-            select(Product).where(Product.id == _uuid.UUID(drop_id))
-        ).scalar_one_or_none() is None
-        assert test_db_session.execute(
-            select(Product).where(Product.id == _uuid.UUID(keep_id))
-        ).scalar_one_or_none() is not None
+        assert (
+            test_db_session.execute(
+                select(Product).where(Product.id == _uuid.UUID(drop_id))
+            ).scalar_one_or_none()
+            is None
+        )
+        assert (
+            test_db_session.execute(
+                select(Product).where(Product.id == _uuid.UUID(keep_id))
+            ).scalar_one_or_none()
+            is not None
+        )
         moved = test_db_session.execute(
             select(PriceReport).where(PriceReport.id == pr_id)
         ).scalar_one()

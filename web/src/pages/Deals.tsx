@@ -111,7 +111,7 @@ export const Deals: React.FC = () => {
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Filter bar */}
-      <div className="bg-white border-b sticky top-[65px] z-40 shadow-sm">
+      <div className="bg-white border-b sticky top-[72px] z-40 shadow-sm">
         <div className="max-w-[1280px] mx-auto px-6 sm:px-8 lg:px-10 py-3">
           <div className="flex flex-wrap gap-3 items-center">
             {/* Chain filter */}
@@ -144,7 +144,7 @@ export const Deals: React.FC = () => {
                 onClick={() => setSortMode('discount')}
                 className={`px-3 py-1 text-xs font-medium rounded-md transition cursor-pointer ${
                   sortMode === 'discount'
-                    ? 'bg-white text-emerald-600 shadow-sm'
+                    ? 'bg-white text-[#176f50] shadow-sm'
                     : 'text-gray-500 hover:text-gray-700'
                 }`}
               >
@@ -154,7 +154,7 @@ export const Deals: React.FC = () => {
                 onClick={() => setSortMode('price')}
                 className={`px-3 py-1 text-xs font-medium rounded-md transition cursor-pointer ${
                   sortMode === 'price'
-                    ? 'bg-white text-emerald-600 shadow-sm'
+                    ? 'bg-white text-[#176f50] shadow-sm'
                     : 'text-gray-500 hover:text-gray-700'
                 }`}
               >
@@ -184,7 +184,7 @@ export const Deals: React.FC = () => {
             {position ? (
               <Link
                 to="/stores"
-                className="flex items-center gap-1.5 text-xs text-emerald-600 bg-emerald-50 px-2.5 py-1.5 rounded-full border border-emerald-100 hover:bg-emerald-100 transition whitespace-nowrap"
+                className="flex items-center gap-1.5 text-xs text-[#176f50] bg-emerald-50 px-2.5 py-1.5 rounded-full border border-emerald-100 hover:bg-emerald-100 transition whitespace-nowrap"
                 title="Change location"
               >
                 <svg className="w-3 h-3 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
@@ -195,7 +195,7 @@ export const Deals: React.FC = () => {
             ) : (
               <Link
                 to="/stores"
-                className="flex items-center gap-1.5 text-xs text-gray-500 bg-gray-50 px-2.5 py-1.5 rounded-full border border-gray-200 hover:border-emerald-300 hover:text-emerald-600 transition whitespace-nowrap"
+                className="flex items-center gap-1.5 text-xs text-gray-500 bg-gray-50 px-2.5 py-1.5 rounded-full border border-gray-200 hover:border-[#a8cdb1] hover:text-[#176f50] transition whitespace-nowrap"
               >
                 <svg className="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/>
@@ -210,7 +210,7 @@ export const Deals: React.FC = () => {
               <button
                 onClick={() => setViewMode('compact')}
                 title="Compact"
-                className={`p-1.5 rounded cursor-pointer transition ${viewMode === 'compact' ? 'bg-white shadow-sm text-emerald-600' : 'text-gray-400 hover:text-gray-600'}`}
+                className={`p-1.5 rounded cursor-pointer transition ${viewMode === 'compact' ? 'bg-white shadow-sm text-[#176f50]' : 'text-gray-400 hover:text-gray-600'}`}
               >
                 <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 16 16">
                   <rect x="0" y="0" width="4" height="4" rx="0.5" />
@@ -227,7 +227,7 @@ export const Deals: React.FC = () => {
               <button
                 onClick={() => setViewMode('comfortable')}
                 title="Comfortable"
-                className={`p-1.5 rounded cursor-pointer transition ${viewMode === 'comfortable' ? 'bg-white shadow-sm text-emerald-600' : 'text-gray-400 hover:text-gray-600'}`}
+                className={`p-1.5 rounded cursor-pointer transition ${viewMode === 'comfortable' ? 'bg-white shadow-sm text-[#176f50]' : 'text-gray-400 hover:text-gray-600'}`}
               >
                 <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 16 16">
                   <rect x="0" y="0" width="7" height="7" rx="0.5" />
@@ -239,7 +239,7 @@ export const Deals: React.FC = () => {
               <button
                 onClick={() => setViewMode('list')}
                 title="List"
-                className={`p-1.5 rounded cursor-pointer transition ${viewMode === 'list' ? 'bg-white shadow-sm text-emerald-600' : 'text-gray-400 hover:text-gray-600'}`}
+                className={`p-1.5 rounded cursor-pointer transition ${viewMode === 'list' ? 'bg-white shadow-sm text-[#176f50]' : 'text-gray-400 hover:text-gray-600'}`}
               >
                 <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 16 16">
                   <rect x="0" y="1" width="16" height="3" rx="0.5" />
@@ -278,7 +278,7 @@ export const Deals: React.FC = () => {
           }>
             {Array.from({ length: 12 }).map((_, i) => (
               viewMode === 'list' ? (
-                <div key={i} className="bg-white rounded-xl p-4 animate-pulse flex gap-4">
+                <div key={i} className="bg-white rounded-2xl p-4 animate-pulse flex gap-4">
                   <div className="w-20 h-20 bg-gray-100 rounded-lg flex-shrink-0" />
                   <div className="flex-1 space-y-2 pt-1">
                     <div className="h-3 bg-gray-100 rounded w-3/4" />
@@ -287,7 +287,7 @@ export const Deals: React.FC = () => {
                   </div>
                 </div>
               ) : (
-                <div key={i} className="bg-white rounded-xl p-3 animate-pulse">
+                <div key={i} className="bg-white rounded-2xl p-3 animate-pulse">
                   <div className="aspect-square bg-gray-100 rounded-lg mb-3" />
                   <div className="h-3 bg-gray-100 rounded mb-2 w-3/4" />
                   <div className="h-3 bg-gray-100 rounded w-1/2" />
@@ -307,7 +307,7 @@ export const Deals: React.FC = () => {
                 : 'Try clearing your filters or checking back later.'}
             </p>
             {hasActiveFilters && (
-              <button onClick={clearFilters} className="mt-3 text-emerald-600 text-sm hover:underline cursor-pointer">
+              <button onClick={clearFilters} className="mt-3 text-[#176f50] text-sm hover:underline cursor-pointer">
                 Show all chains
               </button>
             )}
@@ -330,7 +330,7 @@ export const Deals: React.FC = () => {
                 <button
                   onClick={loadMore}
                   disabled={loadingMore}
-                  className="px-6 py-2.5 bg-amber-500 text-gray-900 rounded-lg font-medium text-sm hover:bg-amber-600 disabled:opacity-60 transition cursor-pointer"
+                  className="px-6 py-2.5 bg-lime-300 text-gray-900 rounded-lg font-medium text-sm hover:bg-lime-400 disabled:opacity-60 transition cursor-pointer"
                 >
                   {loadingMore ? 'Loading...' : 'Load more deals'}
                 </button>

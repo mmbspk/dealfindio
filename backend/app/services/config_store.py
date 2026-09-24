@@ -218,6 +218,7 @@ def _decrypt(value_enc: str) -> str:
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
+
 def get_config(key: str, session: Session) -> Optional[str]:
     """Return the plaintext value for a key, or None if not set."""
     row = session.get(AppConfig, key)
@@ -339,7 +340,9 @@ def get_runtime_typed(key: str, session: Session):
         try:
             return _coerce(db_val, type_)
         except (ValueError, TypeError):
-            logger.warning("Config %s has an invalid stored value %r; using settings default", key, db_val)
+            logger.warning(
+                "Config %s has an invalid stored value %r; using settings default", key, db_val
+            )
     settings = get_settings()
     return getattr(settings, key, None)
 

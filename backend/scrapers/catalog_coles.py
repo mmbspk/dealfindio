@@ -43,22 +43,36 @@ from tenacity import (
     wait_exponential,
 )
 
+from app.services.category_normaliser import normalise_category as _normalise_category
 from scrapers.base import ScraperError
+from scrapers.catalog_base import (
+    HTML_HEADERS as _HTML_HEADERS,
+)
+from scrapers.catalog_base import (
+    JSON_HEADERS as _JSON_HEADERS_BASE,
+)
 from scrapers.catalog_base import (
     AuthExpiredError,
     CatalogProduct,
     CatalogScraper,
     CategoryNode,
-    HTML_HEADERS as _HTML_HEADERS,
-    JSON_HEADERS as _JSON_HEADERS_BASE,
-    parse_retry_after as _retry_after,
-    to_cents as _to_cents,
+)
+from scrapers.catalog_base import (
     get_scraper_proxy as _get_proxy,
 )
-from app.services.category_normaliser import normalise_category as _normalise_category
+from scrapers.catalog_base import (
+    parse_retry_after as _retry_after,
+)
+from scrapers.catalog_base import (
+    to_cents as _to_cents,
+)
 
 # Coles JSON requests must carry a Referer; override the shared base.
-_JSON_HEADERS = {**_JSON_HEADERS_BASE, "Accept": "application/json", "Referer": "https://www.coles.com.au/browse"}
+_JSON_HEADERS = {
+    **_JSON_HEADERS_BASE,
+    "Accept": "application/json",
+    "Referer": "https://www.coles.com.au/browse",
+}
 
 _HOME_URL = "https://www.coles.com.au/"
 # Coles serves product images from this CDN; imageUris carry only the relative
@@ -72,10 +86,15 @@ class _BotChallengeError(ScraperError):
 
     Retryable — a fresh connection usually clears it.
     """
+
+
 # Non-category promo/utility groups to skip when building crawl targets.
 _SKIP_SEO_TOKENS = {
-    "big-pack-value", "deliver-more-range", "down-down",
-    "bonus-entry-products", "tobacco",
+    "big-pack-value",
+    "deliver-more-range",
+    "down-down",
+    "bonus-entry-products",
+    "tobacco",
 }
 
 
@@ -131,7 +150,9 @@ class ColesCatalogScraper(CatalogScraper):
             await self._client.aclose()
             self._client = None
         client = httpx.AsyncClient(
-            headers=_HTML_HEADERS, follow_redirects=True, timeout=self.TIMEOUT_S,
+            headers=_HTML_HEADERS,
+            follow_redirects=True,
+            timeout=self.TIMEOUT_S,
             proxies=_get_proxy(),
         )
         try:
@@ -147,9 +168,7 @@ class ColesCatalogScraper(CatalogScraper):
         match = _BUILD_ID_RE.search(resp.text)
         if not match:
             await client.aclose()
-            raise _BotChallengeError(
-                f"no buildId in {len(resp.text)}-byte response"
-            )
+            raise _BotChallengeError(f"no buildId in {len(resp.text)}-byte response")
         # Keep the client alive — Imperva ties incap_ses_* to this TLS session.
         self._client = client
         cookies = {c.name: c.value for c in client.cookies.jar}
@@ -233,9 +252,9 @@ class ColesCatalogScraper(CatalogScraper):
         """
         # Between-category pause: keep the sustained request rate low enough
         # that Imperva doesn't flag the session after the first few categories.
-        await asyncio.sleep(random.uniform(
-            self._BETWEEN_CATEGORY_MIN_S, self._BETWEEN_CATEGORY_MAX_S
-        ))
+        await asyncio.sleep(
+            random.uniform(self._BETWEEN_CATEGORY_MIN_S, self._BETWEEN_CATEGORY_MAX_S)
+        )
         build_id = auth["build_id"]
         seo = category.url or category.id
         pages: list[dict] = []
@@ -243,8 +262,10 @@ class ColesCatalogScraper(CatalogScraper):
         client = self._client
         if client is None:
             client = httpx.AsyncClient(
-                headers=_JSON_HEADERS, cookies=auth.get("cookies", {}),
-                follow_redirects=True, timeout=self.TIMEOUT_S,
+                headers=_JSON_HEADERS,
+                cookies=auth.get("cookies", {}),
+                follow_redirects=True,
+                timeout=self.TIMEOUT_S,
                 proxies=_get_proxy(),
             )
         else:
@@ -267,9 +288,7 @@ class ColesCatalogScraper(CatalogScraper):
         l2_map = {c.id: c.name for c in (category.children or [])}
         return {"category": category.id, "pages": pages, "l2_map": l2_map}
 
-    async def parse_products(
-        self, raw: Any, category: CategoryNode
-    ) -> list[CatalogProduct]:
+    async def parse_products(self, raw: Any, category: CategoryNode) -> list[CatalogProduct]:
         """Flatten paged responses into CatalogProduct rows.
 
         Each product's category is labeled as ``L1 > L2`` when a subcategory
@@ -303,8 +322,10 @@ class ColesCatalogScraper(CatalogScraper):
         client = self._client
         if client is None:
             client = httpx.AsyncClient(
-                headers=_JSON_HEADERS, cookies=auth.get("cookies", {}),
-                follow_redirects=True, timeout=self.TIMEOUT_S,
+                headers=_JSON_HEADERS,
+                cookies=auth.get("cookies", {}),
+                follow_redirects=True,
+                timeout=self.TIMEOUT_S,
                 proxies=_get_proxy(),
             )
         client.headers.update(_JSON_HEADERS)
@@ -335,7 +356,7 @@ class ColesCatalogScraper(CatalogScraper):
                     raise AuthExpiredError(
                         f"Coles on-special non-JSON body ({len(resp.content)}b) — bot block"
                     )
-            except (httpx.HTTPError,) as exc:
+            except httpx.HTTPError as exc:
                 raise ScraperError(f"Coles on-special fetch failed: {exc}") from exc
 
             results = _extract_results(data)
@@ -382,7 +403,9 @@ class ColesCatalogScraper(CatalogScraper):
             self._consecutive_bot_blocks += 1
             self.logger.warning(
                 "Coles bot-protection block #%d for %r — cooling down %ds before re-auth",
-                self._consecutive_bot_blocks, category.name, wait_s,
+                self._consecutive_bot_blocks,
+                category.name,
+                wait_s,
             )
             await asyncio.sleep(wait_s)
             await self._invalidate_auth()
@@ -423,11 +446,12 @@ class ColesCatalogScraper(CatalogScraper):
                 raise AuthExpiredError(
                     f"Coles returned non-JSON body ({len(resp.content)}b) — likely bot-protection challenge"
                 )
-        except (httpx.HTTPError,) as exc:
+        except httpx.HTTPError as exc:
             raise ScraperError(f"Coles page parse failed: {exc}") from exc
 
 
 # ── Response helpers ─────────────────────────────────────────────────────────
+
 
 def _extract_results(page: dict) -> list[dict]:
     """Pull the product-result list out of a browse data-route page.
@@ -462,7 +486,9 @@ def _total_results(page: dict) -> Optional[int]:
 
 
 def _parse_item(
-    item: dict, category: CategoryNode, today: date,
+    item: dict,
+    category: CategoryNode,
+    today: date,
     l2_map: Optional[dict[str, str]] = None,
 ) -> Optional[CatalogProduct]:
     """Map one Coles product record to a CatalogProduct. Skips ad/non-products.

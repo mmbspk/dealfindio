@@ -5,7 +5,6 @@ Models physical store locations for major chains (Coles, Woolworths, Aldi, IGA).
 Stores are identified by chain, location coordinates, and place IDs for deduplication.
 """
 
-from uuid import UUID
 
 from sqlalchemy import Index, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship

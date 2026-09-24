@@ -131,8 +131,7 @@ class ReceiptParser:
             raise ReceiptParseError("Empty image payload")
         if len(image_bytes) > MAX_IMAGE_BYTES:
             raise ReceiptParseError(
-                f"Image too large ({len(image_bytes)} bytes); "
-                f"max is {MAX_IMAGE_BYTES} bytes"
+                f"Image too large ({len(image_bytes)} bytes); " f"max is {MAX_IMAGE_BYTES} bytes"
             )
 
     def _build_message(self, image_bytes: bytes, image_type: str) -> list[dict]:
@@ -182,9 +181,7 @@ class ReceiptParser:
         try:
             data = json.loads(cleaned)
         except json.JSONDecodeError as exc:
-            raise ReceiptParseError(
-                f"Vision model did not return valid JSON: {exc}"
-            ) from exc
+            raise ReceiptParseError(f"Vision model did not return valid JSON: {exc}") from exc
 
         if not isinstance(data, dict):
             raise ReceiptParseError("Vision model JSON was not an object")
@@ -219,15 +216,11 @@ class ReceiptParser:
         return ParsedReceipt(
             products=products,
             store_name=(str(data["store_name"]) if data.get("store_name") else None),
-            receipt_date=(
-                str(data["receipt_date"]) if data.get("receipt_date") else None
-            ),
+            receipt_date=(str(data["receipt_date"]) if data.get("receipt_date") else None),
             total=float(total) if total is not None else None,
         )
 
-    async def parse_receipt_image(
-        self, image_bytes: bytes, image_type: str
-    ) -> ParsedReceipt:
+    async def parse_receipt_image(self, image_bytes: bytes, image_type: str) -> ParsedReceipt:
         """
         Extract product details from a receipt photo via Claude vision.
 

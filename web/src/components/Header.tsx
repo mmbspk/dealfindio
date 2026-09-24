@@ -16,15 +16,15 @@ export const Header: React.FC = () => {
   function navClass(path: string) {
     const active = path === '/' ? location.pathname === '/' : location.pathname.startsWith(path)
     return active
-      ? 'text-emerald-600 font-semibold border-b-2 border-emerald-600 pb-0.5 transition'
-      : 'text-gray-600 hover:text-emerald-600 transition font-medium'
+      ? 'text-[#176f50] font-semibold border-b-2 border-[#176f50] pb-0.5 transition'
+      : 'text-gray-600 hover:text-[#176f50] transition font-medium'
   }
 
   // Mobile menu links get block styling + an active surface instead of the underline.
   function mobileNavClass(path: string) {
     const active = path === '/' ? location.pathname === '/' : location.pathname.startsWith(path)
     return active
-      ? 'block px-3 py-2 rounded-lg bg-emerald-50 text-emerald-700 font-semibold'
+      ? 'block px-3 py-2 rounded-lg bg-emerald-50 text-[#135d46] font-semibold'
       : 'block px-3 py-2 rounded-lg text-gray-700 hover:bg-gray-50 font-medium'
   }
 
@@ -63,12 +63,12 @@ export const Header: React.FC = () => {
         </Link>
 
         {/* Desktop nav */}
-        <nav className="hidden md:flex gap-6 items-center">
-          <Link to="/" className={navClass('/')}>Home</Link>
-          <Link to="/stores" className={navClass('/stores')}>Stores</Link>
-          <Link to="/products" className={navClass('/products')}>Products</Link>
+        <nav className="hidden md:flex gap-5 items-center">
+          <Link to="/" className={navClass('/')}>Explore</Link>
+          <Link to="/products" className={navClass('/products')}>Compare</Link>
           <Link to="/deals" className={navClass('/deals')}>Deals</Link>
-          <Link to="/watchlist" className={navClass('/watchlist')}>Watchlist</Link>
+          <Link to="/stores" className={navClass('/stores')}>Stores</Link>
+          <Link to="/watchlist" className={navClass('/watchlist')}>Saved</Link>
           {isAdmin && (
             <Link to="/admin" className={navClass('/admin')}>Admin</Link>
           )}
@@ -77,7 +77,7 @@ export const Header: React.FC = () => {
           {user && (
             <Link
               to="/notifications"
-              className="relative p-1.5 text-gray-500 hover:text-emerald-600 transition-colors cursor-pointer"
+              className="relative p-1.5 text-gray-500 hover:text-[#176f50] transition-colors cursor-pointer"
               aria-label={unreadCount > 0 ? `${unreadCount} unread notifications` : 'Notifications'}
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -85,7 +85,7 @@ export const Header: React.FC = () => {
                   d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
               </svg>
               {unreadCount > 0 && (
-                <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] flex items-center justify-center bg-emerald-600 text-white text-[10px] font-bold rounded-full px-1">
+                <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] flex items-center justify-center bg-[#176f50] text-white text-[10px] font-bold rounded-full px-1">
                   {unreadCount > 99 ? '99+' : unreadCount}
                 </span>
               )}
@@ -98,7 +98,7 @@ export const Header: React.FC = () => {
               <div className="flex items-center gap-3 ml-2">
                 <Link
                   to="/profile"
-                  className="w-8 h-8 rounded-full bg-emerald-600 flex items-center justify-center text-white text-sm font-bold hover:bg-emerald-700 transition cursor-pointer"
+                  className="w-8 h-8 rounded-full bg-[#176f50] flex items-center justify-center text-white text-sm font-bold hover:bg-[#135d46] transition cursor-pointer"
                   title={user.email ?? 'Profile'}
                   aria-label="Profile"
                 >
@@ -114,7 +114,7 @@ export const Header: React.FC = () => {
             ) : (
               <Link
                 to="/login"
-                className="ml-2 bg-amber-500 text-gray-900 px-4 py-1.5 rounded-lg text-sm font-semibold hover:bg-amber-600 transition"
+                className="ml-2 bg-lime-300 text-gray-900 px-4 py-1.5 rounded-lg text-sm font-semibold hover:bg-lime-400 transition"
               >
                 Login
               </Link>
@@ -127,7 +127,7 @@ export const Header: React.FC = () => {
           {user && (
             <Link
               to="/notifications"
-              className="relative p-2 text-gray-500 hover:text-emerald-600 transition-colors"
+              className="relative p-2 text-gray-500 hover:text-[#176f50] transition-colors"
               aria-label={unreadCount > 0 ? `${unreadCount} unread notifications` : 'Notifications'}
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -135,7 +135,7 @@ export const Header: React.FC = () => {
                   d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
               </svg>
               {unreadCount > 0 && (
-                <span className="absolute top-0.5 right-0.5 min-w-[18px] h-[18px] flex items-center justify-center bg-emerald-600 text-white text-[10px] font-bold rounded-full px-1">
+                <span className="absolute top-0.5 right-0.5 min-w-[18px] h-[18px] flex items-center justify-center bg-[#176f50] text-white text-[10px] font-bold rounded-full px-1">
                   {unreadCount > 99 ? '99+' : unreadCount}
                 </span>
               )}
@@ -143,7 +143,7 @@ export const Header: React.FC = () => {
           )}
           <button
             onClick={() => setMenuOpen((o) => !o)}
-            className="p-2 text-gray-700 hover:text-emerald-600 transition-colors"
+            className="p-2 text-gray-700 hover:text-[#176f50] transition-colors"
             aria-label={menuOpen ? 'Close menu' : 'Open menu'}
             aria-expanded={menuOpen}
           >
@@ -175,7 +175,7 @@ export const Header: React.FC = () => {
               {user ? (
                 <div className="flex items-center justify-between px-3 py-2">
                   <Link to="/profile" className="flex items-center gap-2 text-gray-700 font-medium">
-                    <span className="w-8 h-8 rounded-full bg-emerald-600 flex items-center justify-center text-white text-sm font-bold">
+                    <span className="w-8 h-8 rounded-full bg-[#176f50] flex items-center justify-center text-white text-sm font-bold">
                       {initials}
                     </span>
                     <span className="truncate max-w-[180px]">{user.email ?? 'Profile'}</span>
@@ -190,7 +190,7 @@ export const Header: React.FC = () => {
               ) : (
                 <Link
                   to="/login"
-                  className="block text-center bg-amber-500 text-gray-900 px-4 py-2.5 rounded-lg text-sm font-semibold hover:bg-amber-600 transition"
+                  className="block text-center bg-lime-300 text-gray-900 px-4 py-2.5 rounded-lg text-sm font-semibold hover:bg-lime-400 transition"
                 >
                   Login
                 </Link>

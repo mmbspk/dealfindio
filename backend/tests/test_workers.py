@@ -43,9 +43,7 @@ class TestValidateCommunityReport:
     def test_report_not_found_rejected(self, test_db_session):
         from app.workers import report_validator
 
-        with patch.object(
-            report_validator, "get_db_session", return_value=test_db_session
-        ):
+        with patch.object(report_validator, "get_db_session", return_value=test_db_session):
             result = self._fn().run(str(uuid4()))
         assert result["valid"] is False
         assert "report_not_found" in result["flags"]
@@ -68,9 +66,7 @@ class TestValidateCommunityReport:
 
         from app.workers import report_validator
 
-        with patch.object(
-            report_validator, "get_db_session", return_value=test_db_session
-        ):
+        with patch.object(report_validator, "get_db_session", return_value=test_db_session):
             result = self._fn().run(str(report.id))
         assert result["valid"] is True
         assert result["confidence_score"] == 1.0
@@ -94,9 +90,7 @@ class TestRecalculateReputation:
     def test_user_not_found(self, test_db_session):
         from app.workers import report_validator
 
-        with patch.object(
-            report_validator, "get_db_session", return_value=test_db_session
-        ):
+        with patch.object(report_validator, "get_db_session", return_value=test_db_session):
             result = self._fn().run(str(uuid4()))
         assert result["status"] == "user_not_found"
 
@@ -115,9 +109,7 @@ class TestRecalculateReputation:
 
         from app.workers import report_validator
 
-        with patch.object(
-            report_validator, "get_db_session", return_value=test_db_session
-        ):
+        with patch.object(report_validator, "get_db_session", return_value=test_db_session):
             result = self._fn().run(str(user.id))
         assert result["status"] in ("success", "completed", "updated") or "new_reputation" in result
         assert result["new_reputation"] >= 0
@@ -135,9 +127,7 @@ class TestCheckWatchlistForPrice:
     def test_invalid_report_id_handled(self, test_db_session):
         from app.workers import notification_tasks
 
-        with patch.object(
-            notification_tasks, "get_db_session", return_value=test_db_session
-        ):
+        with patch.object(notification_tasks, "get_db_session", return_value=test_db_session):
             result = self._fn().run("not-a-uuid")
         # Should not raise; returns a result dict indicating nothing sent.
         assert isinstance(result, dict)
@@ -146,9 +136,7 @@ class TestCheckWatchlistForPrice:
     def test_missing_report_handled(self, test_db_session):
         from app.workers import notification_tasks
 
-        with patch.object(
-            notification_tasks, "get_db_session", return_value=test_db_session
-        ):
+        with patch.object(notification_tasks, "get_db_session", return_value=test_db_session):
             result = self._fn().run(str(uuid4()))
         assert isinstance(result, dict)
 
@@ -158,12 +146,19 @@ class TestCheckWatchlistForPrice:
     ):
         # Reporter (no notification) and a watcher with a matching target + FCM token.
         reporter = UserProfile(
-            id=uuid4(), firebase_uid="rep", email="rep@x.com",
-            reputation_score=2.0, contribution_count=1,
+            id=uuid4(),
+            firebase_uid="rep",
+            email="rep@x.com",
+            reputation_score=2.0,
+            contribution_count=1,
         )
         watcher = UserProfile(
-            id=uuid4(), firebase_uid="watch", email="watch@x.com",
-            fcm_token="tok-123", reputation_score=1.0, contribution_count=0,
+            id=uuid4(),
+            firebase_uid="watch",
+            email="watch@x.com",
+            fcm_token="tok-123",
+            reputation_score=1.0,
+            contribution_count=0,
         )
         test_db_session.add_all([reporter, watcher])
         test_db_session.flush()
@@ -171,14 +166,20 @@ class TestCheckWatchlistForPrice:
         from app.models.watchlist import UserWatchlist
 
         entry = UserWatchlist(
-            id=uuid4(), user_id=watcher.id, product_id=sample_product.id,
-            target_price_cents=400, is_active=True,
+            id=uuid4(),
+            user_id=watcher.id,
+            product_id=sample_product.id,
+            target_price_cents=400,
+            is_active=True,
         )
         report = PriceReport(
-            product_id=sample_product.id, store_id=sample_store.id,
+            product_id=sample_product.id,
+            store_id=sample_store.id,
             price_cents=350,  # <= 400 -> price match
-            source="community", reporter_user_id=reporter.id,
-            confidence=0.8, valid_from=date.today(),
+            source="community",
+            reporter_user_id=reporter.id,
+            confidence=0.8,
+            valid_from=date.today(),
         )
         test_db_session.add_all([entry, report])
         test_db_session.commit()
@@ -202,9 +203,7 @@ class TestCheckWatchlistForPrice:
         # A notification row was logged for the watcher.
         from app.models import Notification
 
-        notes = test_db_session.query(Notification).filter_by(
-            user_id=watcher_id
-        ).all()
+        notes = test_db_session.query(Notification).filter_by(user_id=watcher_id).all()
         assert len(notes) >= 1
 
     @pytest.mark.integration
@@ -213,8 +212,12 @@ class TestCheckWatchlistForPrice:
     ):
         # The reporter watches their own product; they must NOT be notified.
         reporter = UserProfile(
-            id=uuid4(), firebase_uid="rep2", email="rep2@x.com",
-            fcm_token="tok-self", reputation_score=2.0, contribution_count=1,
+            id=uuid4(),
+            firebase_uid="rep2",
+            email="rep2@x.com",
+            fcm_token="tok-self",
+            reputation_score=2.0,
+            contribution_count=1,
         )
         test_db_session.add(reporter)
         test_db_session.flush()
@@ -222,13 +225,20 @@ class TestCheckWatchlistForPrice:
         from app.models.watchlist import UserWatchlist
 
         entry = UserWatchlist(
-            id=uuid4(), user_id=reporter.id, product_id=sample_product.id,
-            target_price_cents=400, is_active=True,
+            id=uuid4(),
+            user_id=reporter.id,
+            product_id=sample_product.id,
+            target_price_cents=400,
+            is_active=True,
         )
         report = PriceReport(
-            product_id=sample_product.id, store_id=sample_store.id,
-            price_cents=350, source="community", reporter_user_id=reporter.id,
-            confidence=0.8, valid_from=date.today(),
+            product_id=sample_product.id,
+            store_id=sample_store.id,
+            price_cents=350,
+            source="community",
+            reporter_user_id=reporter.id,
+            confidence=0.8,
+            valid_from=date.today(),
         )
         test_db_session.add_all([entry, report])
         test_db_session.commit()
@@ -238,7 +248,9 @@ class TestCheckWatchlistForPrice:
 
         with patch.object(
             notification_tasks, "get_db_session", return_value=test_db_session
-        ), patch.object(notification_tasks, "_send_push", return_value="expo-receipt-id") as mock_push:
+        ), patch.object(
+            notification_tasks, "_send_push", return_value="expo-receipt-id"
+        ) as mock_push:
             result = self._fn().run(report_id)
 
         assert result["notifications_sent"] == 0
@@ -260,8 +272,11 @@ class TestValidateCommunityReportFullPath:
         # A reporter plus a small price history so the outlier/confidence
         # calculation runs end to end (not just the early returns).
         reporter = UserProfile(
-            id=uuid4(), firebase_uid="fullrep", email="fullrep@x.com",
-            reputation_score=3.0, contribution_count=10,
+            id=uuid4(),
+            firebase_uid="fullrep",
+            email="fullrep@x.com",
+            reputation_score=3.0,
+            contribution_count=10,
         )
         test_db_session.add(reporter)
         test_db_session.flush()
@@ -270,16 +285,24 @@ class TestValidateCommunityReportFullPath:
         for cents in (340, 350, 360, 355, 345):
             test_db_session.add(
                 PriceReport(
-                    product_id=sample_product.id, store_id=sample_store.id,
-                    price_cents=cents, source="community",
-                    reporter_user_id=reporter.id, confidence=0.8,
-                    is_verified=True, valid_from=date.today(),
+                    product_id=sample_product.id,
+                    store_id=sample_store.id,
+                    price_cents=cents,
+                    source="community",
+                    reporter_user_id=reporter.id,
+                    confidence=0.8,
+                    is_verified=True,
+                    valid_from=date.today(),
                 )
             )
         new_report = PriceReport(
-            product_id=sample_product.id, store_id=sample_store.id,
-            price_cents=350, source="community", reporter_user_id=reporter.id,
-            confidence=0.5, valid_from=date.today(),
+            product_id=sample_product.id,
+            store_id=sample_store.id,
+            price_cents=350,
+            source="community",
+            reporter_user_id=reporter.id,
+            confidence=0.5,
+            valid_from=date.today(),
         )
         test_db_session.add(new_report)
         test_db_session.commit()
@@ -323,6 +346,7 @@ class TestNotifyPredictionDrops:
 
     def _fn(self):
         from app.workers.notification_tasks import notify_prediction_drops
+
         return notify_prediction_drops
 
     @pytest.mark.integration
@@ -339,32 +363,42 @@ class TestNotifyPredictionDrops:
         assert result["watchlists_matched"] == 0
 
     @pytest.mark.integration
-    def test_sends_prediction_drop_notification(
-        self, test_db_session, sample_product: Product
-    ):
-        from datetime import datetime, timezone, timedelta
-        from app.models.watchlist import UserWatchlist
+    def test_sends_prediction_drop_notification(self, test_db_session, sample_product: Product):
+        from datetime import datetime, timedelta, timezone
+
         from app.models.prediction import PricePrediction
+        from app.models.watchlist import UserWatchlist
 
         watcher = UserProfile(
-            id=uuid4(), firebase_uid="predwatcher", email="pred@x.com",
-            fcm_token="tok-pred", reputation_score=1.0, contribution_count=0,
+            id=uuid4(),
+            firebase_uid="predwatcher",
+            email="pred@x.com",
+            fcm_token="tok-pred",
+            reputation_score=1.0,
+            contribution_count=0,
         )
         test_db_session.add(watcher)
         test_db_session.flush()
 
         entry = UserWatchlist(
-            id=uuid4(), user_id=watcher.id, product_id=sample_product.id,
-            alert_on_prediction=True, is_active=True,
+            id=uuid4(),
+            user_id=watcher.id,
+            product_id=sample_product.id,
+            alert_on_prediction=True,
+            is_active=True,
         )
         test_db_session.add(entry)
         test_db_session.flush()
 
         future_week = datetime.now(timezone.utc) + timedelta(days=7)
         pred = PricePrediction(
-            id=uuid4(), product_id=sample_product.id, chain="coles",
-            predicted_price_cents=350, prediction_week=future_week,
-            is_likely_sale=True, model_version="test-v1",
+            id=uuid4(),
+            product_id=sample_product.id,
+            chain="coles",
+            predicted_price_cents=350,
+            prediction_week=future_week,
+            is_likely_sale=True,
+            model_version="test-v1",
         )
         test_db_session.add(pred)
         test_db_session.commit()
@@ -383,30 +417,39 @@ class TestNotifyPredictionDrops:
         mock_push.assert_called()
 
         from app.models import Notification
-        notes = test_db_session.query(Notification).filter_by(
-            user_id=watcher_id, trigger_type="prediction_drop"
-        ).all()
+
+        notes = (
+            test_db_session.query(Notification)
+            .filter_by(user_id=watcher_id, trigger_type="prediction_drop")
+            .all()
+        )
         assert len(notes) >= 1
 
     @pytest.mark.integration
-    def test_dedup_skips_recent_prediction_notif(
-        self, test_db_session, sample_product: Product
-    ):
-        from datetime import datetime, timezone, timedelta
+    def test_dedup_skips_recent_prediction_notif(self, test_db_session, sample_product: Product):
+        from datetime import datetime, timedelta, timezone
+
         from app.models import Notification
-        from app.models.watchlist import UserWatchlist
         from app.models.prediction import PricePrediction
+        from app.models.watchlist import UserWatchlist
 
         watcher = UserProfile(
-            id=uuid4(), firebase_uid="preddedup", email="dedup@x.com",
-            fcm_token="tok-dedup", reputation_score=1.0, contribution_count=0,
+            id=uuid4(),
+            firebase_uid="preddedup",
+            email="dedup@x.com",
+            fcm_token="tok-dedup",
+            reputation_score=1.0,
+            contribution_count=0,
         )
         test_db_session.add(watcher)
         test_db_session.flush()
 
         entry = UserWatchlist(
-            id=uuid4(), user_id=watcher.id, product_id=sample_product.id,
-            alert_on_prediction=True, is_active=True,
+            id=uuid4(),
+            user_id=watcher.id,
+            product_id=sample_product.id,
+            alert_on_prediction=True,
+            is_active=True,
         )
         test_db_session.add(entry)
         test_db_session.flush()
@@ -414,16 +457,25 @@ class TestNotifyPredictionDrops:
         now = datetime.now(timezone.utc)
         future_week = now + timedelta(days=7)
         pred = PricePrediction(
-            id=uuid4(), product_id=sample_product.id, chain="woolworths",
-            predicted_price_cents=299, prediction_week=future_week,
-            is_likely_sale=True, model_version="test-v1",
+            id=uuid4(),
+            product_id=sample_product.id,
+            chain="woolworths",
+            predicted_price_cents=299,
+            prediction_week=future_week,
+            is_likely_sale=True,
+            model_version="test-v1",
         )
         # Existing recent notification — should suppress a new one
         existing_notif = Notification(
-            id=uuid4(), user_id=watcher.id, watchlist_id=entry.id,
-            price_report_id=None, trigger_type="prediction_drop",
-            message_title="t", message_body="b",
-            is_delivered=True, sent_at=now - timedelta(hours=1),
+            id=uuid4(),
+            user_id=watcher.id,
+            watchlist_id=entry.id,
+            price_report_id=None,
+            trigger_type="prediction_drop",
+            message_title="t",
+            message_body="b",
+            is_delivered=True,
+            sent_at=now - timedelta(hours=1),
         )
         test_db_session.add_all([pred, existing_notif])
         test_db_session.commit()
@@ -432,7 +484,9 @@ class TestNotifyPredictionDrops:
 
         with patch.object(
             notification_tasks, "get_db_session", return_value=test_db_session
-        ), patch.object(notification_tasks, "_send_push", return_value="expo-receipt-id") as mock_push:
+        ), patch.object(
+            notification_tasks, "_send_push", return_value="expo-receipt-id"
+        ) as mock_push:
             result = self._fn().run()
 
         assert result["notifications_sent"] == 0

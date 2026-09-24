@@ -19,7 +19,7 @@ from uuid import uuid4
 import fakeredis
 import pytest
 
-from app.models import CatalogCrawlRun, PriceReport, Product, Store
+from app.models import CatalogCrawlRun, PriceReport, Product
 from scrapers.catalog_base import (
     AuthExpiredError,
     CatalogProduct,
@@ -29,8 +29,8 @@ from scrapers.catalog_base import (
     HumanLikeRateLimiter,
 )
 
-
 # ── HumanLikeRateLimiter ─────────────────────────────────────────────────────
+
 
 class TestHumanLikeRateLimiter:
     @pytest.mark.unit
@@ -56,6 +56,7 @@ class TestHumanLikeRateLimiter:
 
 # ── Registry ─────────────────────────────────────────────────────────────────
 
+
 class TestCatalogRegistry:
     @pytest.mark.unit
     def test_available_chains_includes_coles(self):
@@ -65,8 +66,8 @@ class TestCatalogRegistry:
 
     @pytest.mark.unit
     def test_get_scraper_builds_coles(self):
-        from scrapers.catalog_registry import get_catalog_scraper
         from scrapers.catalog_coles import ColesCatalogScraper
+        from scrapers.catalog_registry import get_catalog_scraper
 
         s = get_catalog_scraper("coles")
         assert isinstance(s, ColesCatalogScraper)
@@ -102,6 +103,7 @@ class TestCatalogRegistry:
 
 # ── Fake scraper for base-class orchestration tests ──────────────────────────
 
+
 class _FakeScraper(CatalogScraper):
     """In-memory catalog scraper: two categories, fixed products, no network."""
 
@@ -133,8 +135,13 @@ class _FakeScraper(CatalogScraper):
 
 def _fake_config():
     return CatalogStoreConfig(
-        chain="coles", min_delay_s=0, max_delay_s=0, burst_limit=10, page_size=48,
-        max_pages_per_category=5, enabled=True,
+        chain="coles",
+        min_delay_s=0,
+        max_delay_s=0,
+        burst_limit=10,
+        page_size=48,
+        max_pages_per_category=5,
+        enabled=True,
     )
 
 
@@ -207,6 +214,7 @@ class TestCatalogScraperBase:
 
 # ── Coles parsing ────────────────────────────────────────────────────────────
 
+
 class TestColesCatalogParsing:
     @pytest.mark.unit
     def test_parse_item_full(self):
@@ -214,7 +222,10 @@ class TestColesCatalogParsing:
 
         cat = CategoryNode(id="dairy", name="Dairy")
         item = {
-            "_type": "PRODUCT", "name": "Milk 2L", "brand": "Coles", "id": "77",
+            "_type": "PRODUCT",
+            "name": "Milk 2L",
+            "brand": "Coles",
+            "id": "77",
             "pricing": {"now": 3.5, "was": 5.0},
             "imageUris": [{"uri": "http://img/x.jpg"}],
         }
@@ -273,7 +284,9 @@ class TestColesCatalogParsing:
         cat = CategoryNode(id="dairy-eggs-fridge", name="Dairy, Eggs & Fridge")
         l2_map = {"dairy": "Dairy", "eggs": "Eggs", "cheese": "Cheese"}
         item = {
-            "_type": "PRODUCT", "name": "Cheddar 500g", "id": "123",
+            "_type": "PRODUCT",
+            "name": "Cheddar 500g",
+            "id": "123",
             "pricing": {"now": 6.0},
             "categories": [{"seoToken": "cheese"}],
         }
@@ -288,7 +301,9 @@ class TestColesCatalogParsing:
         cat = CategoryNode(id="dairy-eggs-fridge", name="Dairy, Eggs & Fridge")
         l2_map = {"cheese": "Cheese"}
         item = {
-            "_type": "PRODUCT", "name": "Mystery Item", "id": "999",
+            "_type": "PRODUCT",
+            "name": "Mystery Item",
+            "id": "999",
             "pricing": {"now": 2.0},
             "categories": [{"seoToken": "unknown-token"}],
         }
@@ -299,15 +314,21 @@ class TestColesCatalogParsing:
 
 # ── catalog_ingest ───────────────────────────────────────────────────────────
 
+
 class TestCatalogIngest:
     @pytest.mark.integration
     def test_creates_new_product_and_price_report(self, test_db_session):
         from app.services.catalog_ingest import ingest_catalog_products
 
         cp = CatalogProduct(
-            product_name="Fresh Catalog Milk 2L", price_cents=350, was_price_cents=500,
-            image_url="http://img/m.jpg", brand="Coles", category="Dairy",
-            external_id="c1", valid_from=date.today(),
+            product_name="Fresh Catalog Milk 2L",
+            price_cents=350,
+            was_price_cents=500,
+            image_url="http://img/m.jpg",
+            brand="Coles",
+            category="Dairy",
+            external_id="c1",
+            valid_from=date.today(),
         )
         counts = ingest_catalog_products([cp], "coles", test_db_session)
         test_db_session.commit()
@@ -327,15 +348,20 @@ class TestCatalogIngest:
         from app.services.catalog_ingest import ingest_catalog_products
 
         existing = Product(
-            id=uuid4(), name="Existing Widget 1kg", gtin=None,
-            image_url="http://existing/keep.jpg", image_source="open_food_facts",
+            id=uuid4(),
+            name="Existing Widget 1kg",
+            gtin=None,
+            image_url="http://existing/keep.jpg",
+            image_source="open_food_facts",
         )
         test_db_session.add(existing)
         test_db_session.commit()
 
         cp = CatalogProduct(
-            product_name="Existing Widget 1kg", price_cents=1000,
-            image_url="http://catalog/new.jpg", valid_from=date.today(),
+            product_name="Existing Widget 1kg",
+            price_cents=1000,
+            image_url="http://catalog/new.jpg",
+            valid_from=date.today(),
         )
         counts = ingest_catalog_products([cp], "coles", test_db_session)
         test_db_session.commit()
@@ -358,9 +384,11 @@ class TestCatalogIngest:
 
 # ── run_catalog_crawl task ───────────────────────────────────────────────────
 
+
 class TestRunCatalogCrawlTask:
     def _fn(self):
         from app.workers.catalog_tasks import run_catalog_crawl
+
         return run_catalog_crawl
 
     @pytest.mark.integration
@@ -375,18 +403,23 @@ class TestRunCatalogCrawlTask:
         fake_redis = fakeredis.FakeStrictRedis()
         fake_scraper = _FakeScraper("coles", _fake_config(), redis_client=fake_redis)
 
-        with patch.object(catalog_tasks, "get_db_session", return_value=test_db_session), \
-             patch.object(catalog_tasks, "get_redis", return_value=fake_redis), \
-             patch("scrapers.catalog_registry.get_catalog_scraper", return_value=fake_scraper):
+        with patch.object(
+            catalog_tasks, "get_db_session", return_value=test_db_session
+        ), patch.object(catalog_tasks, "get_redis", return_value=fake_redis), patch(
+            "scrapers.catalog_registry.get_catalog_scraper", return_value=fake_scraper
+        ):
             result = self._fn().run("coles", "full")
 
         assert result["status"] == "success"
         assert result["products_found"] == 2
         assert result["products_new"] == 2
         # A completed run row was recorded.
-        run = test_db_session.query(CatalogCrawlRun).filter_by(chain="coles").order_by(
-            CatalogCrawlRun.run_started_at.desc()
-        ).first()
+        run = (
+            test_db_session.query(CatalogCrawlRun)
+            .filter_by(chain="coles")
+            .order_by(CatalogCrawlRun.run_started_at.desc())
+            .first()
+        )
         assert run is not None
         assert run.status == "success"
         assert run.products_found == 2

@@ -16,8 +16,9 @@ import httpx
 import redis
 from sqlalchemy.orm import Session
 
-from .base import Scraper, ScrapedProduct, ScraperError
 from scrapers.catalog_base import get_scraper_proxy as _get_proxy
+
+from .base import ScrapedProduct, Scraper, ScraperError
 
 logger = logging.getLogger(__name__)
 
@@ -136,9 +137,7 @@ class WoolworthsScraper(Scraper):
 
                         if total_reported is None:
                             total_reported = data.get("SearchResultsCount", 0)
-                            self.logger.info(
-                                f"Woolworths reports {total_reported} specials total"
-                            )
+                            self.logger.info(f"Woolworths reports {total_reported} specials total")
 
                         # Products are double-nested: outer[].Products[0]
                         outer = data.get("Products", [])
@@ -157,8 +156,7 @@ class WoolworthsScraper(Scraper):
                         page += 1
 
                 self.logger.info(
-                    f"Fetched {len(all_products)} Woolworths specials "
-                    f"across {page} pages"
+                    f"Fetched {len(all_products)} Woolworths specials " f"across {page} pages"
                 )
                 return all_products
 
@@ -214,15 +212,17 @@ class WoolworthsScraper(Scraper):
                     if not image_url and stockcode:
                         image_url = f"{_IMAGE_BASE}/{stockcode}.jpg"
 
-                    products.append(ScrapedProduct(
-                        product_name=name,
-                        price_cents=price_cents,
-                        was_price_cents=was_price_cents,
-                        store_product_id=store_product_id,
-                        image_url=image_url,
-                        valid_from=date.today(),
-                        valid_to=date.today() + timedelta(days=7),
-                    ))
+                    products.append(
+                        ScrapedProduct(
+                            product_name=name,
+                            price_cents=price_cents,
+                            was_price_cents=was_price_cents,
+                            store_product_id=store_product_id,
+                            image_url=image_url,
+                            valid_from=date.today(),
+                            valid_to=date.today() + timedelta(days=7),
+                        )
+                    )
 
                 except Exception as e:
                     self.logger.warning(f"Item {idx}: parse error — {e}")

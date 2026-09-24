@@ -40,7 +40,6 @@ Product fields extracted from the card HTML:
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
 from datetime import date
@@ -50,15 +49,15 @@ import httpx
 from bs4 import BeautifulSoup
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
+from app.services.category_normaliser import normalise_category as _normalise_category
 from scrapers.base import ScraperError
 from scrapers.catalog_base import (
+    SCRAPER_UA,
     CatalogProduct,
     CatalogScraper,
     CategoryNode,
     HumanLikeRateLimiter,
-    SCRAPER_UA,
 )
-from app.services.category_normaliser import normalise_category as _normalise_category
 
 logger = logging.getLogger(__name__)
 
@@ -85,20 +84,20 @@ _HTML_HEADERS = {
 # Myfoodlink category slug → canonical name.
 # Kept in sync with category_normaliser.py — these are the Drakes raw strings.
 _SLUG_TO_RAW = {
-    "fruit-vegetables":        "Fruit & Vegetables",
-    "bread-bakery":            "Bakery",
-    "deli-seafood":            "Deli & Fresh",
-    "meat":                    "Meat & Seafood",
-    "dairy":                   "Dairy, Eggs & Fridge",
-    "freezer":                 "Frozen",
-    "pantry":                  "Pantry",
-    "confectionery-snacks":    "Snacks & Confectionery",
-    "drinks-1":                "Drinks",
-    "baby":                    "Baby",
-    "health-beauty":           "Health & Beauty",
+    "fruit-vegetables": "Fruit & Vegetables",
+    "bread-bakery": "Bakery",
+    "deli-seafood": "Deli & Fresh",
+    "meat": "Meat & Seafood",
+    "dairy": "Dairy, Eggs & Fridge",
+    "freezer": "Frozen",
+    "pantry": "Pantry",
+    "confectionery-snacks": "Snacks & Confectionery",
+    "drinks-1": "Drinks",
+    "baby": "Baby",
+    "health-beauty": "Health & Beauty",
     "household-cleaning-needs": "Cleaning & Laundry",
-    "petcare":                 "Pet",
-    "general-merchandise":     "Other",
+    "petcare": "Pet",
+    "general-merchandise": "Other",
 }
 
 _UNIT_PRICE_RE = re.compile(r"\$([\d.]+)\s+(?:per\s+(.+)|each)", re.IGNORECASE)
@@ -214,7 +213,7 @@ class DrakesCatalogScraper(CatalogScraper):
             min_delay_s=self._MIN_DELAY_S,
             max_delay_s=self._MAX_DELAY_S,
             burst_limit=self._BURST_LIMIT,
-            think_every=30,   # less frequent think-pauses
+            think_every=30,  # less frequent think-pauses
             think_min_s=2.0,
             think_max_s=5.0,
         )
@@ -322,9 +321,7 @@ class DrakesCatalogScraper(CatalogScraper):
         wait=wait_exponential(multiplier=2, min=2, max=30),
         reraise=True,
     )
-    async def _fetch_page(
-        self, client: httpx.AsyncClient, slug: str, page: int
-    ) -> Optional[str]:
+    async def _fetch_page(self, client: httpx.AsyncClient, slug: str, page: int) -> Optional[str]:
         r = await client.get(
             _BASE + _SEARCH_PATH,
             params={"page": page, "q[]": f"category:{slug}", "sort_by": "top_products"},
@@ -335,7 +332,9 @@ class DrakesCatalogScraper(CatalogScraper):
             self.rate_limiter.on_rate_limited(wait)
             raise ScraperError(f"Drakes rate limited (slug={slug})")
         if r.status_code != 200:
-            logger.warning("Drakes: category %s page %d returned HTTP %d", slug, page, r.status_code)
+            logger.warning(
+                "Drakes: category %s page %d returned HTTP %d", slug, page, r.status_code
+            )
             return None
         if "search-results-products" not in r.text and "talker" not in r.text:
             return None
@@ -412,6 +411,5 @@ class DrakesCatalogScraper(CatalogScraper):
 def _hardcoded_categories() -> list[CategoryNode]:
     """Fallback list when the facets API is unavailable."""
     return [
-        CategoryNode(id=slug, name=_SLUG_TO_RAW.get(slug, slug), url=slug)
-        for slug in _SLUG_TO_RAW
+        CategoryNode(id=slug, name=_SLUG_TO_RAW.get(slug, slug), url=slug) for slug in _SLUG_TO_RAW
     ]

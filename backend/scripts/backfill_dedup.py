@@ -17,8 +17,8 @@ Safe to re-run: already-merged rows are skipped because they no longer exist.
 from __future__ import annotations
 
 import argparse
-import sys
 import os
+import sys
 
 # Allow running from repo root or backend/
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -27,13 +27,12 @@ os.environ.setdefault("DATABASE_URL", os.environ.get("DATABASE_URL", ""))
 os.environ.setdefault("REDIS_URL", "redis://localhost/0")
 os.environ.setdefault("SECRET_KEY", "backfill-script")
 
+from rapidfuzz.process import extractOne
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
-from rapidfuzz.process import extractOne
 
 from app.config import get_settings
-from app.models import Product, PriceReport
-from app.models.watchlist import UserWatchlist
+from app.models import Product
 from app.services.product_dedup import FuzzyMatcher, brands_conflict
 
 _matcher = FuzzyMatcher()
@@ -52,10 +51,7 @@ def load_candidates(session: Session, exclude_sources: list[str]) -> list[Produc
     """Load all products NOT from the source chains as merge targets."""
     return list(
         session.query(Product)
-        .filter(
-            ~Product.external_source.in_(exclude_sources)
-            | Product.external_source.is_(None)
-        )
+        .filter(~Product.external_source.in_(exclude_sources) | Product.external_source.is_(None))
         .all()
     )
 
@@ -76,7 +72,8 @@ def merge_into(session: Session, duplicate: Product, canonical: Product, dry_run
     )
     # Re-point watchlist items (skip if user already watches canonical in same list)
     session.execute(
-        text("""
+        text(
+            """
             UPDATE user_watchlist SET product_id = :can
             WHERE product_id = :dup
               AND NOT EXISTS (
@@ -85,7 +82,8 @@ def merge_into(session: Session, duplicate: Product, canonical: Product, dry_run
                   AND u2.user_id = user_watchlist.user_id
                   AND (u2.list_id = user_watchlist.list_id OR (u2.list_id IS NULL AND user_watchlist.list_id IS NULL))
               )
-        """),
+        """
+        ),
         {"can": can_id, "dup": dup_id},
     )
     # Delete any remaining watchlist rows that would conflict
@@ -105,11 +103,7 @@ def run_backfill(session: Session, source_chain: str, dry_run: bool) -> tuple[in
     """
     Returns (checked, merged) counts for one source chain.
     """
-    source_products = (
-        session.query(Product)
-        .filter(Product.external_source == source_chain)
-        .all()
-    )
+    source_products = session.query(Product).filter(Product.external_source == source_chain).all()
     if not source_products:
         print(f"  No products found for {source_chain}, skipping.")
         return 0, 0
@@ -117,7 +111,7 @@ def run_backfill(session: Session, source_chain: str, dry_run: bool) -> tuple[in
     # Candidates = everything NOT from this chain
     candidates = load_candidates(session, [source_chain])
     if not candidates:
-        print(f"  No candidate products to match against.")
+        print("  No candidate products to match against.")
         return len(source_products), 0
 
     # Filter candidates to those with meaningful names (≥15 normalized chars).
@@ -160,7 +154,9 @@ def run_backfill(session: Session, source_chain: str, dry_run: bool) -> tuple[in
             )
             continue
 
-        print(f"  MATCH ({score:.0f}): '{src_product.name}' [{source_chain}] → '{canonical.name}' [{canonical.external_source}]")
+        print(
+            f"  MATCH ({score:.0f}): '{src_product.name}' [{source_chain}] → '{canonical.name}' [{canonical.external_source}]"
+        )
         merge_into(session, src_product, canonical, dry_run)
         merged += 1
 

@@ -67,9 +67,9 @@ function PrefRow({ label, sub, value, onChange }: { label: string; sub?: string;
       <Switch
         value={value}
         onValueChange={onChange}
-        trackColor={{ false: '#e5e7eb', true: '#6366f1' }}
+        trackColor={{ false: '#dce5dd', true: '#176f50' }}
         thumbColor="#fff"
-        ios_backgroundColor="#e5e7eb"
+        ios_backgroundColor="#dce5dd"
       />
     </View>
   )
@@ -108,7 +108,7 @@ export default function NotificationPreferencesScreen() {
   if (loading) {
     return (
       <View style={styles.center}>
-        <ActivityIndicator size="large" color="#4f46e5" />
+        <ActivityIndicator size="large" color="#164b40" />
       </View>
     )
   }
@@ -142,7 +142,7 @@ export default function NotificationPreferencesScreen() {
             <View style={styles.pickerBox}>
               <Picker
                 selectedValue={prefs.notif_quiet_hours_start ?? null}
-                onValueChange={(v) => set('notif_quiet_hours_start', v)}
+                onValueChange={(v: number | null) => set('notif_quiet_hours_start', v)}
                 style={styles.picker}
               >
                 {HOUR_OPTIONS.map((o) => (
@@ -156,7 +156,7 @@ export default function NotificationPreferencesScreen() {
             <View style={styles.pickerBox}>
               <Picker
                 selectedValue={prefs.notif_quiet_hours_end ?? null}
-                onValueChange={(v) => set('notif_quiet_hours_end', v)}
+                onValueChange={(v: number | null) => set('notif_quiet_hours_end', v)}
                 style={styles.picker}
               >
                 {HOUR_OPTIONS.map((o) => (
@@ -170,7 +170,7 @@ export default function NotificationPreferencesScreen() {
         <View style={styles.pickerBox}>
           <Picker
             selectedValue={prefs.notif_timezone}
-            onValueChange={(v) => set('notif_timezone', v)}
+            onValueChange={(v: string) => set('notif_timezone', v)}
             style={styles.picker}
           >
             {AU_TIMEZONES.map((tz) => (
@@ -197,24 +197,24 @@ export default function NotificationPreferencesScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f9fafb' },
+  container: { flex: 1, backgroundColor: '#f5f7f2' },
   content: { padding: 16, paddingBottom: 32 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   sectionHeader: { paddingTop: 16, paddingBottom: 6, paddingHorizontal: 4 },
-  sectionTitle: { fontSize: 11, fontWeight: '700', color: '#9ca3af', textTransform: 'uppercase', letterSpacing: 0.5 },
-  card: { backgroundColor: '#fff', borderRadius: 12, borderWidth: 1, borderColor: '#f3f4f6', overflow: 'hidden', marginBottom: 4 },
-  row: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 13, borderBottomWidth: 1, borderBottomColor: '#f9fafb' },
+  sectionTitle: { fontSize: 11, fontWeight: '700', color: '#71877b', textTransform: 'uppercase', letterSpacing: 0.5 },
+  card: { backgroundColor: '#fff', borderRadius: 12, borderWidth: 1, borderColor: '#edf2e9', overflow: 'hidden', marginBottom: 4 },
+  row: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 13, borderBottomWidth: 1, borderBottomColor: '#f5f7f2' },
   rowText: { flex: 1, marginRight: 12 },
-  rowLabel: { fontSize: 15, color: '#111827', fontWeight: '500' },
-  rowSub: { fontSize: 12, color: '#9ca3af', marginTop: 1 },
-  quietNote: { fontSize: 13, color: '#6b7280', paddingHorizontal: 16, paddingTop: 12, paddingBottom: 4 },
+  rowLabel: { fontSize: 15, color: '#122923', fontWeight: '500' },
+  rowSub: { fontSize: 12, color: '#71877b', marginTop: 1 },
+  quietNote: { fontSize: 13, color: '#5d7469', paddingHorizontal: 16, paddingTop: 12, paddingBottom: 4 },
   pickerRow: { flexDirection: 'row', gap: 12, paddingHorizontal: 16, paddingBottom: 4 },
   pickerWrap: { flex: 1 },
-  pickerLabel: { fontSize: 12, fontWeight: '600', color: '#6b7280', marginBottom: 4, paddingHorizontal: 16 },
-  pickerBox: { borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 8, overflow: 'hidden', marginHorizontal: 4 },
+  pickerLabel: { fontSize: 12, fontWeight: '600', color: '#5d7469', marginBottom: 4, paddingHorizontal: 16 },
+  pickerBox: { borderWidth: 1, borderColor: '#dce5dd', borderRadius: 12, overflow: 'hidden', marginHorizontal: 4 },
   picker: { height: 44 },
   saveBtn: {
-    marginTop: 24, backgroundColor: '#4f46e5', borderRadius: 12,
+    marginTop: 24, backgroundColor: '#164b40', borderRadius: 12,
     paddingVertical: 14, alignItems: 'center',
   },
   saveBtnDisabled: { opacity: 0.6 },

@@ -45,15 +45,17 @@ from typing import Any, Optional
 import httpx
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
+from app.services.category_normaliser import normalise_category as _normalise_category
 from scrapers.base import ScraperError
 from scrapers.catalog_base import (
+    SCRAPER_UA,
     CatalogProduct,
     CatalogScraper,
     CategoryNode,
-    SCRAPER_UA,
+)
+from scrapers.catalog_base import (
     to_cents as _to_cents,
 )
-from app.services.category_normaliser import normalise_category as _normalise_category
 
 _BASE = "https://www.igashop.com.au/api/storefront"
 _DEFAULT_STORE_ID = "32600"
@@ -94,7 +96,9 @@ class IGACatalogScraper(CatalogScraper):
 
     async def discover_categories(self) -> list[CategoryNode]:
         url = f"{_BASE}/stores/{self.store_id}/categoryHierarchy"
-        async with httpx.AsyncClient(headers=_headers(), follow_redirects=True, timeout=self.TIMEOUT_S) as client:
+        async with httpx.AsyncClient(
+            headers=_headers(), follow_redirects=True, timeout=self.TIMEOUT_S
+        ) as client:
             await self.rate_limiter.wait()
             try:
                 resp = await client.get(url)
@@ -102,7 +106,9 @@ class IGACatalogScraper(CatalogScraper):
                 raise ScraperError(f"IGA categoryHierarchy failed: {exc}") from exc
 
             if resp.status_code != 200:
-                raise ScraperError(f"IGA categoryHierarchy returned {resp.status_code}: {resp.text[:200]}")
+                raise ScraperError(
+                    f"IGA categoryHierarchy returned {resp.status_code}: {resp.text[:200]}"
+                )
             try:
                 data = resp.json()
             except ValueError as exc:
@@ -117,7 +123,9 @@ class IGACatalogScraper(CatalogScraper):
         pages: list[dict] = []
         skip = 0
 
-        async with httpx.AsyncClient(headers=_headers(), follow_redirects=True, timeout=self.TIMEOUT_S) as client:
+        async with httpx.AsyncClient(
+            headers=_headers(), follow_redirects=True, timeout=self.TIMEOUT_S
+        ) as client:
             while len(pages) < self.config.max_pages_per_category:
                 await self.rate_limiter.wait()
                 data = await self._fetch_page(client, store_id, category.id, skip)
@@ -164,7 +172,7 @@ class IGACatalogScraper(CatalogScraper):
         seen_ids: set[str] = set()
 
         for page in raw.get("pages", []):
-            for item in (page.get("items") or []):
+            for item in page.get("items") or []:
                 product = _parse_item(item, cat_name, today)
                 if product is None:
                     continue
@@ -188,7 +196,9 @@ class IGACatalogScraper(CatalogScraper):
         PAGE_SIZE = 48
         MAX_PAGES = 200
 
-        async with httpx.AsyncClient(headers=_headers(), follow_redirects=True, timeout=self.TIMEOUT_S) as client:
+        async with httpx.AsyncClient(
+            headers=_headers(), follow_redirects=True, timeout=self.TIMEOUT_S
+        ) as client:
             total_reported: Optional[int] = None
 
             for _ in range(MAX_PAGES):
@@ -225,7 +235,7 @@ class IGACatalogScraper(CatalogScraper):
         today = date.today()
         seen_ids: set[str] = set()
 
-        for item in (raw.get("items") or []):
+        for item in raw.get("items") or []:
             product = _parse_item(item, "Specials", today)
             if product is None or product.external_id in seen_ids:
                 continue
@@ -236,6 +246,7 @@ class IGACatalogScraper(CatalogScraper):
 
 
 # ── Category tree helpers ─────────────────────────────────────────────────────
+
 
 def _flatten_category_tree(data: Any) -> list[CategoryNode]:
     """Return the nav-level (top-level) IGA categories for crawling.
@@ -261,7 +272,7 @@ def _flatten_category_tree(data: Any) -> list[CategoryNode]:
         if not isinstance(top, dict):
             continue
         # "Grocery" is the root — its children are the nav-level categories
-        for nav in (top.get("children") or []):
+        for nav in top.get("children") or []:
             if not isinstance(nav, dict):
                 continue
             cat_id = str(
@@ -279,12 +290,15 @@ def _flatten_category_tree(data: Any) -> list[CategoryNode]:
                 or ""
             ).strip()
             if cat_id and name:
-                nodes.append(CategoryNode(id=cat_id, name=name, url=cat_id, parent_id=None, children=[]))
+                nodes.append(
+                    CategoryNode(id=cat_id, name=name, url=cat_id, parent_id=None, children=[])
+                )
 
     return nodes
 
 
 # ── Product helpers ───────────────────────────────────────────────────────────
+
 
 def _parse_item(item: dict, cat_name: str, today: date) -> Optional[CatalogProduct]:
     product_id = str(item.get("productId") or item.get("sku") or "").strip()

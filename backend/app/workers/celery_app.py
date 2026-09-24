@@ -10,11 +10,10 @@ Configures:
 """
 
 import logging
-import os
-from kombu import Exchange, Queue
 
 from celery import Celery
 from celery.signals import task_failure, task_retry, task_success, worker_process_init
+from kombu import Exchange, Queue
 
 from app.config import get_settings
 
@@ -39,14 +38,12 @@ celery_app.conf.update(
     broker_connection_retry_on_startup=True,
     broker_connection_retry=True,
     broker_connection_max_retries=10,
-
     # Connection pooling for Redis broker
     broker_pool_limit=10,
     broker_heartbeat=30,
     broker_transport_options={
         "retry_on_timeout": True,
     },
-
     # Result backend settings
     result_backend_transport_options={
         "retry_on_timeout": True,
@@ -105,7 +102,6 @@ celery_app.conf.task_queues = (
         routing_key="default",
         durable=True,
     ),
-
     # Scraper queue: for slow, sequential flyer scraping tasks
     # One worker at a time, long timeout
     Queue(
@@ -114,7 +110,6 @@ celery_app.conf.task_queues = (
         routing_key="scraper",
         durable=True,
     ),
-
     # ML queue: for CPU-intensive model training and prediction
     # Limited concurrency (2-4 workers)
     Queue(
@@ -123,7 +118,6 @@ celery_app.conf.task_queues = (
         routing_key="ml",
         durable=True,
     ),
-
     # Notification queue: for high-priority push notifications
     # Many workers, fast execution
     Queue(
@@ -132,7 +126,6 @@ celery_app.conf.task_queues = (
         routing_key="notification",
         durable=True,
     ),
-
     # Image queue: for slow, I/O-bound OFF image enrichment.
     # Deliberately isolated so its polite per-request delays never block
     # the scraper or notification queues.
@@ -142,7 +135,6 @@ celery_app.conf.task_queues = (
         routing_key="image",
         durable=True,
     ),
-
     # Catalog queue: for very long authenticated full/delta catalog crawls,
     # paced over hours. Isolated so a multi-hour crawl never blocks anything.
     Queue(
@@ -182,6 +174,7 @@ celery_app.conf.update(
 # ERROR HANDLING & MONITORING
 # ============================================================================
 
+
 @worker_process_init.connect
 def init_worker(**kwargs):
     """Initialise DB and Redis connections in each worker process."""
@@ -190,12 +183,14 @@ def init_worker(**kwargs):
     # spins at 100% CPU during long async crawls on Python 3.12/macOS.
     try:
         import uvloop
+
         uvloop.install()
         logger.info("uvloop installed as event loop policy")
     except ImportError:
         logger.warning("uvloop not available; using default SelectorEventLoop")
 
     from app.deps import init_database, init_redis
+
     init_database(
         settings.DATABASE_URL,
         settings.DATABASE_POOL_SIZE,
@@ -206,6 +201,7 @@ def init_worker(**kwargs):
         settings.REDIS_SOCKET_CONNECT_TIMEOUT,
     )
     logger.info("Worker process initialised DB and Redis")
+
 
 @task_success.connect
 def task_success_handler(sender=None, result=None, **kwargs):
@@ -223,22 +219,28 @@ def task_retry_handler(sender=None, reason=None, einfo=None, **kwargs):
 
 
 @task_failure.connect
-def task_failure_handler(sender=None, task_id=None, exception=None, args=None, kwargs=None, traceback=None, **kw):
+def task_failure_handler(
+    sender=None, task_id=None, exception=None, args=None, kwargs=None, traceback=None, **kw
+):
     """
     Log task failure and send alert if webhook configured.
     """
     error_msg = f"Task {sender.name} (ID: {task_id}) failed: {exception}"
-    logger.error(error_msg, extra={
-        "task_name": sender.name,
-        "task_id": task_id,
-        "task_args": str(args)[:100],
-        "task_kwargs": str(kwargs)[:100],
-    })
+    logger.error(
+        error_msg,
+        extra={
+            "task_name": sender.name,
+            "task_id": task_id,
+            "task_args": str(args)[:100],
+            "task_kwargs": str(kwargs)[:100],
+        },
+    )
 
     # Send to Slack if webhook configured
     if settings.SLACK_WEBHOOK_URL:
         try:
             import requests
+
             requests.post(
                 settings.SLACK_WEBHOOK_URL,
                 json={
@@ -250,23 +252,26 @@ def task_failure_handler(sender=None, task_id=None, exception=None, args=None, k
         except Exception as e:
             logger.error(f"Failed to send Slack alert: {e}")
 
+
 # ============================================================================
 # IMPORT TASK MODULES AT APP LOAD
 # ============================================================================
+
 
 def load_tasks():
     """Import task modules to register them with Celery."""
     try:
         # Import all task modules to register them
-        from app.workers import (
-            scraper_tasks,
+        from app.workers import (  # noqa: F401
+            catalog_tasks,
+            embedding_tasks,
+            image_tasks,
             ml_tasks,
             notification_tasks,
             report_validator,
-            image_tasks,
-            catalog_tasks,
-            embedding_tasks,
+            scraper_tasks,
         )
+
         logger.info("Successfully loaded all task modules")
     except ImportError as e:
         logger.error(f"Failed to import task modules: {e}")
@@ -287,18 +292,17 @@ celery_app.conf.beat_schedule = {
     # ALDI: Wed–Tue cycle. Expire Tuesday 13:30 UTC (= 23:30 AEST).
     # Coles/Woolworths/IGA/Drakes specials are set with valid_to at ingest time
     # (catalog pipeline) so no separate expiry task is needed for them.
-    'expire-stale-specials-aldi-wed': {
-        'task': 'app.workers.scraper_tasks.expire_stale_specials',
-        'schedule': crontab(day_of_week=2, hour=13, minute=30),
-        'args': (['aldi'],),
+    "expire-stale-specials-aldi-wed": {
+        "task": "app.workers.scraper_tasks.expire_stale_specials",
+        "schedule": crontab(day_of_week=2, hour=13, minute=30),
+        "args": (["aldi"],),
     },
     # ALDI Saturday Specialbuys expire Friday 20:30 UTC (= 06:30 AEST Sat).
-    'expire-stale-specials-aldi-sat': {
-        'task': 'app.workers.scraper_tasks.expire_stale_specials',
-        'schedule': crontab(day_of_week=5, hour=20, minute=30),
-        'args': (['aldi'],),
+    "expire-stale-specials-aldi-sat": {
+        "task": "app.workers.scraper_tasks.expire_stale_specials",
+        "schedule": crontab(day_of_week=5, hour=20, minute=30),
+        "args": (["aldi"],),
     },
-
     # ── Weekly specials scrapes ───────────────────────────────────────────────
     #
     # Coles / Woolworths / IGA / Drakes: now use catalog_tasks.run_catalog_crawl
@@ -309,76 +313,73 @@ celery_app.conf.beat_schedule = {
     # Stagger by 10 min to avoid hammering servers simultaneously.
     #
     # Coles: Wed 00:01 AEST live → scrape Wed 20:03 UTC
-    'specials-catalog-coles': {
-        'task': 'app.workers.catalog_tasks.run_catalog_crawl',
-        'schedule': crontab(day_of_week=2, hour=20, minute=3),
-        'args': ('coles', 'specials'),
+    "specials-catalog-coles": {
+        "task": "app.workers.catalog_tasks.run_catalog_crawl",
+        "schedule": crontab(day_of_week=2, hour=20, minute=3),
+        "args": ("coles", "specials"),
     },
     # Woolworths: Wed 00:01 AEST live → scrape Wed 20:13 UTC
-    'specials-catalog-woolworths': {
-        'task': 'app.workers.catalog_tasks.run_catalog_crawl',
-        'schedule': crontab(day_of_week=2, hour=20, minute=13),
-        'args': ('woolworths', 'specials'),
+    "specials-catalog-woolworths": {
+        "task": "app.workers.catalog_tasks.run_catalog_crawl",
+        "schedule": crontab(day_of_week=2, hour=20, minute=13),
+        "args": ("woolworths", "specials"),
     },
     # IGA: Wed 00:01 AEST live → scrape Wed 20:23 UTC
-    'specials-catalog-iga': {
-        'task': 'app.workers.catalog_tasks.run_catalog_crawl',
-        'schedule': crontab(day_of_week=2, hour=20, minute=23),
-        'args': ('iga', 'specials'),
+    "specials-catalog-iga": {
+        "task": "app.workers.catalog_tasks.run_catalog_crawl",
+        "schedule": crontab(day_of_week=2, hour=20, minute=23),
+        "args": ("iga", "specials"),
     },
     # Drakes: Wed 00:01 AEST live → scrape Wed 20:33 UTC
-    'specials-catalog-drakes': {
-        'task': 'app.workers.catalog_tasks.run_catalog_crawl',
-        'schedule': crontab(day_of_week=2, hour=20, minute=33),
-        'args': ('drakes', 'specials'),
+    "specials-catalog-drakes": {
+        "task": "app.workers.catalog_tasks.run_catalog_crawl",
+        "schedule": crontab(day_of_week=2, hour=20, minute=33),
+        "args": ("drakes", "specials"),
     },
     # ALDI Wednesday grocery specials: live Wed 00:01 AEST → scrape Wed 20:43 UTC
-    'scrape-flyer-aldi-wed': {
-        'task': 'app.workers.scraper_tasks.run_flyer_scrape',
-        'schedule': crontab(day_of_week=2, hour=20, minute=43),
-        'args': ('aldi',),
+    "scrape-flyer-aldi-wed": {
+        "task": "app.workers.scraper_tasks.run_flyer_scrape",
+        "schedule": crontab(day_of_week=2, hour=20, minute=43),
+        "args": ("aldi",),
     },
     # ALDI Saturday Specialbuys: live Sat 00:01 AEST → scrape Sat 20:53 UTC (Fri night UTC)
-    'scrape-flyer-aldi-sat': {
-        'task': 'app.workers.scraper_tasks.run_flyer_scrape',
-        'schedule': crontab(day_of_week=6, hour=20, minute=53),
-        'args': ('aldi',),
+    "scrape-flyer-aldi-sat": {
+        "task": "app.workers.scraper_tasks.run_flyer_scrape",
+        "schedule": crontab(day_of_week=6, hour=20, minute=53),
+        "args": ("aldi",),
     },
-
     # ── ML & embeddings ───────────────────────────────────────────────────────
     #
     # Refit after Wednesday scrapes have landed and been ingested.
     # Wednesday 23:00 UTC (= Thursday 09:00 AEST) — safe window.
-    'ml-refit-predictions': {
-        'task': 'app.workers.ml_tasks.refit_and_predict_all',
-        'schedule': crontab(day_of_week=3, hour=23, minute=0),
-        'args': (),
+    "ml-refit-predictions": {
+        "task": "app.workers.ml_tasks.refit_and_predict_all",
+        "schedule": crontab(day_of_week=3, hour=23, minute=0),
+        "args": (),
     },
     # Embedding backfill: Thursday 23:30 UTC — after ML refit.
-    'backfill-embeddings': {
-        'task': 'app.workers.embedding_tasks.backfill_product_embeddings',
-        'schedule': crontab(day_of_week=3, hour=23, minute=30),
-        'args': (),
+    "backfill-embeddings": {
+        "task": "app.workers.embedding_tasks.backfill_product_embeddings",
+        "schedule": crontab(day_of_week=3, hour=23, minute=30),
+        "args": (),
     },
-
     # ── Image enrichment ─────────────────────────────────────────────────────
     #
     # Backstop sweep Thursday 01:07 UTC — catches anything that slipped
     # through the per-scrape enrichment chain earlier that morning.
-    'enrich-images-backstop': {
-        'task': 'app.workers.image_tasks.enrich_product_images',
-        'schedule': crontab(day_of_week=3, hour=1, minute=7),
-        'args': (),
+    "enrich-images-backstop": {
+        "task": "app.workers.image_tasks.enrich_product_images",
+        "schedule": crontab(day_of_week=3, hour=1, minute=7),
+        "args": (),
     },
-
     # ── Weekly digest email ───────────────────────────────────────────────────
     #
     # Wednesday 22:00 UTC (= Thursday 08:00 AEST) — after new specials are
     # scraped and ingested, so the digest reflects this week's actual deals.
-    'send-weekly-digest': {
-        'task': 'app.workers.notification_tasks.send_weekly_digest',
-        'schedule': crontab(day_of_week=2, hour=22, minute=0),
-        'args': (),
+    "send-weekly-digest": {
+        "task": "app.workers.notification_tasks.send_weekly_digest",
+        "schedule": crontab(day_of_week=2, hour=22, minute=0),
+        "args": (),
     },
 }
 
@@ -397,6 +398,7 @@ def _build_catalog_beat_entries(settings) -> dict:
     # Discover chains from the registry so new stores are picked up automatically.
     try:
         from scrapers.catalog_registry import available_chains
+
         chains = available_chains()
     except Exception:
         chains = ["coles", "woolworths", "aldi", "iga", "drakes"]
@@ -410,16 +412,17 @@ def _build_catalog_beat_entries(settings) -> dict:
             continue
         parts = cron_str.split()
         if len(parts) != 5:
-            logger.warning(
-                "Ignoring invalid CATALOG_%s_CRON %r (need 5 fields)", upper, cron_str
-            )
+            logger.warning("Ignoring invalid CATALOG_%s_CRON %r (need 5 fields)", upper, cron_str)
             continue
         minute, hour, dom, month, dow = parts
         entries[f"catalog-delta-{chain}"] = {
             "task": "app.workers.catalog_tasks.run_catalog_crawl",
             "schedule": crontab(
-                minute=minute, hour=hour, day_of_month=dom,
-                month_of_year=month, day_of_week=dow,
+                minute=minute,
+                hour=hour,
+                day_of_month=dom,
+                month_of_year=month,
+                day_of_week=dow,
             ),
             "args": (chain, "delta"),
         }

@@ -37,8 +37,16 @@ VALID_B = "5901234123457"
 STOCKCODE = "00000000123456"
 
 
-def _facts(id_=None, name="Coke 1.25L", brand="Coca-Cola", chain="coles",
-           gtin=None, has_image=False, category="drinks", price=2.5):
+def _facts(
+    id_=None,
+    name="Coke 1.25L",
+    brand="Coca-Cola",
+    chain="coles",
+    gtin=None,
+    has_image=False,
+    category="drinks",
+    price=2.5,
+):
     return ProductFacts(
         id=str(id_ or uuid4()),
         name=name,
@@ -53,6 +61,7 @@ def _facts(id_=None, name="Coke 1.25L", brand="Coca-Cola", chain="coles",
 
 
 # ── is_ean13_valid ────────────────────────────────────────────────────────────
+
 
 class TestEan13Valid:
     def test_real_barcodes_pass(self):
@@ -78,6 +87,7 @@ class TestEan13Valid:
 
 # ── extract_size_hint ───────────────────────────────────────────────────────
 
+
 class TestSizeHint:
     def test_pulls_litres_and_grams(self):
         assert extract_size_hint("Coca-Cola 1.25L") == "1.25l"
@@ -89,6 +99,7 @@ class TestSizeHint:
 
 
 # ── pre_guard / same_chain ───────────────────────────────────────────────────
+
 
 class TestPreGuard:
     def test_same_chain_vetoed(self):
@@ -109,6 +120,7 @@ class TestPreGuard:
 
 
 # ── choose_survivor ──────────────────────────────────────────────────────────
+
 
 class TestChooseSurvivor:
     def test_valid_gtin_record_wins_over_model_keep(self):
@@ -136,6 +148,7 @@ class TestChooseSurvivor:
 
 
 # ── judge_pair (mocked Anthropic) ────────────────────────────────────────────
+
 
 def _mock_client(payload: dict) -> MagicMock:
     """A fake Anthropic client whose messages.create returns a JSON text block."""
@@ -182,9 +195,13 @@ class TestJudgePair:
 
     def test_json_fenced_response_is_parsed(self):
         client = MagicMock()
-        fenced = "```json\n" + json.dumps(
-            {"same_product": False, "confidence": 0.2, "keep": "b", "reason": "diff size"}
-        ) + "\n```"
+        fenced = (
+            "```json\n"
+            + json.dumps(
+                {"same_product": False, "confidence": 0.2, "keep": "b", "reason": "diff size"}
+            )
+            + "\n```"
+        )
         client.messages.create.return_value = SimpleNamespace(
             content=[SimpleNamespace(text=fenced)]
         )
@@ -216,6 +233,7 @@ class TestJudgePair:
 
 # ── propagate_gtin_on_merge (DB) ─────────────────────────────────────────────
 
+
 # Raw-SQL UUID comparisons only match under Postgres; on SQLite the PG_UUID type
 # stores a dash-less hex string that never equals a dashed bind param. Guard the
 # whole class the way test_dedup_admin guards its raw-SQL merge tests.
@@ -227,10 +245,20 @@ class TestPropagateGtin:
     def _seed(self, session, keep_gtin, drop_gtin):
         from app.models import Product
 
-        keep = Product(id=uuid4(), name="Coke A", brand="Coca-Cola",
-                       gtin=keep_gtin, external_source="catalog_woolworths")
-        drop = Product(id=uuid4(), name="Coke B", brand="Coca-Cola",
-                       gtin=drop_gtin, external_source="catalog_coles")
+        keep = Product(
+            id=uuid4(),
+            name="Coke A",
+            brand="Coca-Cola",
+            gtin=keep_gtin,
+            external_source="catalog_woolworths",
+        )
+        drop = Product(
+            id=uuid4(),
+            name="Coke B",
+            brand="Coca-Cola",
+            gtin=drop_gtin,
+            external_source="catalog_coles",
+        )
         session.add_all([keep, drop])
         session.flush()
         return keep, drop
@@ -242,6 +270,7 @@ class TestPropagateGtin:
         assert result == VALID_A
         test_db_session.expire_all()
         from app.models import Product
+
         refreshed = test_db_session.get(Product, keep.id)
         assert refreshed.gtin == VALID_A
 
@@ -252,6 +281,7 @@ class TestPropagateGtin:
         assert result is None
         test_db_session.expire_all()
         from app.models import Product
+
         assert test_db_session.get(Product, keep.id).gtin is None
 
     @pytest.mark.integration
@@ -262,6 +292,7 @@ class TestPropagateGtin:
         assert result is None
         test_db_session.expire_all()
         from app.models import Product
+
         assert test_db_session.get(Product, keep.id).gtin == VALID_A
 
     @pytest.mark.integration
@@ -272,8 +303,7 @@ class TestPropagateGtin:
         # dropped row (and would also have over-matched any unrelated row).
         from app.models import Product
 
-        other = Product(id=uuid4(), name="Owner", gtin=VALID_B,
-                        external_source="catalog_aldi")
+        other = Product(id=uuid4(), name="Owner", gtin=VALID_B, external_source="catalog_aldi")
         test_db_session.add(other)
         test_db_session.flush()
         keep, drop = self._seed(test_db_session, keep_gtin=None, drop_gtin=VALID_A)
@@ -314,10 +344,12 @@ class TestPropagateGtinCollision:
             def execute(self, statement, params=None):
                 sql = str(statement).lower()
                 if sql.startswith("select id, gtin"):
-                    return _StubResult(rows=[
-                        SimpleNamespace(id=keep_id, gtin=None),
-                        SimpleNamespace(id=drop_id, gtin=VALID_A),
-                    ])
+                    return _StubResult(
+                        rows=[
+                            SimpleNamespace(id=keep_id, gtin=None),
+                            SimpleNamespace(id=drop_id, gtin=VALID_A),
+                        ]
+                    )
                 if "limit 1" in sql:  # the uniqueness clash probe
                     return _StubResult(one=(1,))
                 if sql.startswith("update products"):
@@ -332,6 +364,7 @@ class TestPropagateGtinCollision:
 
 
 # ── search_gtin_by_name_brand (mocked httpx) ─────────────────────────────────
+
 
 def _mock_httpx_get(products: list[dict], status_code: int = 200):
     resp = MagicMock()
@@ -353,27 +386,33 @@ class TestSearchGtinByNameBrand:
         return limiter
 
     async def test_returns_valid_brand_agreeing_code(self):
-        client = _mock_httpx_get([
-            {"code": VALID_A, "product_name": "Coca-Cola 1.25L", "brands": "Coca-Cola"},
-        ])
+        client = _mock_httpx_get(
+            [
+                {"code": VALID_A, "product_name": "Coca-Cola 1.25L", "brands": "Coca-Cola"},
+            ]
+        )
         code = await search_gtin_by_name_brand(
             "Coca-Cola 1.25L", "Coca-Cola", client, await self._limiter(), "ua", 10.0
         )
         assert code == VALID_A
 
     async def test_checksum_fail_rejected(self):
-        client = _mock_httpx_get([
-            {"code": STOCKCODE, "product_name": "X", "brands": "Coca-Cola"},
-        ])
+        client = _mock_httpx_get(
+            [
+                {"code": STOCKCODE, "product_name": "X", "brands": "Coca-Cola"},
+            ]
+        )
         code = await search_gtin_by_name_brand(
             "Coke", "Coca-Cola", client, await self._limiter(), "ua", 10.0
         )
         assert code is None
 
     async def test_brand_mismatch_rejected(self):
-        client = _mock_httpx_get([
-            {"code": VALID_A, "product_name": "Fanta", "brands": "Fanta"},
-        ])
+        client = _mock_httpx_get(
+            [
+                {"code": VALID_A, "product_name": "Fanta", "brands": "Fanta"},
+            ]
+        )
         code = await search_gtin_by_name_brand(
             "Orange", "Kirks", client, await self._limiter(), "ua", 10.0
         )
@@ -382,14 +421,13 @@ class TestSearchGtinByNameBrand:
     async def test_429_returns_none_and_backs_off(self):
         limiter = await self._limiter()
         client = _mock_httpx_get([], status_code=429)
-        code = await search_gtin_by_name_brand(
-            "Coke", "Coca-Cola", client, limiter, "ua", 10.0
-        )
+        code = await search_gtin_by_name_brand("Coke", "Coca-Cola", client, limiter, "ua", 10.0)
         assert code is None
         limiter.on_rate_limited.assert_called_once()
 
 
 # ── Admin endpoint surfaces ai_* fields ──────────────────────────────────────
+
 
 # list_dedup_candidates uses Postgres-only SQL (DISTINCT ON, CAST … AS uuid[]),
 # so this endpoint test needs a real Postgres DB like test_dedup_admin's.
@@ -401,6 +439,7 @@ class TestAdminAiFields:
     @pytest.fixture
     def admin_client(self, test_db_session):
         from fastapi.testclient import TestClient
+
         from app.deps import get_current_user, get_db, require_admin
         from app.main import app
         from app.models.user import User
@@ -422,16 +461,24 @@ class TestAdminAiFields:
         from app.models import Product
         from app.models.product_match import ProductMatchCandidate
 
-        a = Product(id=uuid4(), name="Coke 1.25L", brand="Coca-Cola",
-                    external_source="catalog_woolworths")
-        b = Product(id=uuid4(), name="Coca Cola 1.25L", brand="Coca-Cola",
-                    external_source="catalog_coles")
+        a = Product(
+            id=uuid4(), name="Coke 1.25L", brand="Coca-Cola", external_source="catalog_woolworths"
+        )
+        b = Product(
+            id=uuid4(), name="Coca Cola 1.25L", brand="Coca-Cola", external_source="catalog_coles"
+        )
         test_db_session.add_all([a, b])
         test_db_session.flush()
         cand = ProductMatchCandidate(
-            id=uuid4(), product_a_id=a.id, product_b_id=b.id, score=96.0,
-            status="pending", proposed_by="ai",
-            ai_verdict="same", ai_confidence=0.94, ai_keep="a",
+            id=uuid4(),
+            product_a_id=a.id,
+            product_b_id=b.id,
+            score=96.0,
+            status="pending",
+            proposed_by="ai",
+            ai_verdict="same",
+            ai_confidence=0.94,
+            ai_keep="a",
             ai_reason="same item, same size",
         )
         test_db_session.add(cand)

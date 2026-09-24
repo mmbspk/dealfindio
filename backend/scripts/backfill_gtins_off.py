@@ -42,9 +42,7 @@ async def _run(args) -> None:
     settings = get_settings()
     from app.services.config_store import get_runtime_typed
 
-    rate_limiter = OFTRateLimiter(
-        settings.OFT_SEARCH_MIN_DELAY_S, settings.OFT_SEARCH_MAX_DELAY_S
-    )
+    rate_limiter = OFTRateLimiter(settings.OFT_SEARCH_MIN_DELAY_S, settings.OFT_SEARCH_MAX_DELAY_S)
     user_agent = settings.OPEN_FOOD_FACTS_USER_AGENT
     timeout = settings.OFT_SEARCH_TIMEOUT_S
 
@@ -53,21 +51,25 @@ async def _run(args) -> None:
     with Session(engine) as session:
         # Resolve the toggle + per-run limit DB-first (admin Configs UI) then env.
         if not get_runtime_typed("OFF_GTIN_BACKFILL_ENABLED", session):
-            print("OFF_GTIN_BACKFILL_ENABLED is false — enable it in Admin → Configs (or .env) to run. Aborting.")
+            print(
+                "OFF_GTIN_BACKFILL_ENABLED is false — enable it in Admin → Configs (or .env) to run. Aborting."
+            )
             sys.exit(1)
 
         limit = args.limit or get_runtime_typed("OFF_GTIN_BACKFILL_LIMIT_PER_RUN", session)
 
         # gtin IS NULL, high-value first (has price reports), then most-recent.
         rows = session.execute(
-            text("""
+            text(
+                """
                 SELECT p.id, p.name, p.brand,
                        (SELECT COUNT(*) FROM price_reports pr WHERE pr.product_id = p.id) AS n_prices
                 FROM products p
                 WHERE p.gtin IS NULL
                 ORDER BY n_prices DESC, p.created_at DESC
                 LIMIT :limit
-            """),
+            """
+            ),
             {"limit": limit},
         ).fetchall()
         print(f"Found {len(rows)} products missing a GTIN (processing up to {limit})")
@@ -92,8 +94,10 @@ async def _run(args) -> None:
                 ).fetchone()
                 if clash is not None:
                     collisions += 1
-                    print(f"  COLLISION  {normalized}  already owned by {clash.id} "
-                          f"— likely a dedup candidate: {r.name!r}")
+                    print(
+                        f"  COLLISION  {normalized}  already owned by {clash.id} "
+                        f"— likely a dedup candidate: {r.name!r}"
+                    )
                     continue
 
                 print(f"  {normalized}  ←  {r.name!r} [{r.brand or '?'}]")
@@ -112,16 +116,22 @@ async def _run(args) -> None:
             session.commit()
 
         prefix = "Dry-run" if args.dry_run else "Done"
-        print(f"\n{prefix}: {filled} GTINs "
-              f"{'would be ' if args.dry_run else ''}recovered, "
-              f"{collisions} collisions skipped, {no_match} no match")
+        print(
+            f"\n{prefix}: {filled} GTINs "
+            f"{'would be ' if args.dry_run else ''}recovered, "
+            f"{collisions} collisions skipped, {no_match} no match"
+        )
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Recover missing GTINs via Open Food Facts")
     parser.add_argument("--dry-run", action="store_true", help="Search + print, write nothing")
-    parser.add_argument("--limit", type=int, default=0,
-                        help="Max products to attempt (0 = OFF_GTIN_BACKFILL_LIMIT_PER_RUN)")
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        help="Max products to attempt (0 = OFF_GTIN_BACKFILL_LIMIT_PER_RUN)",
+    )
     args = parser.parse_args()
     asyncio.run(_run(args))
 

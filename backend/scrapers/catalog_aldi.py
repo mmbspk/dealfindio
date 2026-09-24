@@ -25,19 +25,21 @@ from typing import Any, Optional
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
 
+from app.services.category_normaliser import normalise_category as _normalise_category
 from scrapers.base import ScraperError
 from scrapers.catalog_base import (
+    SCRAPER_UA,
     CatalogProduct,
     CatalogScraper,
     CategoryNode,
-    SCRAPER_UA,
 )
-from app.services.category_normaliser import normalise_category as _normalise_category
 
 _GLUE_BASE = "https://asl.api.aldi.com.au/commerce"
 _CATEGORY_TREE_URL = f"{_GLUE_BASE}/v2/product-category-tree"
 _PRODUCT_SEARCH_URL = f"{_GLUE_BASE}/v3/product-search"
-_IMAGE_URL = "https://dm.apac.cms.aldi.cx/is/image/aldiprodapac/product/jpg/scaleWidth/600/{uuid}/{slug}"
+_IMAGE_URL = (
+    "https://dm.apac.cms.aldi.cx/is/image/aldiprodapac/product/jpg/scaleWidth/600/{uuid}/{slug}"
+)
 _PAGE_SIZE = 48
 
 # Promotional categories — products change weekly and are also in their
@@ -216,19 +218,19 @@ class ALDICatalogScraper(CatalogScraper):
                     continue
                 if child_key in _PROMO_CATEGORY_KEYS:
                     continue
-                nodes.append(CategoryNode(
-                    id=child_key,
-                    name=f"{name} > {child_name}",
-                    url=f"{_PRODUCT_SEARCH_URL}?categoryTree={child_key}",
-                    parent_id=key,
-                ))
+                nodes.append(
+                    CategoryNode(
+                        id=child_key,
+                        name=f"{name} > {child_name}",
+                        url=f"{_PRODUCT_SEARCH_URL}?categoryTree={child_key}",
+                        parent_id=key,
+                    )
+                )
 
         return nodes
 
     @retry(stop=stop_after_attempt(4), wait=wait_exponential(multiplier=1, min=3, max=20))
-    async def _fetch_page(
-        self, client: httpx.AsyncClient, category_id: str, offset: int
-    ) -> dict:
+    async def _fetch_page(self, client: httpx.AsyncClient, category_id: str, offset: int) -> dict:
         """Fetch one page of products for a category. Retries on 5xx."""
         await self.rate_limiter.wait()
         resp = await client.get(
@@ -243,7 +245,9 @@ class ALDICatalogScraper(CatalogScraper):
         if resp.status_code >= 500:
             raise ScraperError(f"ALDI server error {resp.status_code} on category {category_id}")
         if resp.status_code != 200:
-            raise ScraperError(f"ALDI returned {resp.status_code} on category {category_id}: {resp.text[:200]}")
+            raise ScraperError(
+                f"ALDI returned {resp.status_code} on category {category_id}: {resp.text[:200]}"
+            )
         return resp.json()
 
     async def crawl_category(self, category: CategoryNode, auth: dict) -> Any:

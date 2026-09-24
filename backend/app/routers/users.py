@@ -7,16 +7,19 @@ Implements REST API for user profiles including:
 """
 
 import logging
-from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.deps import get_db, get_current_user
-from app.models import UserProfile, PriceReport, User
-from app.schemas.user import UserProfileResponse, UserProfilePublicResponse, UserProfileUpdateRequest
+from app.deps import get_current_user, get_db
+from app.models import PriceReport, User, UserProfile
+from app.schemas.user import (
+    UserProfilePublicResponse,
+    UserProfileResponse,
+    UserProfileUpdateRequest,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -183,12 +186,16 @@ async def get_user_profile(
             )
 
         # Get top 5 recent reports by this user
-        top_reports = db.execute(
-            select(PriceReport)
-            .where(PriceReport.reporter_user_id == user_id)
-            .order_by(PriceReport.created_at.desc())
-            .limit(5)
-        ).scalars().all()
+        top_reports = (
+            db.execute(
+                select(PriceReport)
+                .where(PriceReport.reporter_user_id == user_id)
+                .order_by(PriceReport.created_at.desc())
+                .limit(5)
+            )
+            .scalars()
+            .all()
+        )
 
         tier = calculate_tier(user_profile.contribution_count)
 

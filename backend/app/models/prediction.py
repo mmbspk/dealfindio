@@ -55,9 +55,7 @@ class PricePrediction(Base):
     )
 
     __table_args__ = (
-        UniqueConstraint(
-            "product_id", "chain", "prediction_week", name="unique_prediction"
-        ),
+        UniqueConstraint("product_id", "chain", "prediction_week", name="unique_prediction"),
         Index("idx_predictions_product", "product_id", "prediction_week"),
     )
 

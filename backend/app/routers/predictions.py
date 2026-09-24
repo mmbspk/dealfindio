@@ -7,7 +7,6 @@ GET /api/v1/predictions/{product_id}
 
 import logging
 from datetime import datetime, timezone
-from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -26,14 +25,18 @@ router = APIRouter()
 def _get_predictions(db: Session, product_id: UUID) -> list[PricePredictionResponse]:
     """Shared query: future predictions for a product, sorted by week then chain."""
     now = datetime.now(timezone.utc)
-    rows = db.execute(
-        select(PricePrediction)
-        .where(
-            PricePrediction.product_id == product_id,
-            PricePrediction.prediction_week >= now,
+    rows = (
+        db.execute(
+            select(PricePrediction)
+            .where(
+                PricePrediction.product_id == product_id,
+                PricePrediction.prediction_week >= now,
+            )
+            .order_by(PricePrediction.prediction_week, PricePrediction.chain)
         )
-        .order_by(PricePrediction.prediction_week, PricePrediction.chain)
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return [PricePredictionResponse.from_orm(r) for r in rows]
 
 
@@ -54,9 +57,7 @@ async def get_product_predictions(
     Returns:
         list[PricePredictionResponse]: Upcoming price predictions ordered by week
     """
-    product = db.execute(
-        select(Product).where(Product.id == product_id)
-    ).scalar_one_or_none()
+    product = db.execute(select(Product).where(Product.id == product_id)).scalar_one_or_none()
 
     if not product:
         raise HTTPException(

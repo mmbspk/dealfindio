@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 class MLResult(TypedDict):
     """Result dictionary for ML tasks."""
+
     products_refitted: int
     predictions_generated: int
     status: str
@@ -28,8 +29,8 @@ class MLResult(TypedDict):
 
 @celery_app.task(
     bind=True,
-    name='app.workers.ml_tasks.refit_and_predict_all',
-    queue='ml',
+    name="app.workers.ml_tasks.refit_and_predict_all",
+    queue="ml",
     base=CallbackTask,
     time_limit=7200,
     soft_time_limit=6900,
@@ -47,7 +48,9 @@ def refit_and_predict_all(self) -> MLResult:
     Scheduled: Every Monday at 2:00 AM AEST (UTC Sunday 16:00) via Celery Beat.
     """
     start_time = time.time()
-    logger.info("Starting weekly ML refit and prediction generation", extra={"task_id": self.request.id})
+    logger.info(
+        "Starting weekly ML refit and prediction generation", extra={"task_id": self.request.id}
+    )
 
     session = None
     products_refitted = 0
@@ -88,6 +91,7 @@ def refit_and_predict_all(self) -> MLResult:
         # Trigger prediction-drop notifications after a successful run
         if predictions_generated > 0:
             from app.workers.notification_tasks import notify_prediction_drops
+
             notify_prediction_drops.delay()
 
         return {

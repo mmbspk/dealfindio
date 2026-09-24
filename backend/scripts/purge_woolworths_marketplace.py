@@ -29,11 +29,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 os.environ.setdefault("REDIS_URL", "redis://localhost/0")
 os.environ.setdefault("SECRET_KEY", "cleanup-script")
 
-from sqlalchemy import create_engine, delete, func, select, text
+from sqlalchemy import create_engine, delete, func, select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.models import Product, PriceReport
+from app.models import PriceReport, Product
 
 logging.basicConfig(
     level=logging.INFO,
@@ -82,8 +82,7 @@ def run(dry_run: bool) -> None:
 
         # Count affected price_reports
         pr_count = session.execute(
-            select(func.count(PriceReport.id))
-            .where(
+            select(func.count(PriceReport.id)).where(
                 PriceReport.product_id.in_(
                     select(Product.id).where(
                         Product.external_source == "catalog_woolworths",

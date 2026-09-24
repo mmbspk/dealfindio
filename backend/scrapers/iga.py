@@ -15,7 +15,7 @@ import httpx
 import redis
 from sqlalchemy.orm import Session
 
-from .base import Scraper, ScrapedProduct, ScraperError
+from .base import ScrapedProduct, Scraper, ScraperError
 
 logger = logging.getLogger(__name__)
 
@@ -128,9 +128,7 @@ class IGAScraper(Scraper):
                         self.logger.debug(f"Item {idx}: no name — skipping")
                         continue
 
-                    price_cents = _to_cents(
-                        item.get("priceNumeric") or item.get("wholePrice")
-                    )
+                    price_cents = _to_cents(item.get("priceNumeric") or item.get("wholePrice"))
                     if price_cents is None or price_cents <= 0:
                         self.logger.debug(f"Item {idx}: no valid price — skipping")
                         continue
@@ -141,14 +139,16 @@ class IGAScraper(Scraper):
 
                     sku = str(item.get("productId") or item.get("sku") or "").strip() or None
 
-                    products.append(ScrapedProduct(
-                        product_name=name,
-                        price_cents=price_cents,
-                        was_price_cents=was_cents,
-                        store_product_id=sku,
-                        valid_from=date.today(),
-                        valid_to=date.today() + timedelta(days=7),
-                    ))
+                    products.append(
+                        ScrapedProduct(
+                            product_name=name,
+                            price_cents=price_cents,
+                            was_price_cents=was_cents,
+                            store_product_id=sku,
+                            valid_from=date.today(),
+                            valid_to=date.today() + timedelta(days=7),
+                        )
+                    )
 
                 except Exception as e:
                     self.logger.warning(f"Item {idx}: parse error — {e}")

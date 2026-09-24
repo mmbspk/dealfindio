@@ -33,9 +33,7 @@ class Settings(BaseSettings):
     # API Configuration
     API_V1_STR: str = Field(default="/api/v1", description="API v1 endpoint prefix")
     PROJECT_NAME: str = Field(default="dealfindio", description="Project name")
-    PROJECT_TITLE: str = Field(
-        default="dealfindio API", description="API title for OpenAPI docs"
-    )
+    PROJECT_TITLE: str = Field(default="dealfindio API", description="API title for OpenAPI docs")
     PROJECT_DESCRIPTION: str = Field(
         default="Australian grocery deal finder", description="API description for OpenAPI"
     )
@@ -46,15 +44,11 @@ class Settings(BaseSettings):
         default="postgresql://user:password@localhost:5432/dealfindio",
         description="PostgreSQL database connection URL",
     )
-    DATABASE_POOL_SIZE: int = Field(
-        default=20, description="SQLAlchemy connection pool size"
-    )
+    DATABASE_POOL_SIZE: int = Field(default=20, description="SQLAlchemy connection pool size")
     DATABASE_POOL_PRE_PING: bool = Field(
         default=True, description="Enable connection pool pre-ping (verify connection before use)"
     )
-    DATABASE_ECHO: bool = Field(
-        default=False, description="Enable SQLAlchemy SQL query logging"
-    )
+    DATABASE_ECHO: bool = Field(default=False, description="Enable SQLAlchemy SQL query logging")
 
     # Redis Configuration
     REDIS_URL: str = Field(
@@ -138,15 +132,9 @@ class Settings(BaseSettings):
     R2_ACCOUNT_ID: Optional[str] = Field(
         default=None, description="Cloudflare R2 account ID (for endpoint URL construction)"
     )
-    R2_BUCKET: str = Field(
-        default="dealfindio-media", description="Object storage bucket name"
-    )
-    R2_ACCESS_KEY_ID: Optional[str] = Field(
-        default=None, description="R2/S3 access key ID"
-    )
-    R2_SECRET_ACCESS_KEY: Optional[str] = Field(
-        default=None, description="R2/S3 secret access key"
-    )
+    R2_BUCKET: str = Field(default="dealfindio-media", description="Object storage bucket name")
+    R2_ACCESS_KEY_ID: Optional[str] = Field(default=None, description="R2/S3 access key ID")
+    R2_SECRET_ACCESS_KEY: Optional[str] = Field(default=None, description="R2/S3 secret access key")
     R2_ENDPOINT_URL: Optional[str] = Field(
         default=None,
         description="S3-compatible endpoint URL (e.g. https://<acct>.r2.cloudflarestorage.com)",
@@ -229,13 +217,17 @@ class Settings(BaseSettings):
     COLES_EMAIL: Optional[str] = Field(default=None, description="Coles account email")
     COLES_PASSWORD: Optional[str] = Field(default=None, description="Coles account password")
     WOOLWORTHS_EMAIL: Optional[str] = Field(default=None, description="Woolworths account email")
-    WOOLWORTHS_PASSWORD: Optional[str] = Field(default=None, description="Woolworths account password")
+    WOOLWORTHS_PASSWORD: Optional[str] = Field(
+        default=None, description="Woolworths account password"
+    )
     ALDI_EMAIL: Optional[str] = Field(default=None, description="ALDI account email")
     ALDI_PASSWORD: Optional[str] = Field(default=None, description="ALDI account password")
     IGA_EMAIL: Optional[str] = Field(default=None, description="IGA account email")
     IGA_PASSWORD: Optional[str] = Field(default=None, description="IGA account password")
     DAN_MURPHYS_EMAIL: Optional[str] = Field(default=None, description="Dan Murphy's account email")
-    DAN_MURPHYS_PASSWORD: Optional[str] = Field(default=None, description="Dan Murphy's account password")
+    DAN_MURPHYS_PASSWORD: Optional[str] = Field(
+        default=None, description="Dan Murphy's account password"
+    )
 
     # Human-like pacing defaults (shared across catalog scrapers).
     # These are tuned for Coles' Imperva bot-protection — Imperva tracks request
@@ -325,21 +317,23 @@ class Settings(BaseSettings):
     # Email notifications via Resend (https://resend.com)
     # Leave RESEND_API_KEY empty to disable email sending entirely.
     RESEND_API_KEY: str = Field(default="", description="Resend API key for transactional email")
-    EMAIL_FROM_ADDRESS: str = Field(default="alerts@dealfindio.com.au", description="From address for notification emails")
-    EMAIL_FROM_NAME: str = Field(default="DealFindio Alerts", description="From name for notification emails")
-    APP_BASE_URL: str = Field(default="http://localhost:5173", description="Public app base URL (used in email links)")
+    EMAIL_FROM_ADDRESS: str = Field(
+        default="alerts@dealfindio.com.au", description="From address for notification emails"
+    )
+    EMAIL_FROM_NAME: str = Field(
+        default="DealFindio Alerts", description="From name for notification emails"
+    )
+    APP_BASE_URL: str = Field(
+        default="http://localhost:5173", description="Public app base URL (used in email links)"
+    )
 
     # OpenAPI Configuration
-    OPENAPI_URL: str = Field(
-        default="/openapi.json", description="OpenAPI schema URL"
-    )
+    OPENAPI_URL: str = Field(default="/openapi.json", description="OpenAPI schema URL")
     OPENAPI_DOCS_URL: str = Field(default="/docs", description="Swagger UI docs URL")
     OPENAPI_REDOC_URL: str = Field(default="/redoc", description="ReDoc docs URL")
 
     # Request Configuration
-    REQUEST_TIMEOUT: int = Field(
-        default=30, description="HTTP request timeout in seconds"
-    )
+    REQUEST_TIMEOUT: int = Field(default=30, description="HTTP request timeout in seconds")
 
     # Celery Configuration
     CELERY_BROKER_URL: str = Field(

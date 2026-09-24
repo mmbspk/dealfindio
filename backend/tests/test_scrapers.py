@@ -9,13 +9,12 @@ Tests:
 - Error handling and edge cases
 """
 
-import pytest
-from sqlalchemy.orm import Session
-from unittest.mock import Mock, patch, MagicMock
 from datetime import date
 
-from app.models import Product, PriceReport, Store
-from app.schemas.product import ProductResponse
+import pytest
+from sqlalchemy.orm import Session
+
+from app.models import Product, Store
 from scrapers.base import ScrapedProduct
 from scrapers.coles import ColesScraper
 
@@ -90,7 +89,6 @@ class TestColesParsing:
         assert products == []
 
 
-
 class TestColesScraperParsing:
     """Tests for Coles HTML scraper parsing."""
 
@@ -158,31 +156,19 @@ class TestWoolworthsScraperParsing:
     @pytest.mark.unit
     def test_woolworths_extract_product_id(self):
         """Test extraction of product ID."""
-        api_response = {
-            "Products": [
-                {"ProductId": "123456", "Name": "Milk"}
-            ]
-        }
+        api_response = {"Products": [{"ProductId": "123456", "Name": "Milk"}]}
         assert api_response["Products"][0]["ProductId"] == "123456"
 
     @pytest.mark.unit
     def test_woolworths_extract_price(self):
         """Test extraction of price from API response."""
-        api_response = {
-            "Products": [
-                {"Price": 3.50, "Name": "Milk"}
-            ]
-        }
+        api_response = {"Products": [{"Price": 3.50, "Name": "Milk"}]}
         assert api_response["Products"][0]["Price"] == 3.50
 
     @pytest.mark.unit
     def test_woolworths_extract_gtin(self):
         """Test extraction of GTIN from API response."""
-        api_response = {
-            "Products": [
-                {"Gtin": "9300617006552", "Name": "Milk"}
-            ]
-        }
+        api_response = {"Products": [{"Gtin": "9300617006552", "Name": "Milk"}]}
         assert api_response["Products"][0]["Gtin"] == "9300617006552"
 
     @pytest.mark.unit
@@ -202,11 +188,7 @@ class TestWoolworthsScraperParsing:
     @pytest.mark.unit
     def test_woolworths_missing_fields(self):
         """Test handling of missing required fields."""
-        api_response = {
-            "Products": [
-                {"Name": "Milk"}  # Missing Price, ProductId
-            ]
-        }
+        api_response = {"Products": [{"Name": "Milk"}]}  # Missing Price, ProductId
         # Should handle gracefully
         assert api_response is not None
 
@@ -229,9 +211,7 @@ class TestProductDeduplication:
     def test_gtin_lookup_exact_match(self, test_db_session: Session, sample_product: Product):
         """Test GTIN-based product lookup with exact match."""
         # Query for the sample product by GTIN
-        result = test_db_session.query(Product).filter(
-            Product.gtin == sample_product.gtin
-        ).first()
+        result = test_db_session.query(Product).filter(Product.gtin == sample_product.gtin).first()
 
         assert result is not None
         assert result.id == sample_product.id
@@ -240,14 +220,14 @@ class TestProductDeduplication:
     @pytest.mark.integration
     def test_gtin_lookup_no_match(self, test_db_session: Session):
         """Test GTIN lookup with no matching product."""
-        result = test_db_session.query(Product).filter(
-            Product.gtin == "9999999999999"
-        ).first()
+        result = test_db_session.query(Product).filter(Product.gtin == "9999999999999").first()
 
         assert result is None
 
     @pytest.mark.integration
-    def test_product_name_fuzzy_match(self, test_db_session: Session, sample_products: list[Product]):
+    def test_product_name_fuzzy_match(
+        self, test_db_session: Session, sample_products: list[Product]
+    ):
         """Test fuzzy matching of product names."""
         # Attempt to find similar products
         products = test_db_session.query(Product).all()
@@ -309,8 +289,9 @@ class TestPriceReportIngestion:
     @pytest.mark.integration
     def test_price_report_missing_product(self, test_db_session: Session, sample_store: Store):
         """A report referencing a non-existent product fails the FK on flush."""
-        from app.models import PriceReport
         from uuid import uuid4
+
+        from app.models import PriceReport
 
         report = PriceReport(
             product_id=uuid4(),  # Non-existent product
@@ -345,10 +326,14 @@ class TestPriceReportIngestion:
         test_db_session.commit()
 
         # Query back by product + store (which are guaranteed to match).
-        reports = test_db_session.query(PriceReport).filter(
-            PriceReport.product_id == sample_product.id,
-            PriceReport.store_id == sample_store.id,
-        ).all()
+        reports = (
+            test_db_session.query(PriceReport)
+            .filter(
+                PriceReport.product_id == sample_product.id,
+                PriceReport.store_id == sample_store.id,
+            )
+            .all()
+        )
 
         # Exactly one report should exist for this product/store pair.
         assert len(reports) == 1
@@ -471,4 +456,3 @@ class TestScraperIntegration:
             assert p.product_name
             assert isinstance(p.price_cents, int)
             assert p.price_cents > 0
-

@@ -13,27 +13,19 @@ import asyncio
 import json
 import logging
 from pathlib import Path
-from typing import AsyncGenerator, Generator
+from typing import Generator
 from uuid import uuid4
 
 import pytest
 from fakeredis import FakeStrictRedis
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event, pool
-from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import Settings, get_settings
-from app.deps import (
-    _engine,
-    _redis_pool,
-    _SessionLocal,
-    close_connections,
-    init_database,
-    init_redis,
-)
-from app.main import app, create_app
+from app.main import app
 from app.models import Base, Product, Store
-from fastapi.testclient import TestClient
+from app.models.base import PlainBase
 
 logger = logging.getLogger(__name__)
 
@@ -98,8 +90,10 @@ def test_db_engine():
             for ext in ("postgis", "pg_trgm", '"uuid-ossp"', "cube", "earthdistance", "vector"):
                 conn.exec_driver_sql(f"CREATE EXTENSION IF NOT EXISTS {ext}")
         Base.metadata.create_all(bind=engine)
+        PlainBase.metadata.create_all(bind=engine)
         yield engine
         Base.metadata.drop_all(bind=engine)
+        PlainBase.metadata.drop_all(bind=engine)
         engine.dispose()
         return
 
@@ -120,11 +114,13 @@ def test_db_engine():
 
     # Create all tables
     Base.metadata.create_all(bind=engine)
+    PlainBase.metadata.create_all(bind=engine)
 
     yield engine
 
     # Cleanup
     Base.metadata.drop_all(bind=engine)
+    PlainBase.metadata.drop_all(bind=engine)
     engine.dispose()
 
 

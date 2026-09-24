@@ -11,10 +11,8 @@ Test cases:
 - Duplicate detection
 """
 
+
 import pytest
-from uuid import uuid4
-from datetime import datetime, timedelta, timezone
-from statistics import mean, stdev
 
 
 class TestValidateCommunityReport:

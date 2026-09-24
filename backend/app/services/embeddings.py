@@ -13,10 +13,7 @@ from __future__ import annotations
 
 import re
 import threading
-from functools import lru_cache
 from typing import TYPE_CHECKING
-
-import numpy as np
 
 if TYPE_CHECKING:
     from sentence_transformers import SentenceTransformer
@@ -35,6 +32,7 @@ def get_model() -> "SentenceTransformer":
         with _model_lock:
             if _model is None:
                 from sentence_transformers import SentenceTransformer
+
                 _model = SentenceTransformer(_MODEL_NAME)
     return _model
 

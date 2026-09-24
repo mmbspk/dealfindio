@@ -8,15 +8,19 @@ import {
   FlatList,
   StyleSheet,
   Text,
+  Image,
+  Pressable,
   TouchableOpacity,
   View,
 } from 'react-native'
 import * as Location from 'expo-location'
+import { router } from 'expo-router'
 import apiClient from '@/api/client'
 
 interface Deal {
   id: string
   product_id: string
+  image_url?: string | null
   product_name: string
   brand: string | null
   category: string | null
@@ -83,7 +87,10 @@ export default function DealsScreen() {
     const distLine = item.distance_km != null ? ` · ${item.distance_km.toFixed(1)} km away` : ''
 
     return (
-      <View style={styles.card}>
+      <Pressable style={styles.card} onPress={() => router.push(`/product/${item.product_id}`)} accessibilityRole="button" accessibilityLabel={`Compare prices for ${item.product_name}`}>
+        <View style={styles.cardMain}>
+          {item.image_url ? <Image source={{ uri: item.image_url }} style={styles.dealImage} resizeMode="contain" /> : null}
+          <View style={styles.cardCopy}>
         <Text style={styles.name}>{item.product_name}</Text>
         {item.brand ? <Text style={styles.brand}>{item.brand}</Text> : null}
         <Text style={styles.store}>{storeLine}{distLine}</Text>
@@ -95,12 +102,14 @@ export default function DealsScreen() {
           {pctOff ? <Text style={styles.badge}>{pctOff}% off</Text> : null}
           {item.is_verified ? <Text style={styles.verifiedBadge}>Verified</Text> : null}
         </View>
-      </View>
+          </View>
+        </View>
+      </Pressable>
     )
   }
 
   if (loading) {
-    return <ActivityIndicator size="large" color="#4f46e5" style={styles.spinner} />
+    return <ActivityIndicator size="large" color="#164b40" style={styles.spinner} />
   }
 
   return (
@@ -129,35 +138,38 @@ export default function DealsScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f9fafb' },
-  spinner: { flex: 1, backgroundColor: '#f9fafb' },
+  cardMain: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+  cardCopy: { flex: 1 },
+  dealImage: { width: 76, height: 82, borderRadius: 12, backgroundColor: '#f5f7f2' },
+  container: { flex: 1, backgroundColor: '#f5f7f2' },
+  spinner: { flex: 1, backgroundColor: '#f5f7f2' },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
   error: { color: '#ef4444', textAlign: 'center', marginBottom: 16 },
   retryBtn: {
-    backgroundColor: '#4f46e5',
+    backgroundColor: '#164b40',
     paddingHorizontal: 20,
     paddingVertical: 10,
-    borderRadius: 8,
+    borderRadius: 12,
   },
   retryText: { color: '#fff', fontWeight: '600' },
-  empty: { color: '#6b7280', textAlign: 'center', marginTop: 40, paddingHorizontal: 24 },
+  empty: { color: '#5d7469', textAlign: 'center', marginTop: 40, paddingHorizontal: 24 },
   list: { padding: 12 },
   card: {
     backgroundColor: '#fff',
-    borderRadius: 8,
+    borderRadius: 12,
     padding: 14,
     marginBottom: 8,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: '#dce5dd',
   },
-  name: { fontSize: 16, fontWeight: '600', color: '#111827' },
-  brand: { fontSize: 12, color: '#9ca3af', marginTop: 1 },
-  store: { fontSize: 13, color: '#6b7280', marginTop: 2 },
+  name: { fontSize: 16, fontWeight: '600', color: '#122923' },
+  brand: { fontSize: 12, color: '#71877b', marginTop: 1 },
+  store: { fontSize: 13, color: '#5d7469', marginTop: 2 },
   priceRow: { flexDirection: 'row', alignItems: 'center', marginTop: 8, gap: 8, flexWrap: 'wrap' },
-  price: { fontSize: 20, fontWeight: '700', color: '#10b981' },
+  price: { fontSize: 20, fontWeight: '700', color: '#176f50' },
   wasPrice: {
     fontSize: 14,
-    color: '#9ca3af',
+    color: '#71877b',
     textDecorationLine: 'line-through',
   },
   badge: {

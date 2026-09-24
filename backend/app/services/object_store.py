@@ -98,9 +98,7 @@ class S3ObjectStore:
 
     def __init__(self, settings: Settings) -> None:
         if not settings.R2_PUBLIC_BASE_URL:
-            raise ObjectStoreError(
-                "R2_PUBLIC_BASE_URL must be set for the r2/s3 storage backend"
-            )
+            raise ObjectStoreError("R2_PUBLIC_BASE_URL must be set for the r2/s3 storage backend")
         try:
             import boto3
             from botocore.config import Config as BotoConfig

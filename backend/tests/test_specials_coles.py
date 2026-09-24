@@ -5,21 +5,22 @@ Tests cover JSON response parsing, pagination logic, image URL helper,
 and bot-challenge detection — without any real HTTP calls.
 """
 
-import pytest
 from datetime import date
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from scrapers.specials_coles import (
     ColesSpecialsScraper,
-    _extract_results,
-    _total_results,
-    _parse_item,
     _absolute_image_url,
+    _extract_results,
+    _parse_item,
     _to_cents,
+    _total_results,
 )
 
-
 # ── Fixtures ──────────────────────────────────────────────────────────────────
+
 
 def _make_result(name="Coles Milk 2L", now=3.50, was=5.00, brand="Coles", image_uri="/8/0001.jpg"):
     r = {
@@ -41,6 +42,7 @@ def _make_page(results, total=None):
 
 
 # ── _extract_results ──────────────────────────────────────────────────────────
+
 
 class TestExtractResults:
     @pytest.mark.unit
@@ -69,6 +71,7 @@ class TestExtractResults:
 
 # ── _total_results ────────────────────────────────────────────────────────────
 
+
 class TestTotalResults:
     @pytest.mark.unit
     def test_reads_noOfResults(self):
@@ -81,6 +84,7 @@ class TestTotalResults:
 
 
 # ── _parse_item ───────────────────────────────────────────────────────────────
+
 
 class TestParseItem:
     TODAY = date(2026, 9, 8)
@@ -160,6 +164,7 @@ class TestParseItem:
 
 # ── _absolute_image_url ───────────────────────────────────────────────────────
 
+
 class TestAbsoluteImageUrl:
     @pytest.mark.unit
     def test_relative_with_leading_slash(self):
@@ -187,6 +192,7 @@ class TestAbsoluteImageUrl:
 
 # ── _to_cents ─────────────────────────────────────────────────────────────────
 
+
 class TestToCents:
     @pytest.mark.unit
     def test_float(self):
@@ -212,6 +218,7 @@ class TestToCents:
 
 
 # ── ColesSpecialsScraper.parse_flyer ─────────────────────────────────────────
+
 
 class TestColesSpecialsScraperParsing:
     def _scraper(self):
@@ -257,6 +264,7 @@ class TestColesSpecialsScraperParsing:
 
 # ── ColesSpecialsScraper.discover_source (bootstrap) ─────────────────────────
 
+
 class TestColesSpecialsScraperBootstrap:
     def _scraper(self):
         return ColesSpecialsScraper(db_session=None, redis_client=None)
@@ -285,6 +293,7 @@ class TestColesSpecialsScraperBootstrap:
     @pytest.mark.asyncio
     async def test_raises_on_bot_challenge(self):
         from scrapers.base import ScraperError
+
         mock_resp = MagicMock()
         mock_resp.text = "<html>No buildId here — Imperva challenge</html>"
         mock_resp.raise_for_status = MagicMock()

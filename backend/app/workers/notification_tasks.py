@@ -16,7 +16,6 @@ Bugs fixed from original:
   - Email dispatch via Resend
 """
 
-import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import TypedDict
@@ -54,6 +53,7 @@ def _in_quiet_hours(user: UserProfile) -> bool:
         return False
     try:
         import zoneinfo
+
         tz = zoneinfo.ZoneInfo(user.notif_timezone or "Australia/Sydney")
         local_hour = datetime.now(tz).hour
         start = user.notif_quiet_hours_start
@@ -71,6 +71,7 @@ def _send_push(user: UserProfile, title: str, body: str, data: dict) -> str | No
     if not user.fcm_token:
         return None
     from app.services.push_sender import send_expo_push_sync
+
     success, receipt_id = send_expo_push_sync(user.fcm_token, title, body, data)
     if not success:
         # DeviceNotRegistered — clear stale token
@@ -80,8 +81,8 @@ def _send_push(user: UserProfile, title: str, body: str, data: dict) -> str | No
 
 @celery_app.task(
     bind=True,
-    name='app.workers.notification_tasks.check_watchlist_for_price',
-    queue='notification',
+    name="app.workers.notification_tasks.check_watchlist_for_price",
+    queue="notification",
     base=CallbackTask,
     time_limit=60,
     soft_time_limit=50,
@@ -118,17 +119,20 @@ def check_watchlist_for_price(self, price_report_id: str) -> NotificationResult:
 
         # Fetch ALL active watchlist items for this product, regardless of channel.
         # Exclude self-reporting (but safely handle NULL reporter_user_id for scrapers).
-        watchlist_items = session.query(UserWatchlist).join(
-            UserProfile, UserWatchlist.user_id == UserProfile.id
-        ).filter(
-            UserWatchlist.product_id == price_report.product_id,
-            UserWatchlist.is_active == True,
-            # Fix: reporter_user_id IS NULL for scraper sources → don't exclude anyone
-            or_(
-                price_report.reporter_user_id == None,
-                UserWatchlist.user_id != price_report.reporter_user_id,
-            ),
-        ).all()
+        watchlist_items = (
+            session.query(UserWatchlist)
+            .join(UserProfile, UserWatchlist.user_id == UserProfile.id)
+            .filter(
+                UserWatchlist.product_id == price_report.product_id,
+                UserWatchlist.is_active == True,
+                # Fix: reporter_user_id IS NULL for scraper sources → don't exclude anyone
+                or_(
+                    price_report.reporter_user_id == None,
+                    UserWatchlist.user_id != price_report.reporter_user_id,
+                ),
+            )
+            .all()
+        )
 
         logger.info(f"Found {len(watchlist_items)} potential watchlist matches")
         watchlists_matched = len(watchlist_items)
@@ -165,12 +169,16 @@ def check_watchlist_for_price(self, price_report_id: str) -> NotificationResult:
                     trigger_type = "pct_off_match"
 
                 # 24-hour dedup
-                recent = session.query(Notification).filter(
-                    Notification.user_id == watchlist_item.user_id,
-                    Notification.watchlist_id == watchlist_item.id,
-                    Notification.trigger_type == trigger_type,
-                    Notification.sent_at >= now - timedelta(hours=24),
-                ).first()
+                recent = (
+                    session.query(Notification)
+                    .filter(
+                        Notification.user_id == watchlist_item.user_id,
+                        Notification.watchlist_id == watchlist_item.id,
+                        Notification.trigger_type == trigger_type,
+                        Notification.sent_at >= now - timedelta(hours=24),
+                    )
+                    .first()
+                )
                 if recent:
                     logger.debug(f"Dedup skip: watchlist={watchlist_item.id} type={trigger_type}")
                     continue
@@ -186,7 +194,9 @@ def check_watchlist_for_price(self, price_report_id: str) -> NotificationResult:
                     "flash_sale": ("notif_push_flash_sale", "notif_email_pct_off"),
                     "prediction_drop": ("notif_push_prediction", "notif_email_prediction"),
                 }
-                push_pref_attr, email_pref_attr = pref_map.get(trigger_type, ("notif_push_price_match", "notif_email_price_match"))
+                push_pref_attr, email_pref_attr = pref_map.get(
+                    trigger_type, ("notif_push_price_match", "notif_email_price_match")
+                )
                 send_push_notif = getattr(user, push_pref_attr, True)
                 send_email_notif = getattr(user, email_pref_attr, False)
 
@@ -198,7 +208,9 @@ def check_watchlist_for_price(self, price_report_id: str) -> NotificationResult:
                 product_name = price_report.product.name if price_report.product else "Product"
                 price_aud = price_report.price_cents / 100
                 store_name = price_report.store.name if price_report.store else "a store"
-                was_price_aud = price_report.was_price_cents / 100 if price_report.was_price_cents else None
+                was_price_aud = (
+                    price_report.was_price_cents / 100 if price_report.was_price_cents else None
+                )
 
                 if trigger_type == "flash_sale":
                     title = f"Flash Sale: {product_name}"
@@ -220,26 +232,49 @@ def check_watchlist_for_price(self, price_report_id: str) -> NotificationResult:
 
                 # Send push
                 if send_push_notif and user.fcm_token:
-                    push_receipt = _send_push(user, title, body, {
-                        "product_id": str(price_report.product_id),
-                        "store_id": str(price_report.store_id),
-                        "price_cents": str(price_report.price_cents),
-                        "trigger_type": trigger_type,
-                    })
-                    _log_notification(session, user, watchlist_item, price_report_uuid,
-                                      trigger_type, title, body, "push",
-                                      fcm_message_id=push_receipt,
-                                      is_delivered=push_receipt is not None)
+                    push_receipt = _send_push(
+                        user,
+                        title,
+                        body,
+                        {
+                            "product_id": str(price_report.product_id),
+                            "store_id": str(price_report.store_id),
+                            "price_cents": str(price_report.price_cents),
+                            "trigger_type": trigger_type,
+                        },
+                    )
+                    _log_notification(
+                        session,
+                        user,
+                        watchlist_item,
+                        price_report_uuid,
+                        trigger_type,
+                        title,
+                        body,
+                        "push",
+                        fcm_message_id=push_receipt,
+                        is_delivered=push_receipt is not None,
+                    )
                     if push_receipt:
                         notifications_sent += 1
 
                 # Always log in-app notification (even if push/email off)
-                _log_notification(session, user, watchlist_item, price_report_uuid,
-                                  trigger_type, title, body, "in_app", is_delivered=True)
+                _log_notification(
+                    session,
+                    user,
+                    watchlist_item,
+                    price_report_uuid,
+                    trigger_type,
+                    title,
+                    body,
+                    "in_app",
+                    is_delivered=True,
+                )
 
                 # Send email
                 if send_email_notif and user.email:
                     from app.services.email_sender import send_price_alert_email
+
                     email_msg_id = send_price_alert_email(
                         to=user.email,
                         user_id=str(user.id),
@@ -251,9 +286,18 @@ def check_watchlist_for_price(self, price_report_id: str) -> NotificationResult:
                         trigger_type=trigger_type,
                     )
                     if email_msg_id:
-                        _log_notification(session, user, watchlist_item, price_report_uuid,
-                                          trigger_type, title, body, "email",
-                                          email_message_id=email_msg_id, is_delivered=True)
+                        _log_notification(
+                            session,
+                            user,
+                            watchlist_item,
+                            price_report_uuid,
+                            trigger_type,
+                            title,
+                            body,
+                            "email",
+                            email_message_id=email_msg_id,
+                            is_delivered=True,
+                        )
                         notifications_sent += 1
 
             except Exception as e:
@@ -315,8 +359,8 @@ def _log_notification(
 
 @celery_app.task(
     bind=True,
-    name='app.workers.notification_tasks.notify_prediction_drops',
-    queue='notification',
+    name="app.workers.notification_tasks.notify_prediction_drops",
+    queue="notification",
     base=CallbackTask,
     time_limit=300,
     soft_time_limit=270,
@@ -339,12 +383,15 @@ def notify_prediction_drops(self) -> NotificationResult:
         session = get_db_session()
         now = datetime.now(timezone.utc)
 
-        watchlist_items = session.query(UserWatchlist).join(
-            UserProfile, UserWatchlist.user_id == UserProfile.id
-        ).filter(
-            UserWatchlist.is_active == True,
-            UserWatchlist.alert_on_prediction == True,
-        ).all()
+        watchlist_items = (
+            session.query(UserWatchlist)
+            .join(UserProfile, UserWatchlist.user_id == UserProfile.id)
+            .filter(
+                UserWatchlist.is_active == True,
+                UserWatchlist.alert_on_prediction == True,
+            )
+            .all()
+        )
 
         for watchlist_item in watchlist_items:
             try:
@@ -363,12 +410,16 @@ def notify_prediction_drops(self) -> NotificationResult:
 
                 watchlists_matched += 1
 
-                recent = session.query(Notification).filter(
-                    Notification.user_id == watchlist_item.user_id,
-                    Notification.watchlist_id == watchlist_item.id,
-                    Notification.trigger_type == "prediction_drop",
-                    Notification.sent_at >= now - timedelta(days=7),
-                ).first()
+                recent = (
+                    session.query(Notification)
+                    .filter(
+                        Notification.user_id == watchlist_item.user_id,
+                        Notification.watchlist_id == watchlist_item.id,
+                        Notification.trigger_type == "prediction_drop",
+                        Notification.sent_at >= now - timedelta(days=7),
+                    )
+                    .first()
+                )
                 if recent:
                     continue
 
@@ -376,7 +427,11 @@ def notify_prediction_drops(self) -> NotificationResult:
                 if not user:
                     continue
 
-                product_name = watchlist_item.product.name if watchlist_item.product else str(watchlist_item.product_id)
+                product_name = (
+                    watchlist_item.product.name
+                    if watchlist_item.product
+                    else str(watchlist_item.product_id)
+                )
                 pred_aud = prediction.predicted_price_cents / 100
                 week_str = prediction.prediction_week.strftime("%d %b")
                 chain_str = f" at {prediction.chain}" if prediction.chain else ""
@@ -385,28 +440,53 @@ def notify_prediction_drops(self) -> NotificationResult:
                 body = f"Expected ${pred_aud:.2f}{chain_str} week of {week_str}"
 
                 # Always log in-app
-                _log_prediction_notification(session, user, watchlist_item, prediction,
-                                              title, body, "in_app", is_delivered=True)
+                _log_prediction_notification(
+                    session,
+                    user,
+                    watchlist_item,
+                    prediction,
+                    title,
+                    body,
+                    "in_app",
+                    is_delivered=True,
+                )
 
                 # Push
-                if getattr(user, "notif_push_prediction", True) and user.fcm_token and not _in_quiet_hours(user):
-                    receipt = _send_push(user, title, body, {
-                        "product_id": str(watchlist_item.product_id),
-                        "predicted_price_cents": str(prediction.predicted_price_cents),
-                        "prediction_week": prediction.prediction_week.isoformat(),
-                        "chain": prediction.chain or "",
-                        "trigger_type": "prediction_drop",
-                    })
-                    _log_prediction_notification(session, user, watchlist_item, prediction,
-                                                  title, body, "push",
-                                                  fcm_message_id=receipt,
-                                                  is_delivered=receipt is not None)
+                if (
+                    getattr(user, "notif_push_prediction", True)
+                    and user.fcm_token
+                    and not _in_quiet_hours(user)
+                ):
+                    receipt = _send_push(
+                        user,
+                        title,
+                        body,
+                        {
+                            "product_id": str(watchlist_item.product_id),
+                            "predicted_price_cents": str(prediction.predicted_price_cents),
+                            "prediction_week": prediction.prediction_week.isoformat(),
+                            "chain": prediction.chain or "",
+                            "trigger_type": "prediction_drop",
+                        },
+                    )
+                    _log_prediction_notification(
+                        session,
+                        user,
+                        watchlist_item,
+                        prediction,
+                        title,
+                        body,
+                        "push",
+                        fcm_message_id=receipt,
+                        is_delivered=receipt is not None,
+                    )
                     if receipt:
                         notifications_sent += 1
 
                 # Email
                 if getattr(user, "notif_email_prediction", False) and user.email:
                     from app.services.email_sender import send_price_alert_email
+
                     msg_id = send_price_alert_email(
                         to=user.email,
                         user_id=str(user.id),
@@ -418,17 +498,31 @@ def notify_prediction_drops(self) -> NotificationResult:
                         trigger_type="prediction_drop",
                     )
                     if msg_id:
-                        _log_prediction_notification(session, user, watchlist_item, prediction,
-                                                      title, body, "email",
-                                                      email_message_id=msg_id, is_delivered=True)
+                        _log_prediction_notification(
+                            session,
+                            user,
+                            watchlist_item,
+                            prediction,
+                            title,
+                            body,
+                            "email",
+                            email_message_id=msg_id,
+                            is_delivered=True,
+                        )
                         notifications_sent += 1
 
             except Exception as e:
                 logger.error(f"Error processing watchlist {watchlist_item.id}: {e}", exc_info=True)
                 continue
 
-        logger.info(f"notify_prediction_drops done: {notifications_sent} sent ({watchlists_matched} matched)")
-        return {"watchlists_matched": watchlists_matched, "notifications_sent": notifications_sent, "status": "success"}
+        logger.info(
+            f"notify_prediction_drops done: {notifications_sent} sent ({watchlists_matched} matched)"
+        )
+        return {
+            "watchlists_matched": watchlists_matched,
+            "notifications_sent": notifications_sent,
+            "status": "success",
+        }
 
     except Exception as exc:
         logger.exception(f"notify_prediction_drops failed: {exc}")
@@ -439,8 +533,17 @@ def notify_prediction_drops(self) -> NotificationResult:
 
 
 def _log_prediction_notification(
-    session, user, watchlist_item, prediction, title, body, channel, *,
-    fcm_message_id=None, email_message_id=None, is_delivered=False
+    session,
+    user,
+    watchlist_item,
+    prediction,
+    title,
+    body,
+    channel,
+    *,
+    fcm_message_id=None,
+    email_message_id=None,
+    is_delivered=False,
 ):
     try:
         notif = Notification(
@@ -468,8 +571,8 @@ def _log_prediction_notification(
 
 @celery_app.task(
     bind=True,
-    name='app.workers.notification_tasks.send_weekly_digest',
-    queue='notification',
+    name="app.workers.notification_tasks.send_weekly_digest",
+    queue="notification",
     base=CallbackTask,
     time_limit=300,
     soft_time_limit=270,
@@ -487,25 +590,30 @@ def send_weekly_digest(self) -> dict:
     emails_sent = 0
 
     try:
-        from sqlalchemy import and_
-        from app.models import WatchlistList
-
         session = get_db_session()
         now = datetime.now(timezone.utc)
 
         # Users who opted in to weekly digest and have email
-        users = session.query(UserProfile).filter(
-            UserProfile.notif_email_weekly_digest == True,
-            UserProfile.email != None,
-        ).all()
+        users = (
+            session.query(UserProfile)
+            .filter(
+                UserProfile.notif_email_weekly_digest == True,
+                UserProfile.email != None,
+            )
+            .all()
+        )
 
         for user in users:
             try:
                 # Find on-sale products from this user's active watchlist items
-                watchlist_items = session.query(UserWatchlist).filter(
-                    UserWatchlist.user_id == user.id,
-                    UserWatchlist.is_active == True,
-                ).all()
+                watchlist_items = (
+                    session.query(UserWatchlist)
+                    .filter(
+                        UserWatchlist.user_id == user.id,
+                        UserWatchlist.is_active == True,
+                    )
+                    .all()
+                )
 
                 if not watchlist_items:
                     continue
@@ -513,28 +621,39 @@ def send_weekly_digest(self) -> dict:
                 product_ids = [w.product_id for w in watchlist_items]
 
                 # Get best active price report per product (is_on_sale)
-                from app.models import PriceReport, Product, Store
                 from sqlalchemy import desc
+
+                from app.models import PriceReport, Product, Store
 
                 deals = []
                 for pid in product_ids:
-                    report = session.query(PriceReport).join(
-                        Product, PriceReport.product_id == Product.id
-                    ).filter(
-                        PriceReport.product_id == pid,
-                        PriceReport.is_on_sale == True,
-                    ).order_by(desc(PriceReport.sale_pct_off)).first()
+                    report = (
+                        session.query(PriceReport)
+                        .join(Product, PriceReport.product_id == Product.id)
+                        .filter(
+                            PriceReport.product_id == pid,
+                            PriceReport.is_on_sale == True,
+                        )
+                        .order_by(desc(PriceReport.sale_pct_off))
+                        .first()
+                    )
 
                     if report and report.product:
                         store = session.query(Store).filter_by(id=report.store_id).first()
-                        deals.append({
-                            "product_name": report.product.name,
-                            "price": report.price_cents / 100,
-                            "was_price": report.was_price_cents / 100 if report.was_price_cents else None,
-                            "store_name": store.name if store else "Store",
-                            "product_id": str(pid),
-                            "pct_off": round(report.sale_pct_off) if report.sale_pct_off else None,
-                        })
+                        deals.append(
+                            {
+                                "product_name": report.product.name,
+                                "price": report.price_cents / 100,
+                                "was_price": report.was_price_cents / 100
+                                if report.was_price_cents
+                                else None,
+                                "store_name": store.name if store else "Store",
+                                "product_id": str(pid),
+                                "pct_off": round(report.sale_pct_off)
+                                if report.sale_pct_off
+                                else None,
+                            }
+                        )
 
                 if not deals:
                     continue
@@ -544,6 +663,7 @@ def send_weekly_digest(self) -> dict:
                 deals = deals[:5]
 
                 from app.services.email_sender import send_weekly_digest_email
+
                 msg_id = send_weekly_digest_email(
                     to=user.email,
                     user_id=str(user.id),

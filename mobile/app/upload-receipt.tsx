@@ -135,7 +135,7 @@ export default function UploadReceiptScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { padding: 20, backgroundColor: '#f9fafb', flexGrow: 1 },
+  container: { padding: 20, backgroundColor: '#f5f7f2', flexGrow: 1 },
   preview: { width: '100%', height: 280, borderRadius: 12, resizeMode: 'contain' },
   placeholder: {
     width: '100%',
@@ -147,21 +147,21 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  placeholderText: { color: '#9ca3af' },
+  placeholderText: { color: '#71877b' },
   pickRow: { flexDirection: 'row', gap: 12, marginTop: 16 },
   pickBtn: {
     flex: 1,
     backgroundColor: '#fff',
-    borderRadius: 8,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: '#dce5dd',
     padding: 14,
     alignItems: 'center',
   },
-  pickText: { fontSize: 15, color: '#111827', fontWeight: '500' },
+  pickText: { fontSize: 15, color: '#122923', fontWeight: '500' },
   upload: {
-    backgroundColor: '#4f46e5',
-    borderRadius: 8,
+    backgroundColor: '#164b40',
+    borderRadius: 12,
     padding: 16,
     alignItems: 'center',
     marginTop: 16,
@@ -170,7 +170,7 @@ const styles = StyleSheet.create({
   uploadText: { color: '#fff', fontWeight: '600', fontSize: 16 },
   error: { color: '#ef4444', marginTop: 16, textAlign: 'center' },
   result: { marginTop: 20, gap: 4 },
-  resultMsg: { fontSize: 15, fontWeight: '600', color: '#111827', marginBottom: 8 },
-  matched: { color: '#10b981', fontSize: 14 },
+  resultMsg: { fontSize: 15, fontWeight: '600', color: '#122923', marginBottom: 8 },
+  matched: { color: '#176f50', fontSize: 14 },
   unmatched: { color: '#b45309', fontSize: 14 },
 })

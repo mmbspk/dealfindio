@@ -26,12 +26,12 @@ def _load_registry() -> dict[str, type[CatalogScraper]]:
     if _REGISTRY:
         return _REGISTRY
 
-    from scrapers.catalog_coles import ColesCatalogScraper
-    from scrapers.catalog_woolworths import WoolworthsCatalogScraper
     from scrapers.catalog_aldi import ALDICatalogScraper
-    from scrapers.catalog_iga import IGACatalogScraper
+    from scrapers.catalog_coles import ColesCatalogScraper
     from scrapers.catalog_danmurphys import DanMurphysCatalogScraper
     from scrapers.catalog_drakes import DrakesCatalogScraper
+    from scrapers.catalog_iga import IGACatalogScraper
+    from scrapers.catalog_woolworths import WoolworthsCatalogScraper
 
     _REGISTRY.update(
         {

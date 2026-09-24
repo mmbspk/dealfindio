@@ -30,6 +30,7 @@ class _StubSession:
 
 # ── get_runtime_typed: coercion ───────────────────────────────────────────────
 
+
 class TestGetRuntimeTyped:
     def test_bool_true_variants(self):
         for raw in ("true", "1", "yes", "on", "TRUE", "  True "):
@@ -58,7 +59,7 @@ class TestGetRuntimeTyped:
         s = _StubSession({})
         assert config_store.get_runtime_typed("AI_DEDUP_ENABLED", s) is False  # Settings default
         assert config_store.get_runtime_typed("AI_DEDUP_MAX_TOKENS", s) == 512
-        assert config_store.get_runtime_typed("AI_DEDUP_MODEL", s) == "claude-sonnet-4-5"
+        assert config_store.get_runtime_typed("AI_DEDUP_MODEL", s) == "claude-sonnet-4-6"
 
     def test_bad_stored_number_falls_back_to_default(self):
         # A malformed stored int must not crash a run — fall back to the setting.
@@ -67,6 +68,7 @@ class TestGetRuntimeTyped:
 
 
 # ── validate_value ────────────────────────────────────────────────────────────
+
 
 class TestValidateValue:
     def test_bool_normalizes(self):
@@ -78,7 +80,7 @@ class TestValidateValue:
             config_store.validate_value("AI_DEDUP_ENABLED", "maybe")
 
     def test_enum_accepts_option(self):
-        assert config_store.validate_value("AI_DEDUP_MODEL", "claude-opus-4-8") == "claude-opus-4-8"
+        assert config_store.validate_value("AI_DEDUP_MODEL", "claude-opus-5") == "claude-opus-5"
 
     def test_enum_rejects_non_option(self):
         with pytest.raises(ValueError):
@@ -103,5 +105,8 @@ class TestValidateValue:
 
     def test_plain_string_passthrough(self):
         # Unknown / plain-string keys are returned unchanged.
-        assert config_store.validate_value("ANTHROPIC_BASE_URL", "https://proxy.example.com") == "https://proxy.example.com"
+        assert (
+            config_store.validate_value("ANTHROPIC_BASE_URL", "https://proxy.example.com")
+            == "https://proxy.example.com"
+        )
         assert config_store.validate_value("EMAIL_FROM_NAME", "DealFindio") == "DealFindio"

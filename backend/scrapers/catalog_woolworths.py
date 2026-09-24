@@ -48,19 +48,29 @@ from tenacity import (
     wait_exponential,
 )
 
+from app.services.category_normaliser import normalise_category as _normalise_category
 from scrapers.base import ScraperError
+from scrapers.catalog_base import (
+    HTML_HEADERS as _HTML_HEADERS,
+)
+from scrapers.catalog_base import (
+    JSON_HEADERS as _JSON_HEADERS_BASE,
+)
 from scrapers.catalog_base import (
     AuthExpiredError,
     CatalogProduct,
     CatalogScraper,
     CategoryNode,
-    HTML_HEADERS as _HTML_HEADERS,
-    JSON_HEADERS as _JSON_HEADERS_BASE,
-    parse_retry_after as _parse_retry_after,
-    to_cents as _to_cents,
+)
+from scrapers.catalog_base import (
     get_scraper_proxy as _get_proxy,
 )
-from app.services.category_normaliser import normalise_category as _normalise_category
+from scrapers.catalog_base import (
+    parse_retry_after as _parse_retry_after,
+)
+from scrapers.catalog_base import (
+    to_cents as _to_cents,
+)
 
 # ── Headers ──────────────────────────────────────────────────────────────────
 # Woolworths JSON calls need a same-origin Referer and Origin.
@@ -79,12 +89,12 @@ _BROWSE_URL = "https://www.woolworths.com.au/apis/ui/browse/category"
 
 # NodeIds for sections we don't want to crawl (non-grocery / specials overlay).
 _SKIP_NODE_IDS = {
-    "specialsgroup",   # handled by the specials scraper (woolworths.py)
-    "1_A363395",       # Everyday Market (third-party marketplace)
-    "1_F89E4BB",       # Healthylife (health supplement store)
-    "1_BC1E589",       # Gift Ideas
-    "1_9E60D27",       # Footy Finals (seasonal)
-    "1_B63CF9E",       # Front of Store (internal/restricted)
+    "specialsgroup",  # handled by the specials scraper (woolworths.py)
+    "1_A363395",  # Everyday Market (third-party marketplace)
+    "1_F89E4BB",  # Healthylife (health supplement store)
+    "1_BC1E589",  # Gift Ideas
+    "1_9E60D27",  # Footy Finals (seasonal)
+    "1_B63CF9E",  # Front of Store (internal/restricted)
 }
 
 
@@ -115,7 +125,9 @@ class WoolworthsCatalogScraper(CatalogScraper):
     async def _bootstrap(self) -> dict:
         """Fetch the homepage (HTML headers) to seed session cookies."""
         async with httpx.AsyncClient(
-            headers=_HTML_HEADERS, follow_redirects=True, timeout=self.TIMEOUT_S,
+            headers=_HTML_HEADERS,
+            follow_redirects=True,
+            timeout=self.TIMEOUT_S,
             proxies=_get_proxy(),
         ) as client:
             try:
@@ -142,18 +154,15 @@ class WoolworthsCatalogScraper(CatalogScraper):
             cookies=auth.get("cookies", {}),
             follow_redirects=True,
             timeout=self.TIMEOUT_S,
-            proxies=_get_proxy(),        ) as client:
+            proxies=_get_proxy(),
+        ) as client:
             await self.rate_limiter.wait()
             try:
                 resp = await client.get(_BOOTSTRAP_URL)
                 if resp.status_code in (401, 403):
                     raise AuthExpiredError("Woolworths bootstrap auth expired")
                 resp.raise_for_status()
-                cats_raw = (
-                    resp.json()
-                    .get("ListTopLevelPiesCategories", {})
-                    .get("Categories", [])
-                )
+                cats_raw = resp.json().get("ListTopLevelPiesCategories", {}).get("Categories", [])
             except (httpx.HTTPError, ValueError) as exc:
                 raise ScraperError(f"Woolworths category discovery failed: {exc}") from exc
 
@@ -164,11 +173,13 @@ class WoolworthsCatalogScraper(CatalogScraper):
                 continue
             if cat.get("IsSpecial"):
                 continue
-            nodes.append(CategoryNode(
-                id=node_id,
-                name=cat.get("Description") or node_id,
-                url=cat.get("UrlFriendlyName") or node_id,
-            ))
+            nodes.append(
+                CategoryNode(
+                    id=node_id,
+                    name=cat.get("Description") or node_id,
+                    url=cat.get("UrlFriendlyName") or node_id,
+                )
+            )
         return nodes
 
     async def crawl_category(self, category: CategoryNode, auth: dict) -> Any:
@@ -181,7 +192,8 @@ class WoolworthsCatalogScraper(CatalogScraper):
             cookies=auth.get("cookies", {}),
             follow_redirects=True,
             timeout=self.TIMEOUT_S,
-            proxies=_get_proxy(),        ) as client:
+            proxies=_get_proxy(),
+        ) as client:
             for page in range(1, self.config.max_pages_per_category + 1):
                 await self.rate_limiter.wait()
                 data = await self._fetch_page(client, url_name, category, page)
@@ -198,11 +210,13 @@ class WoolworthsCatalogScraper(CatalogScraper):
                 if len(page_products) < 36:
                     break
 
-        return {"category_id": category.id, "category_name": category.name, "products": all_products}
+        return {
+            "category_id": category.id,
+            "category_name": category.name,
+            "products": all_products,
+        }
 
-    async def parse_products(
-        self, raw: Any, category: CategoryNode
-    ) -> list[CatalogProduct]:
+    async def parse_products(self, raw: Any, category: CategoryNode) -> list[CatalogProduct]:
         """Convert raw product dicts into CatalogProduct instances."""
         products: list[CatalogProduct] = []
         today = date.today()
@@ -271,7 +285,9 @@ class WoolworthsCatalogScraper(CatalogScraper):
                 all_products.extend(page_products)
                 self.logger.debug(
                     "Specials page %d: %d products (total so far: %d)",
-                    page, len(page_products), len(all_products),
+                    page,
+                    len(page_products),
+                    len(all_products),
                 )
 
                 if len(page_products) < PAGE_SIZE:
@@ -333,6 +349,7 @@ class WoolworthsCatalogScraper(CatalogScraper):
 
 # ── Module-level response helpers ─────────────────────────────────────────────
 
+
 def _extract_products(data: dict) -> list[dict]:
     """Flatten Bundles[].Products[] from a browse/category response."""
     bundles = data.get("Bundles") or []
@@ -345,9 +362,7 @@ def _extract_products(data: dict) -> list[dict]:
 _SKU_RE = re.compile(r"^[^a-zA-Z]+$")  # no letters at all → internal SKU code
 
 
-def _parse_item(
-    item: dict, category: CategoryNode, today: date
-) -> Optional[CatalogProduct]:
+def _parse_item(item: dict, category: CategoryNode, today: date) -> Optional[CatalogProduct]:
     """Map one Woolworths product dict to a CatalogProduct. Returns None to skip."""
     if not isinstance(item, dict):
         return None
@@ -377,9 +392,7 @@ def _parse_item(
 
     image_url = item.get("MediumImageFile") or item.get("SmallImageFile")
     if not image_url and stockcode:
-        image_url = (
-            f"https://cdn0.woolworths.media/content/wowproductimages/medium/{stockcode}.jpg"
-        )
+        image_url = f"https://cdn0.woolworths.media/content/wowproductimages/medium/{stockcode}.jpg"
 
     # Derive category label: use SAP department name when available, then normalise.
     additional = item.get("AdditionalAttributes") or {}
@@ -424,5 +437,3 @@ def _parse_item(
         unit_price=unit_price,
         unit_price_label=cup_measure.strip() or None,
     )
-
-

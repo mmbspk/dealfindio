@@ -9,7 +9,6 @@ Provides a reusable foundation for all Celery tasks with:
 """
 
 import logging
-from typing import Any
 
 from celery import Task
 
@@ -140,7 +139,10 @@ class CallbackTask(Task):
                         {"type": "mrkdwn", "text": f"*Task*\n{self.name}"},
                         {"type": "mrkdwn", "text": f"*ID*\n{task_id}"},
                         {"type": "mrkdwn", "text": f"*Error*\n{str(exc)[:100]}"},
-                        {"type": "mrkdwn", "text": f"*Retries*\n{self.request.retries}/{self.max_retries}"},
+                        {
+                            "type": "mrkdwn",
+                            "text": f"*Retries*\n{self.request.retries}/{self.max_retries}",
+                        },
                     ],
                 },
                 {

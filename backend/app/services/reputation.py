@@ -39,8 +39,8 @@ DEFAULT_REPUTATION: float = 1.0
 LOW_REPUTATION_THRESHOLD: float = 0.5
 
 #: Tier thresholds, keyed on lifetime ``contribution_count``.
-BRONZE_MAX: int = 10   # 0-10   -> bronze
-SILVER_MAX: int = 50   # 11-50  -> silver
+BRONZE_MAX: int = 10  # 0-10   -> bronze
+SILVER_MAX: int = 50  # 11-50  -> silver
 # 50+ -> gold
 
 #: Confidence starts here before adjustments (per report, 0.0-1.0 scale).

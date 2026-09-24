@@ -20,7 +20,7 @@ import redis
 from bs4 import BeautifulSoup
 from sqlalchemy.orm import Session
 
-from .base import Scraper, ScrapedProduct, ScraperError
+from .base import ScrapedProduct, Scraper, ScraperError
 
 logger = logging.getLogger(__name__)
 
@@ -89,11 +89,7 @@ class ALDIScraper(Scraper):
                 # Try data attributes or aria labels
                 pdf_link = soup.find(
                     "a",
-                    attrs={
-                        "aria-label": re.compile(
-                            r"(catalogue|specials|weekly|flyer)", re.I
-                        )
-                    },
+                    attrs={"aria-label": re.compile(r"(catalogue|specials|weekly|flyer)", re.I)},
                 )
 
             if not pdf_link:
@@ -144,9 +140,7 @@ class ALDIScraper(Scraper):
                 response.raise_for_status()
 
             pdf_bytes = response.content
-            self.logger.info(
-                f"Successfully downloaded ALDI PDF: {len(pdf_bytes)} bytes"
-            )
+            self.logger.info(f"Successfully downloaded ALDI PDF: {len(pdf_bytes)} bytes")
             return pdf_bytes
 
         except httpx.HTTPStatusError as e:
@@ -191,14 +185,11 @@ class ALDIScraper(Scraper):
                         text = page.extract_text()
                         if not text:
                             self.logger.debug(
-                                f"Page {page_num}: No text extracted "
-                                "(likely scanned image)"
+                                f"Page {page_num}: No text extracted " "(likely scanned image)"
                             )
                             continue
 
-                        self.logger.debug(
-                            f"Page {page_num}: Extracted {len(text)} chars of text"
-                        )
+                        self.logger.debug(f"Page {page_num}: Extracted {len(text)} chars of text")
 
                         # Parse text for prices
                         lines = text.split("\n")
@@ -208,15 +199,11 @@ class ALDIScraper(Scraper):
                                 continue
 
                             # Match price pattern: $X.XX or $XX.XX or $XX.XX+
-                            price_match = re.search(
-                                r"\$(\d+\.?\d{0,2})", line
-                            )
+                            price_match = re.search(r"\$(\d+\.?\d{0,2})", line)
                             if price_match:
                                 price_str = price_match.group(1)
                                 try:
-                                    price_cents = int(
-                                        float(price_str) * 100
-                                    )
+                                    price_cents = int(float(price_str) * 100)
                                 except ValueError:
                                     continue
 
@@ -224,19 +211,14 @@ class ALDIScraper(Scraper):
                                 product_name = line[: price_match.start()].strip()
                                 if not product_name:
                                     # Try to get name from previous line
-                                    product_name = (
-                                        lines[i - 1].strip()
-                                        if i > 0
-                                        else "Unknown"
-                                    )
+                                    product_name = lines[i - 1].strip() if i > 0 else "Unknown"
 
                                 if product_name and product_name != "Unknown":
                                     product = ScrapedProduct(
                                         product_name=product_name,
                                         price_cents=price_cents,
                                         valid_from=date.today(),
-                                        valid_to=date.today()
-                                        + timedelta(days=7),
+                                        valid_to=date.today() + timedelta(days=7),
                                     )
                                     products.append(product)
                                     self.logger.debug(
@@ -245,9 +227,7 @@ class ALDIScraper(Scraper):
                                     )
 
                     except Exception as e:
-                        self.logger.warning(
-                            f"Error processing page {page_num}: {e}"
-                        )
+                        self.logger.warning(f"Error processing page {page_num}: {e}")
                         continue
 
         except Exception as e:
@@ -256,13 +236,12 @@ class ALDIScraper(Scraper):
         # If text extraction yielded few products, try OCR fallback
         if len(products) < 5:
             self.logger.info(
-                f"Text extraction only found {len(products)} products. "
-                "Trying OCR fallback..."
+                f"Text extraction only found {len(products)} products. " "Trying OCR fallback..."
             )
             try:
                 import pytesseract
                 from pdf2image import convert_from_bytes
-                from PIL import Image
+                from PIL import Image  # noqa: F401
 
                 self.logger.debug("Converting PDF to images for OCR")
                 images = convert_from_bytes(flyer_data)
@@ -270,8 +249,7 @@ class ALDIScraper(Scraper):
                 for img_num, img in enumerate(images):
                     try:
                         self.logger.debug(
-                            f"Running OCR on page {img_num} "
-                            f"({img.width}x{img.height})"
+                            f"Running OCR on page {img_num} " f"({img.width}x{img.height})"
                         )
                         text = pytesseract.image_to_string(img)
 
@@ -286,15 +264,11 @@ class ALDIScraper(Scraper):
                             if not line:
                                 continue
 
-                            price_match = re.search(
-                                r"\$(\d+\.?\d{0,2})", line
-                            )
+                            price_match = re.search(r"\$(\d+\.?\d{0,2})", line)
                             if price_match:
                                 price_str = price_match.group(1)
                                 try:
-                                    price_cents = int(
-                                        float(price_str) * 100
-                                    )
+                                    price_cents = int(float(price_str) * 100)
                                 except ValueError:
                                     continue
 
@@ -307,15 +281,12 @@ class ALDIScraper(Scraper):
                                         product_name=product_name,
                                         price_cents=price_cents,
                                         valid_from=date.today(),
-                                        valid_to=date.today()
-                                        + timedelta(days=7),
+                                        valid_to=date.today() + timedelta(days=7),
                                     )
                                     products.append(product)
 
                     except Exception as e:
-                        self.logger.warning(
-                            f"OCR processing failed for page {img_num}: {e}"
-                        )
+                        self.logger.warning(f"OCR processing failed for page {img_num}: {e}")
                         continue
 
             except ImportError:
@@ -328,7 +299,5 @@ class ALDIScraper(Scraper):
         if not products:
             self.logger.warning("No products extracted from ALDI PDF")
 
-        self.logger.info(
-            f"Successfully parsed {len(products)} products from ALDI PDF"
-        )
+        self.logger.info(f"Successfully parsed {len(products)} products from ALDI PDF")
         return products

@@ -5,13 +5,14 @@ All endpoints require the authenticated user to have is_admin=True.
 """
 
 import json
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Iterator, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import func, select as sa_select, text
+from sqlalchemy import func, text
+from sqlalchemy import select as sa_select
 from sqlalchemy.orm import Session
 
 from app.deps import get_db, get_redis, require_admin, require_admin_sse
@@ -23,6 +24,7 @@ VALID_CHAINS = {"coles", "woolworths", "aldi", "iga", "drakes"}
 
 
 # ── Schemas ────────────────────────────────────────────────────────────────────
+
 
 class ScrapeRunResponse(BaseModel):
     id: str
@@ -67,8 +69,11 @@ class ActiveTasksResponse(BaseModel):
 
 # ── Endpoints ──────────────────────────────────────────────────────────────────
 
+
 @router.post("/scrape/all", response_model=list[TriggerResponse])
-def trigger_all_scrapers(redis=Depends(get_redis), _admin=Depends(require_admin)) -> list[TriggerResponse]:
+def trigger_all_scrapers(
+    redis=Depends(get_redis), _admin=Depends(require_admin)
+) -> list[TriggerResponse]:
     """Trigger all 4 scrapers in parallel immediately via Celery."""
     from app.workers.scraper_tasks import run_flyer_scrape
 
@@ -76,11 +81,13 @@ def trigger_all_scrapers(redis=Depends(get_redis), _admin=Depends(require_admin)
     for chain in sorted(VALID_CHAINS):
         task = run_flyer_scrape.apply_async(args=[chain], queue="scraper")
         redis.setex(f"scrape_active:{chain}", ACTIVE_TASK_TTL, task.id)
-        results.append(TriggerResponse(
-            task_id=task.id,
-            chain=chain,
-            message=f"Scraper for '{chain}' queued. Task ID: {task.id}",
-        ))
+        results.append(
+            TriggerResponse(
+                task_id=task.id,
+                chain=chain,
+                message=f"Scraper for '{chain}' queued. Task ID: {task.id}",
+            )
+        )
     return results
 
 
@@ -99,6 +106,7 @@ def trigger_scrape(
         )
 
     from app.workers.scraper_tasks import run_flyer_scrape
+
     task = run_flyer_scrape.apply_async(args=[chain], queue="scraper")
     redis.setex(f"scrape_active:{chain}", ACTIVE_TASK_TTL, task.id)
 
@@ -110,7 +118,9 @@ def trigger_scrape(
 
 
 @router.get("/scrape/active", response_model=ActiveTasksResponse)
-def get_active_tasks(redis=Depends(get_redis), _admin=Depends(require_admin)) -> ActiveTasksResponse:
+def get_active_tasks(
+    redis=Depends(get_redis), _admin=Depends(require_admin)
+) -> ActiveTasksResponse:
     """Return task IDs for chains currently running a scrape.
 
     Auto-clears stale keys where the progress entry no longer exists
@@ -133,6 +143,7 @@ def get_active_tasks(redis=Depends(get_redis), _admin=Depends(require_admin)) ->
         redis.delete(f"scrape_active:{chain}")
     return ActiveTasksResponse(active=active)
 
+
 @router.get("/scrape/runs", response_model=list[ScrapeRunResponse])
 def list_scrape_runs(
     limit: int = 50,
@@ -147,16 +158,19 @@ def list_scrape_runs(
             raise HTTPException(status_code=422, detail=f"Invalid chain '{chain}'")
         q = q.filter(FlyScrapeRun.chain == chain)
     runs = q.limit(max(1, min(limit, 200))).all()
-    return [ScrapeRunResponse(
-        id=str(r.id),
-        chain=r.chain,
-        status=r.status,
-        products_found=r.products_found or 0,
-        products_new=r.products_new or 0,
-        run_started_at=r.run_started_at,
-        run_finished_at=r.run_finished_at,
-        errors_json=r.errors_json,
-    ) for r in runs]
+    return [
+        ScrapeRunResponse(
+            id=str(r.id),
+            chain=r.chain,
+            status=r.status,
+            products_found=r.products_found or 0,
+            products_new=r.products_new or 0,
+            run_started_at=r.run_started_at,
+            run_finished_at=r.run_finished_at,
+            errors_json=r.errors_json,
+        )
+        for r in runs
+    ]
 
 
 @router.get("/scrape/progress/{task_id}", response_model=ProgressResponse)
@@ -226,9 +240,7 @@ def get_stats(db: Session = Depends(get_db), _admin=Depends(require_admin)) -> S
 
     # Products ingested per chain (via price_reports.source)
     chain_counts = (
-        db.query(PriceReport.source, func.count(PriceReport.id))
-        .group_by(PriceReport.source)
-        .all()
+        db.query(PriceReport.source, func.count(PriceReport.id)).group_by(PriceReport.source).all()
     )
     products_by_chain = {row[0]: row[1] for row in chain_counts}
 
@@ -239,7 +251,9 @@ def get_stats(db: Session = Depends(get_db), _admin=Depends(require_admin)) -> S
             db.query(FlyScrapeRun.run_finished_at)
             .filter(
                 FlyScrapeRun.chain == chain,
-                FlyScrapeRun.status.in_(["completed", "completed_with_errors", "cancelled", "failed"]),
+                FlyScrapeRun.status.in_(
+                    ["completed", "completed_with_errors", "cancelled", "failed"]
+                ),
             )
             .order_by(FlyScrapeRun.run_finished_at.desc())
             .first()
@@ -263,13 +277,15 @@ def get_scrape_weekly_counts(
     from sqlalchemy import text as sa_text
 
     rows = db.execute(
-        sa_text("""
+        sa_text(
+            """
             SELECT DISTINCT ON (chain)
                 chain, products_found
             FROM flyer_scrape_runs
             WHERE status IN ('completed', 'completed_with_errors', 'cancelled', 'failed')
             ORDER BY chain, run_started_at DESC
-        """)
+        """
+        )
     ).fetchall()
     return {chain: products_found for chain, products_found in rows}
 
@@ -296,9 +312,13 @@ class DedupStatsResponse(BaseModel):
 
 
 @router.get("/dedup/stats", response_model=DedupStatsResponse)
-def get_dedup_stats(db: Session = Depends(get_db), _admin=Depends(require_admin)) -> DedupStatsResponse:
+def get_dedup_stats(
+    db: Session = Depends(get_db), _admin=Depends(require_admin)
+) -> DedupStatsResponse:
     """Cross-chain product deduplication statistics."""
-    rows = db.execute(text("""
+    rows = db.execute(
+        text(
+            """
         WITH chain_coverage AS (
             SELECT
                 pr.product_id,
@@ -314,12 +334,16 @@ def get_dedup_stats(db: Session = Depends(get_db), _admin=Depends(require_admin)
             COUNT(*) FILTER (WHERE chain_count >= 2) AS two_plus,
             COUNT(*) FILTER (WHERE chain_count >= 3) AS three_plus
         FROM chain_coverage
-    """)).fetchone()
+    """
+        )
+    ).fetchone()
 
     total, one_chain, two_plus, three_plus = rows
 
     # Overlap breakdown by chain combination
-    combo_rows = db.execute(text("""
+    combo_rows = db.execute(
+        text(
+            """
         WITH chain_coverage AS (
             SELECT
                 pr.product_id,
@@ -334,12 +358,16 @@ def get_dedup_stats(db: Session = Depends(get_db), _admin=Depends(require_admin)
         GROUP BY chains
         ORDER BY cnt DESC
         LIMIT 10
-    """)).fetchall()
+    """
+        )
+    ).fetchall()
 
     overlap = [DedupOverlapRow(chains=list(r[0]), product_count=r[1]) for r in combo_rows]
 
     # Sample products with prices from multiple chains
-    sample_rows = db.execute(text("""
+    sample_rows = db.execute(
+        text(
+            """
         WITH multi_chain AS (
             SELECT pr.product_id
             FROM price_reports pr
@@ -368,7 +396,9 @@ def get_dedup_stats(db: Session = Depends(get_db), _admin=Depends(require_admin)
         GROUP BY p.id, p.name
         ORDER BY array_length(array_agg(DISTINCT lp.chain), 1) DESC, p.name
         LIMIT 20
-    """)).fetchall()
+    """
+        )
+    ).fetchall()
 
     samples = [
         DedupSampleProduct(
@@ -391,6 +421,7 @@ def get_dedup_stats(db: Session = Depends(get_db), _admin=Depends(require_admin)
 
 
 # ── Image enrichment (Feature A) ─────────────────────────────────────────────
+
 
 class EnrichTriggerResponse(BaseModel):
     task_id: str
@@ -455,6 +486,7 @@ def get_enrich_progress(task_id: str, _admin=Depends(require_admin)) -> EnrichPr
 
 # ── Catalog crawl (Feature B) ────────────────────────────────────────────────
 
+
 class CatalogTriggerResponse(BaseModel):
     task_id: str
     chain: str
@@ -516,7 +548,9 @@ def get_catalog_config(_admin=Depends(require_admin)) -> CatalogConfigResponse:
 
 
 @router.post("/catalog/all", response_model=list[CatalogTriggerResponse])
-def trigger_catalog_all(mode: str = "delta", _admin=Depends(require_admin)) -> list[CatalogTriggerResponse]:
+def trigger_catalog_all(
+    mode: str = "delta", _admin=Depends(require_admin)
+) -> list[CatalogTriggerResponse]:
     """Queue a crawl for every enabled chain (delta by default)."""
     if mode not in ("full", "delta", "specials"):
         raise HTTPException(status_code=422, detail="mode must be 'full', 'delta', or 'specials'")
@@ -529,10 +563,14 @@ def trigger_catalog_all(mode: str = "delta", _admin=Depends(require_admin)) -> l
         if not getattr(settings, f"CATALOG_{chain.upper()}_ENABLED", False):
             continue
         task = run_catalog_crawl.apply_async(args=[chain, mode], queue="catalog")
-        out.append(CatalogTriggerResponse(
-            task_id=task.id, chain=chain, mode=mode,
-            message=f"Catalog {mode} crawl for '{chain}' queued. Task ID: {task.id}",
-        ))
+        out.append(
+            CatalogTriggerResponse(
+                task_id=task.id,
+                chain=chain,
+                mode=mode,
+                message=f"Catalog {mode} crawl for '{chain}' queued. Task ID: {task.id}",
+            )
+        )
     return out
 
 
@@ -554,6 +592,7 @@ def trigger_catalog(
 
     # Guard: reject if a run for this chain is already active in DB
     from app.models import CatalogCrawlRun as CCR
+
     active_statuses = ("running", "in_progress", "started", "pending")
     cutoff = datetime.now(timezone.utc) - timedelta(hours=4)
     active = (
@@ -562,13 +601,18 @@ def trigger_catalog(
         .first()
     )
     if active:
-        raise HTTPException(status_code=409, detail=f"A {chain} catalog crawl is already running (started {active.run_started_at.isoformat()}).")
+        raise HTTPException(
+            status_code=409,
+            detail=f"A {chain} catalog crawl is already running (started {active.run_started_at.isoformat()}).",
+        )
 
     from app.workers.catalog_tasks import run_catalog_crawl
 
     task = run_catalog_crawl.apply_async(args=[chain, mode], queue="catalog")
     return CatalogTriggerResponse(
-        task_id=task.id, chain=chain, mode=mode,
+        task_id=task.id,
+        chain=chain,
+        mode=mode,
         message=f"Catalog {mode} crawl for '{chain}' queued. Task ID: {task.id}",
     )
 
@@ -615,15 +659,25 @@ def list_catalog_runs(
     if chain:
         q = q.filter(CatalogCrawlRun.chain == chain)
     runs = q.limit(max(1, min(limit, 200))).all()
-    return [CatalogRunResponse(
-        id=str(r.id), chain=r.chain, mode=r.mode, status=r.status,
-        celery_task_id=r.celery_task_id,
-        categories_found=r.categories_found, categories_crawled=r.categories_crawled,
-        categories_skipped=r.categories_skipped, products_found=r.products_found,
-        products_new=r.products_new, products_updated=r.products_updated,
-        run_started_at=r.run_started_at, run_finished_at=r.run_finished_at,
-        errors_json=r.errors_json,
-    ) for r in runs]
+    return [
+        CatalogRunResponse(
+            id=str(r.id),
+            chain=r.chain,
+            mode=r.mode,
+            status=r.status,
+            celery_task_id=r.celery_task_id,
+            categories_found=r.categories_found,
+            categories_crawled=r.categories_crawled,
+            categories_skipped=r.categories_skipped,
+            products_found=r.products_found,
+            products_new=r.products_new,
+            products_updated=r.products_updated,
+            run_started_at=r.run_started_at,
+            run_finished_at=r.run_finished_at,
+            errors_json=r.errors_json,
+        )
+        for r in runs
+    ]
 
 
 @router.get("/catalog/product-counts")
@@ -632,8 +686,7 @@ def get_catalog_product_counts(
     _admin=Depends(require_admin),
 ) -> dict[str, int]:
     """Return total product count per chain (keyed by chain name, not external_source)."""
-    from sqlalchemy import func, text as sa_text
-    from app.models import Product
+    from sqlalchemy import text as sa_text
 
     rows = db.execute(
         sa_text(
@@ -642,10 +695,7 @@ def get_catalog_product_counts(
             "GROUP BY external_source"
         )
     ).fetchall()
-    return {
-        src.replace("catalog_", ""): cnt
-        for src, cnt in rows
-    }
+    return {src.replace("catalog_", ""): cnt for src, cnt in rows}
 
 
 @router.get("/catalog/progress/{task_id}", response_model=CatalogProgressResponse)
@@ -657,9 +707,7 @@ def get_catalog_progress(task_id: str, _admin=Depends(require_admin)) -> Catalog
     result = None
     if async_result.successful() and isinstance(async_result.result, dict):
         result = async_result.result
-    return CatalogProgressResponse(
-        task_id=task_id, state=async_result.state, result=result
-    )
+    return CatalogProgressResponse(task_id=task_id, state=async_result.state, result=result)
 
 
 class CatalogCoverageRow(BaseModel):
@@ -683,7 +731,9 @@ def get_catalog_coverage(
     _admin=Depends(require_admin),
 ) -> list[CatalogCoverageRow]:
     """Per-chain field coverage stats — total products, % non-null for key fields, last crawl."""
-    rows = db.execute(text("""
+    rows = db.execute(
+        text(
+            """
         SELECT
             external_source,
             COUNT(*)                                             AS total,
@@ -699,38 +749,44 @@ def get_catalog_coverage(
         WHERE external_source LIKE 'catalog_%'
         GROUP BY external_source
         ORDER BY total DESC
-    """)).fetchall()
-
-    from app.models import CatalogCrawlRun as CCR
+    """
+        )
+    ).fetchall()
 
     # Latest completed run per chain for category counts
-    cat_rows = db.execute(text("""
+    cat_rows = db.execute(
+        text(
+            """
         SELECT DISTINCT ON (chain)
             chain, categories_crawled, categories_found
         FROM catalog_crawl_runs
         WHERE status IN ('completed', 'completed_with_errors', 'partial')
         ORDER BY chain, run_started_at DESC
-    """)).fetchall()
+    """
+        )
+    ).fetchall()
     cat_map = {r[0]: (r[1] or 0, r[2] or 0) for r in cat_rows}
 
     out = []
     for r in rows:
         chain = r[0].replace("catalog_", "")
         cats_crawled, cats_total = cat_map.get(chain, (0, 0))
-        out.append(CatalogCoverageRow(
-            chain=chain,
-            total_products=r[1],
-            brand_pct=float(r[2]),
-            image_pct=float(r[3]),
-            package_size_pct=float(r[4]),
-            unit_price_pct=float(r[5]),
-            unit_label_pct=float(r[6]),
-            category_pct=float(r[7]),
-            gtin_pct=float(r[8]),
-            last_crawled=r[9],
-            categories_crawled=cats_crawled,
-            categories_total=cats_total,
-        ))
+        out.append(
+            CatalogCoverageRow(
+                chain=chain,
+                total_products=r[1],
+                brand_pct=float(r[2]),
+                image_pct=float(r[3]),
+                package_size_pct=float(r[4]),
+                unit_price_pct=float(r[5]),
+                unit_label_pct=float(r[6]),
+                category_pct=float(r[7]),
+                gtin_pct=float(r[8]),
+                last_crawled=r[9],
+                categories_crawled=cats_crawled,
+                categories_total=cats_total,
+            )
+        )
     return out
 
 
@@ -774,7 +830,6 @@ def cancel_catalog_crawl(
     return {"chain": chain, "status": "cancelled", "task_id": run.celery_task_id}
 
 
-
 class ConfigEntry(BaseModel):
     key: str
     label: str
@@ -809,6 +864,7 @@ def list_config(
 ) -> list[ConfigEntry]:
     """List all known config keys with set/unset status. Secret values are never returned."""
     from app.services.config_store import list_configs
+
     return [ConfigEntry(**entry) for entry in list_configs(db)]
 
 
@@ -822,8 +878,10 @@ def set_config(
     """Create or update a config value. Secrets are Fernet-encrypted before storage."""
     from app.services.config_store import (
         KNOWN_KEYS,
-        set_config as _set,
         validate_value,
+    )
+    from app.services.config_store import (
+        set_config as _set,
     )
 
     valid_keys = {k["key"] for k in KNOWN_KEYS}
@@ -860,6 +918,7 @@ def delete_config(
 
 
 # ── Dedup Review ────────────────────────────────────────────────────────────────
+
 
 class MatchProductDetail(BaseModel):
     id: str
@@ -924,13 +983,15 @@ def _latest_price_map(session: Session, product_ids: list) -> dict:
 
     # Cast text array to uuid[] so psycopg2 doesn't produce 'uuid = text' errors.
     rows = session.execute(
-        text("""
+        text(
+            """
             SELECT DISTINCT ON (product_id)
                 product_id, price_cents
             FROM price_reports
             WHERE product_id = ANY(CAST(:ids AS uuid[]))
             ORDER BY product_id, created_at DESC
-        """),
+        """
+        ),
         {"ids": "{" + ",".join(str(pid) for pid in product_ids) + "}"},
     ).fetchall()
     return {str(row.product_id): row.price_cents / 100.0 for row in rows}
@@ -938,6 +999,7 @@ def _latest_price_map(session: Session, product_ids: list) -> dict:
 
 def _product_to_detail(p: "Product", price_aud: float | None) -> MatchProductDetail:
     from app.services.ai_dedup import _build_store_url
+
     chain = None
     if p.external_source and p.external_source.startswith("catalog_"):
         chain = p.external_source.replace("catalog_", "")
@@ -962,7 +1024,8 @@ def _merge_products(session: Session, keep_id: str, drop_id: str) -> None:
         {"keep": keep_id, "drop": drop_id},
     )
     session.execute(
-        text("""
+        text(
+            """
             UPDATE user_watchlist SET product_id = :keep
             WHERE product_id = :drop
               AND NOT EXISTS (
@@ -972,7 +1035,8 @@ def _merge_products(session: Session, keep_id: str, drop_id: str) -> None:
                   AND (u2.list_id = user_watchlist.list_id
                        OR (u2.list_id IS NULL AND user_watchlist.list_id IS NULL))
               )
-        """),
+        """
+        ),
         {"keep": keep_id, "drop": drop_id},
     )
     # Remove any duplicates that couldn't be migrated
@@ -982,12 +1046,14 @@ def _merge_products(session: Session, keep_id: str, drop_id: str) -> None:
     )
     # Invalidate other pending candidates referencing the dropped product
     session.execute(
-        text("""
+        text(
+            """
             UPDATE product_match_candidates
             SET status = 'rejected', reviewed_at = now()
             WHERE status = 'pending'
               AND (product_a_id = :drop OR product_b_id = :drop)
-        """),
+        """
+        ),
         {"drop": drop_id},
     )
     # Recover a real barcode: if the survivor has no GTIN and the dropped
@@ -1015,8 +1081,9 @@ def list_dedup_candidates(
     _admin=Depends(require_admin),
 ) -> CandidatePage:
     """Return paginated match candidates with rich product detail."""
-    from app.models.product_match import ProductMatchCandidate
     from sqlalchemy import select as sa_select
+
+    from app.models.product_match import ProductMatchCandidate
 
     q = (
         sa_select(ProductMatchCandidate)
@@ -1027,9 +1094,7 @@ def list_dedup_candidates(
         )
         .order_by(ProductMatchCandidate.score.desc())
     )
-    total = db.execute(
-        sa_select(func.count()).select_from(q.subquery())
-    ).scalar_one()
+    total = db.execute(sa_select(func.count()).select_from(q.subquery())).scalar_one()
     rows = db.execute(q.offset(offset).limit(limit)).scalars().all()
 
     product_ids = []
@@ -1042,8 +1107,7 @@ def list_dedup_candidates(
         pa = r.product_a
         pb = r.product_b
         if chain and not (
-            (pa.external_source or "").endswith(chain)
-            or (pb.external_source or "").endswith(chain)
+            (pa.external_source or "").endswith(chain) or (pb.external_source or "").endswith(chain)
         ):
             continue
         items.append(
@@ -1072,9 +1136,11 @@ def decide_candidate(
     admin=Depends(require_admin),
 ) -> MatchCandidateResponse:
     """Approve, reject, or skip a match candidate."""
-    from app.models.product_match import ProductMatchCandidate
-    from sqlalchemy import select as sa_select
     import uuid as _uuid
+
+    from sqlalchemy import select as sa_select
+
+    from app.models.product_match import ProductMatchCandidate
 
     cid = _uuid.UUID(candidate_id)
     row = db.execute(
@@ -1112,14 +1178,16 @@ def decide_candidate(
 
     # Update status via raw SQL to avoid ORM version-check on the row.
     db.execute(
-        text("""
+        text(
+            """
             UPDATE product_match_candidates
             SET status = :status,
                 reviewed_by = :reviewed_by,
                 reviewed_at = now(),
                 updated_at = now()
             WHERE id = :id
-        """),
+        """
+        ),
         {"status": body.decision, "reviewed_by": admin.email, "id": str(cid)},
     )
     db.commit()
@@ -1133,8 +1201,13 @@ def decide_candidate(
     def safe_detail(product, pid, price_map):
         if product is None:
             return MatchProductDetail(
-                id=str(pid), name="(merged/deleted)", brand=None,
-                category=None, image_url=None, chain=None, price_aud=None,
+                id=str(pid),
+                name="(merged/deleted)",
+                brand=None,
+                category=None,
+                image_url=None,
+                chain=None,
+                price_aud=None,
             )
         return _product_to_detail(product, price_map.get(str(pid)))
 
@@ -1195,12 +1268,16 @@ def search_products_for_dedup(
     if not q or len(q.strip()) < 2:
         return []
 
-    rows = db.execute(
-        sa_select(Product)
-        .where(Product.name.ilike(f"%{q.strip()}%"))
-        .order_by(Product.name)
-        .limit(limit)
-    ).scalars().all()
+    rows = (
+        db.execute(
+            sa_select(Product)
+            .where(Product.name.ilike(f"%{q.strip()}%"))
+            .order_by(Product.name)
+            .limit(limit)
+        )
+        .scalars()
+        .all()
+    )
 
     product_ids = [r.id for r in rows]
     price_map = _latest_price_map(db, product_ids)
@@ -1226,9 +1303,11 @@ def propose_manual_match(
     admin=Depends(require_admin),
 ) -> MatchCandidateResponse:
     """Manually propose two products as a match for review."""
-    from app.models.product_match import ProductMatchCandidate
-    from sqlalchemy import select as sa_select
     import uuid
+
+    from sqlalchemy import select as sa_select
+
+    from app.models.product_match import ProductMatchCandidate
 
     a_id = uuid.UUID(body.product_a_id)
     b_id = uuid.UUID(body.product_b_id)
@@ -1245,7 +1324,9 @@ def propose_manual_match(
     ).scalar_one_or_none()
 
     if existing is not None:
-        raise HTTPException(status_code=409, detail="A match candidate already exists for this pair")
+        raise HTTPException(
+            status_code=409, detail="A match candidate already exists for this pair"
+        )
 
     row = ProductMatchCandidate(
         product_a_id=canon_a,
@@ -1272,6 +1353,7 @@ def propose_manual_match(
 
 
 # ─── AI Dedup: SSE run endpoint ───────────────────────────────────────────────
+
 
 def _sse(event: str, data: dict) -> str:
     """Format a single SSE frame."""
@@ -1308,22 +1390,27 @@ def _run_ai_dedup_stream(
     MIN_CANDIDATE_LEN = 15
 
     if not get_runtime_typed("AI_DEDUP_ENABLED", db):
-        yield _sse("error", {"message": "AI_DEDUP_ENABLED is false — enable it in Admin → Configs first."})
+        yield _sse(
+            "error", {"message": "AI_DEDUP_ENABLED is false — enable it in Admin → Configs first."}
+        )
         return
 
     model = get_runtime_typed("AI_DEDUP_MODEL", db)
     conf_min = get_runtime_typed("AI_DEDUP_CONFIDENCE_MIN", db)
     max_tokens = get_runtime_typed("AI_DEDUP_MAX_TOKENS", db)
 
-    yield _sse("config", {
-        "model": model,
-        "conf_min": conf_min,
-        "max_tokens": max_tokens,
-        "limit": limit,
-        "min_fuzzy": min_fuzzy,
-        "auto_merge": auto_merge,
-        "dry_run": dry_run,
-    })
+    yield _sse(
+        "config",
+        {
+            "model": model,
+            "conf_min": conf_min,
+            "max_tokens": max_tokens,
+            "limit": limit,
+            "min_fuzzy": min_fuzzy,
+            "auto_merge": auto_merge,
+            "dry_run": dry_run,
+        },
+    )
 
     # Build a fresh Anthropic client for this run, reading both the API key and
     # base URL from the DB config store first (Admin UI values), falling back to
@@ -1331,15 +1418,19 @@ def _run_ai_dedup_stream(
     # immediately without a backend restart.
     try:
         from anthropic import Anthropic
-        from app.services.config_store import get_runtime_value
+
         from app.config import get_settings as _get_settings
+        from app.services.config_store import get_runtime_value
 
         _settings = _get_settings()
         api_key = get_runtime_value("ANTHROPIC_API_KEY", db) or _settings.ANTHROPIC_API_KEY
         base_url = get_runtime_value("ANTHROPIC_BASE_URL", db) or _settings.ANTHROPIC_BASE_URL
 
         if not api_key:
-            yield _sse("error", {"message": "ANTHROPIC_API_KEY is not set — add it in Admin → Configs → AI."})
+            yield _sse(
+                "error",
+                {"message": "ANTHROPIC_API_KEY is not set — add it in Admin → Configs → AI."},
+            )
             return
 
         client_kwargs: dict = {"api_key": api_key}
@@ -1356,7 +1447,7 @@ def _run_ai_dedup_stream(
 
     def _chain_of(p: Product) -> str | None:
         src = p.external_source or ""
-        return src[len("catalog_"):] if src.startswith("catalog_") else None
+        return src[len("catalog_") :] if src.startswith("catalog_") else None
 
     def _norm(p: Product) -> str:
         return matcher.normalize_name(p.name)
@@ -1366,9 +1457,11 @@ def _run_ai_dedup_stream(
             return verdict.value
         return DedupDecision.SAME.value if verdict.same_product else DedupDecision.DIFFERENT.value
 
-    products = list(db.execute(
-        sa_select(Product).where(Product.external_source.like("catalog_%"))
-    ).scalars().all())
+    products = list(
+        db.execute(sa_select(Product).where(Product.external_source.like("catalog_%")))
+        .scalars()
+        .all()
+    )
 
     by_chain: dict[str, list[Product]] = {}
     for p in products:
@@ -1381,10 +1474,13 @@ def _run_ai_dedup_stream(
         by_chain.setdefault(chain, []).append(p)
 
     chains = sorted(by_chain)
-    yield _sse("status", {
-        "message": f"Loaded {len(products)} products across {len(chains)} chain(s): "
-                   + ", ".join(f"{c}={len(by_chain[c])}" for c in chains)
-    })
+    yield _sse(
+        "status",
+        {
+            "message": f"Loaded {len(products)} products across {len(chains)} chain(s): "
+            + ", ".join(f"{c}={len(by_chain[c])}" for c in chains)
+        },
+    )
 
     existing: dict[tuple[str, str], ProductMatchCandidate] = {}
     for row in db.execute(sa_select(ProductMatchCandidate)).scalars().all():
@@ -1426,7 +1522,9 @@ def _run_ai_dedup_stream(
             facts_a = ProductFacts.from_product(pa)
             facts_b = ProductFacts.from_product(pb)
 
-            verdict, judge_error = judge_pair(facts_a, facts_b, client=client, model=model, max_tokens=max_tokens)
+            verdict, judge_error = judge_pair(
+                facts_a, facts_b, client=client, model=model, max_tokens=max_tokens
+            )
             judged += 1
             decision = _decision_str(verdict)
 
@@ -1435,7 +1533,12 @@ def _run_ai_dedup_stream(
                 reason = verdict.reason
             elif verdict == DedupDecision.SKIPPED:
                 if judged == 1:
-                    yield _sse("status", {"message": f"⚠ AI call failed — check ANTHROPIC_API_KEY and backend logs. Pairs will show as 'skipped'. Error: {judge_error}"})
+                    yield _sse(
+                        "status",
+                        {
+                            "message": f"⚠ AI call failed — check ANTHROPIC_API_KEY and backend logs. Pairs will show as 'skipped'. Error: {judge_error}"
+                        },
+                    )
                 reason = f"ai call failed: {judge_error}"
             else:
                 reason = f"deterministic: {decision}"
@@ -1445,18 +1548,21 @@ def _run_ai_dedup_stream(
             elif decision == DedupDecision.DIFFERENT.value:
                 different += 1
 
-            yield _sse("pair", {
-                "judged": judged,
-                "score": round(score, 1),
-                "decision": decision,
-                "confidence": conf,
-                "reason": reason,
-                "chain_a": chain_a,
-                "chain_b": chain_b,
-                "name_a": pa.name,
-                "name_b": pb.name,
-                "dry_run": dry_run,
-            })
+            yield _sse(
+                "pair",
+                {
+                    "judged": judged,
+                    "score": round(score, 1),
+                    "decision": decision,
+                    "confidence": conf,
+                    "reason": reason,
+                    "chain_a": chain_a,
+                    "chain_b": chain_b,
+                    "name_a": pa.name,
+                    "name_b": pb.name,
+                    "dry_run": dry_run,
+                },
+            )
 
             if dry_run:
                 continue
@@ -1464,8 +1570,11 @@ def _run_ai_dedup_stream(
             row = existing_row
             if row is None:
                 row = ProductMatchCandidate(
-                    product_a_id=a_id, product_b_id=b_id,
-                    score=score, status="pending", proposed_by="ai",
+                    product_a_id=a_id,
+                    product_b_id=b_id,
+                    score=score,
+                    status="pending",
+                    proposed_by="ai",
                 )
                 db.add(row)
                 existing[(a_id, b_id)] = row
@@ -1505,14 +1614,17 @@ def _run_ai_dedup_stream(
             elif judged % 25 == 0:
                 db.flush()
 
-    yield _sse("done", {
-        "judged": judged,
-        "same": same,
-        "different": different,
-        "vetoed": vetoed,
-        "merged": merged,
-        "dry_run": dry_run,
-    })
+    yield _sse(
+        "done",
+        {
+            "judged": judged,
+            "same": same,
+            "different": different,
+            "vetoed": vetoed,
+            "merged": merged,
+            "dry_run": dry_run,
+        },
+    )
 
 
 @router.get("/dedup/run")
@@ -1529,6 +1641,7 @@ def run_ai_dedup_sse(
     Stream AI dedup results as Server-Sent Events.
     Events: config | status | pair | done | error
     """
+
     def generate():
         try:
             yield from _run_ai_dedup_stream(db, limit, min_fuzzy, auto_merge, dry_run)
@@ -1543,4 +1656,3 @@ def run_ai_dedup_sse(
             "X-Accel-Buffering": "no",
         },
     )
-

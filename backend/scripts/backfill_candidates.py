@@ -21,9 +21,9 @@ os.environ.setdefault("DATABASE_URL", os.environ.get("DATABASE_URL", ""))
 os.environ.setdefault("REDIS_URL", "redis://localhost/0")
 os.environ.setdefault("SECRET_KEY", "backfill-script")
 
-from sqlalchemy import create_engine, select, text
-from sqlalchemy.orm import Session
 from rapidfuzz.process import extractOne
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.models import Product
@@ -46,7 +46,9 @@ MIN_CANDIDATE_LEN = 15
 def main() -> None:
     parser = argparse.ArgumentParser(description="Backfill product_match_candidates")
     parser.add_argument("--dry-run", action="store_true", help="Print matches without writing")
-    parser.add_argument("--limit", type=int, default=0, help="Max candidates to write (0 = unlimited)")
+    parser.add_argument(
+        "--limit", type=int, default=0, help="Max candidates to write (0 = unlimited)"
+    )
     args = parser.parse_args()
 
     settings = get_settings()
@@ -54,9 +56,11 @@ def main() -> None:
 
     with Session(engine) as session:
         # Load all canonical products as potential match targets
-        canonical = list(session.execute(
-            select(Product).where(Product.external_source.in_(CANONICAL_CHAINS))
-        ).scalars().all())
+        canonical = list(
+            session.execute(select(Product).where(Product.external_source.in_(CANONICAL_CHAINS)))
+            .scalars()
+            .all()
+        )
         print(f"Loaded {len(canonical)} canonical products (woolworths)")
 
         # Build filtered name list for rapidfuzz
@@ -76,9 +80,11 @@ def main() -> None:
         print(f"Loaded {len(existing_pairs)} existing candidate pairs (will skip)")
 
         # Scan source-chain products
-        source_products = list(session.execute(
-            select(Product).where(Product.external_source.in_(SOURCE_CHAINS))
-        ).scalars().all())
+        source_products = list(
+            session.execute(select(Product).where(Product.external_source.in_(SOURCE_CHAINS)))
+            .scalars()
+            .all()
+        )
         print(f"Scanning {len(source_products)} source products ({', '.join(SOURCE_CHAINS)})")
 
         written = 0
@@ -112,16 +118,20 @@ def main() -> None:
                 skipped_existing += 1
                 continue
 
-            print(f"  {score:.1f}%  [{sp.external_source}] {sp.name!r}  ←→  [{matched.external_source}] {matched.name!r}")
+            print(
+                f"  {score:.1f}%  [{sp.external_source}] {sp.name!r}  ←→  [{matched.external_source}] {matched.name!r}"
+            )
 
             if not args.dry_run:
-                session.add(ProductMatchCandidate(
-                    product_a_id=a_id,
-                    product_b_id=b_id,
-                    score=score,
-                    status="pending",
-                    proposed_by="auto",
-                ))
+                session.add(
+                    ProductMatchCandidate(
+                        product_a_id=a_id,
+                        product_b_id=b_id,
+                        score=score,
+                        status="pending",
+                        proposed_by="auto",
+                    )
+                )
                 existing_pairs.add((a_id, b_id))
                 written += 1
 
@@ -132,15 +142,19 @@ def main() -> None:
 
         if not args.dry_run:
             session.commit()
-            print(f"\nDone: {written} candidates written, "
-                  f"{skipped_existing} skipped (already existed), "
-                  f"{skipped_exact} skipped (exact/already merged), "
-                  f"{skipped_no_match} skipped (no match)")
+            print(
+                f"\nDone: {written} candidates written, "
+                f"{skipped_existing} skipped (already existed), "
+                f"{skipped_exact} skipped (exact/already merged), "
+                f"{skipped_no_match} skipped (no match)"
+            )
         else:
-            print(f"\nDry-run: {written} would be written, "
-                  f"{skipped_existing} already exist, "
-                  f"{skipped_exact} are exact (already merged), "
-                  f"{skipped_no_match} had no match")
+            print(
+                f"\nDry-run: {written} would be written, "
+                f"{skipped_existing} already exist, "
+                f"{skipped_exact} are exact (already merged), "
+                f"{skipped_no_match} had no match"
+            )
 
 
 if __name__ == "__main__":

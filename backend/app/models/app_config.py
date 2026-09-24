@@ -1,8 +1,10 @@
 """AppConfig model — encrypted key/value store for admin-managed settings."""
 
 from datetime import datetime
+
 from sqlalchemy import DateTime, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
+
 from .base import PlainBase as Base
 
 

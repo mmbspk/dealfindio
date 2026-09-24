@@ -13,22 +13,23 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 import pandas as pd
-import pytest
-
 
 # ---------------------------------------------------------------------------
 # is_significant_drop
 # ---------------------------------------------------------------------------
 
+
 def test_is_significant_drop_true():
-    from ml.predictor import is_significant_drop, SIGNIFICANT_DROP_PCT
+    from ml.predictor import SIGNIFICANT_DROP_PCT, is_significant_drop
+
     median = 10.00
     # strictly below threshold — 6% below
     assert is_significant_drop(median * (1 - SIGNIFICANT_DROP_PCT - 0.01), median) is True
 
 
 def test_is_significant_drop_false_just_above():
-    from ml.predictor import is_significant_drop, SIGNIFICANT_DROP_PCT
+    from ml.predictor import SIGNIFICANT_DROP_PCT, is_significant_drop
+
     median = 10.00
     # 4.9% below — should not trigger
     assert is_significant_drop(median * (1 - SIGNIFICANT_DROP_PCT + 0.001), median) is False
@@ -36,16 +37,19 @@ def test_is_significant_drop_false_just_above():
 
 def test_is_significant_drop_false_equal():
     from ml.predictor import is_significant_drop
+
     assert is_significant_drop(5.00, 5.00) is False
 
 
 def test_is_significant_drop_false_above():
     from ml.predictor import is_significant_drop
+
     assert is_significant_drop(5.50, 5.00) is False
 
 
 def test_is_significant_drop_zero_median():
     from ml.predictor import is_significant_drop
+
     # Zero median — guard against division by zero
     assert is_significant_drop(0.0, 0.0) is False
 
@@ -53,6 +57,7 @@ def test_is_significant_drop_zero_median():
 # ---------------------------------------------------------------------------
 # fit_and_forecast
 # ---------------------------------------------------------------------------
+
 
 def _make_weekly_df(n: int, base_price: float = 5.00) -> pd.DataFrame:
     """Synthetic weekly price series."""
@@ -63,7 +68,8 @@ def _make_weekly_df(n: int, base_price: float = 5.00) -> pd.DataFrame:
 
 
 def test_fit_and_forecast_returns_correct_shape():
-    from ml.predictor import fit_and_forecast, FORECAST_WEEKS
+    from ml.predictor import FORECAST_WEEKS, fit_and_forecast
+
     df = _make_weekly_df(12)
     forecast = fit_and_forecast(df)
     assert len(forecast) == FORECAST_WEEKS
@@ -72,6 +78,7 @@ def test_fit_and_forecast_returns_correct_shape():
 
 def test_fit_and_forecast_values_are_finite():
     from ml.predictor import fit_and_forecast
+
     df = _make_weekly_df(12)
     forecast = fit_and_forecast(df)
     for col in ["yhat", "yhat_lower", "yhat_upper"]:
@@ -80,6 +87,7 @@ def test_fit_and_forecast_values_are_finite():
 
 def test_fit_and_forecast_prices_non_negative():
     from ml.predictor import fit_and_forecast
+
     df = _make_weekly_df(12)
     forecast = fit_and_forecast(df)
     assert (forecast["yhat"] >= 0).all()
@@ -88,6 +96,7 @@ def test_fit_and_forecast_prices_non_negative():
 
 def test_fit_and_forecast_future_dates_only():
     from ml.predictor import fit_and_forecast
+
     df = _make_weekly_df(12)
     last_train = df["ds"].max()
     forecast = fit_and_forecast(df)
@@ -98,16 +107,20 @@ def test_fit_and_forecast_future_dates_only():
 # load_price_series (needs DB fixtures)
 # ---------------------------------------------------------------------------
 
+
 def test_load_price_series_empty_when_no_data(test_db_session, sample_product, sample_store):
     from ml.predictor import load_price_series
+
     result = load_price_series(test_db_session, sample_product.id, "NonExistentChain")
     assert isinstance(result, pd.DataFrame)
     assert result.empty or list(result.columns) == ["ds", "y"]
 
 
-def test_run_predictions_skips_when_insufficient_data(test_db_session, sample_product, sample_store):
-    from ml.predictor import run_predictions_for_product
+def test_run_predictions_skips_when_insufficient_data(
+    test_db_session, sample_product, sample_store
+):
     from app.models import PriceReport
+    from ml.predictor import run_predictions_for_product
 
     now = datetime.now(timezone.utc)
     # Only 3 reports — below MIN_OBSERVATIONS (8)
@@ -135,8 +148,8 @@ def test_run_predictions_no_data_returns_empty(test_db_session, sample_product):
 
 
 def test_load_price_series_returns_correct_columns(test_db_session, sample_product, sample_store):
-    from ml.predictor import load_price_series
     from app.models import PriceReport
+    from ml.predictor import load_price_series
 
     # Seed enough price reports across different weeks
     now = datetime.now(timezone.utc)
@@ -162,6 +175,7 @@ def test_load_price_series_returns_correct_columns(test_db_session, sample_produ
 # ---------------------------------------------------------------------------
 # Predictions API endpoint
 # ---------------------------------------------------------------------------
+
 
 def test_predictions_endpoint_empty(test_client, sample_product):
     resp = test_client.get(f"/api/v1/predictions/{sample_product.id}")

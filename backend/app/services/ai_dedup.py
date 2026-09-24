@@ -46,7 +46,7 @@ from app.services.oft_image_enricher import (
     OFTRateLimiter,
     _parse_retry_after,
 )
-from app.services.product_dedup import brands_conflict, get_fuzzy_matcher
+from app.services.product_dedup import brands_conflict
 from app.services.receipt_parser import _strip_json_fences
 
 logger = logging.getLogger(__name__)
@@ -60,21 +60,27 @@ DEFAULT_AI_DEDUP_MODEL = "claude-sonnet-4-6"
 _SIZE_HINT_RE = re.compile(r"\b(\d+\.?\d*)\s*(l|ml|kg|g|oz|lb|pk|pack|s)\b", re.IGNORECASE)
 
 
-def _build_store_url(chain: Optional[str], external_id: Optional[str], name: Optional[str] = None) -> Optional[str]:
+def _build_store_url(
+    chain: Optional[str], external_id: Optional[str], name: Optional[str] = None
+) -> Optional[str]:
     if not chain or not external_id:
         return None
     if chain == "woolworths":
         return f"https://www.woolworths.com.au/shop/productdetails/{external_id}"
     if chain == "coles":
-        slug = re.sub(r'[^a-z0-9]+', '-', name.lower()).strip('-') if name else ""
-        return f"https://www.coles.com.au/product/{slug}-{external_id}" if slug else f"https://www.coles.com.au/product/{external_id}"
+        slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") if name else ""
+        return (
+            f"https://www.coles.com.au/product/{slug}-{external_id}"
+            if slug
+            else f"https://www.coles.com.au/product/{external_id}"
+        )
     if chain == "iga":
         return f"https://www.igashop.com.au/product/{external_id}"
     if chain == "aldi":
-        slug = re.sub(r'[^a-z0-9]+', '-', name.lower()).strip('-') if name else ""
+        slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") if name else ""
         return f"https://www.aldi.com.au/product/{slug}-{external_id}" if slug else None
     if chain == "dan_murphys":
-        slug = re.sub(r'[^a-z0-9]+', '-', name.lower()).strip('-') if name else ""
+        slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") if name else ""
         return f"https://www.danmurphys.com.au/product/DM_{slug}" if slug else None
     return None
 
@@ -104,7 +110,7 @@ class ProductFacts:
         chain = None
         src = getattr(p, "external_source", None)
         if src and src.startswith("catalog_"):
-            chain = src[len("catalog_"):]
+            chain = src[len("catalog_") :]
         return cls(
             id=str(p.id),
             name=p.name,
@@ -305,12 +311,15 @@ def judge_pair(
     # same-chain pair or override a brand conflict, even if it says same_product.
     if verdict.same_product and (same_chain(a, b) or brands_conflict(a.brand, b.brand)):
         logger.debug("Post-guard downgraded a same_product verdict for (%s, %s)", a.id, b.id)
-        return AIVerdict(
-            same_product=False,
-            confidence=verdict.confidence,
-            keep=verdict.keep,
-            reason="post-guard: brand/chain conflict overrides model",
-        ), None
+        return (
+            AIVerdict(
+                same_product=False,
+                confidence=verdict.confidence,
+                keep=verdict.keep,
+                reason="post-guard: brand/chain conflict overrides model",
+            ),
+            None,
+        )
     return verdict, None
 
 
@@ -324,9 +333,7 @@ def _survivor_rank(p: ProductFacts) -> tuple:
     )
 
 
-def choose_survivor(
-    a: ProductFacts, b: ProductFacts, verdict: AIVerdict
-) -> tuple[str, str]:
+def choose_survivor(a: ProductFacts, b: ProductFacts, verdict: AIVerdict) -> tuple[str, str]:
     """Return (keep_id, drop_id) for a merge, deterministically.
 
     Prefer the record with a valid EAN-13 GTIN as the survivor so a merge never
@@ -351,9 +358,7 @@ def choose_survivor(
 # ── GTIN recovery ────────────────────────────────────────────────────────────
 
 
-def propagate_gtin_on_merge(
-    session: Session, keep_id: str, drop_id: str
-) -> Optional[str]:
+def propagate_gtin_on_merge(session: Session, keep_id: str, drop_id: str) -> Optional[str]:
     """Copy a valid EAN-13 GTIN from the dropped product to the survivor.
 
     Only fires when the survivor has no GTIN and the dropped record has a real,

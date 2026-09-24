@@ -45,9 +45,9 @@ from app.config import get_settings
 from app.models import Product
 from app.models.product_match import ProductMatchCandidate
 from app.services.ai_dedup import (
+    AIVerdict,
     DedupDecision,
     ProductFacts,
-    AIVerdict,
     choose_survivor,
     judge_pair,
 )
@@ -61,7 +61,7 @@ DEFAULT_MIN_FUZZY = 85.0
 
 def _chain_of(p: Product) -> str | None:
     src = p.external_source or ""
-    return src[len("catalog_"):] if src.startswith("catalog_") else None
+    return src[len("catalog_") :] if src.startswith("catalog_") else None
 
 
 def _norm(p: Product) -> str:
@@ -79,19 +79,28 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="AI-judge cross-store dedup candidates")
     parser.add_argument("--dry-run", action="store_true", help="Judge + print, write nothing")
     parser.add_argument("--limit", type=int, default=0, help="Max pairs to JUDGE (0 = unlimited)")
-    parser.add_argument("--min-fuzzy", type=float, default=DEFAULT_MIN_FUZZY,
-                        help="Minimum fuzzy score for a pair to reach the judge")
-    parser.add_argument("--auto-merge", action="store_true",
-                        help="Merge SAME verdicts with confidence >= AI_DEDUP_CONFIDENCE_MIN")
+    parser.add_argument(
+        "--min-fuzzy",
+        type=float,
+        default=DEFAULT_MIN_FUZZY,
+        help="Minimum fuzzy score for a pair to reach the judge",
+    )
+    parser.add_argument(
+        "--auto-merge",
+        action="store_true",
+        help="Merge SAME verdicts with confidence >= AI_DEDUP_CONFIDENCE_MIN",
+    )
     parser.add_argument("--model", type=str, default=None, help="Override the judge model")
-    parser.add_argument("--chains", type=str, default=None,
-                        help="Comma-separated chains to restrict to (e.g. coles,woolworths)")
+    parser.add_argument(
+        "--chains",
+        type=str,
+        default=None,
+        help="Comma-separated chains to restrict to (e.g. coles,woolworths)",
+    )
     args = parser.parse_args()
 
     settings = get_settings()
-    restrict = (
-        {c.strip() for c in args.chains.split(",") if c.strip()} if args.chains else None
-    )
+    restrict = {c.strip() for c in args.chains.split(",") if c.strip()} if args.chains else None
 
     from app.deps import get_anthropic_client
     from app.services.config_store import get_runtime_typed
@@ -102,7 +111,9 @@ def main() -> None:
         # Resolve settings DB-first (admin Configs UI) then env; the enable
         # toggle, model, and thresholds are all live-editable without a restart.
         if not get_runtime_typed("AI_DEDUP_ENABLED", session):
-            print("AI_DEDUP_ENABLED is false — enable it in Admin → Configs (or .env) to run the judge. Aborting.")
+            print(
+                "AI_DEDUP_ENABLED is false — enable it in Admin → Configs (or .env) to run the judge. Aborting."
+            )
             sys.exit(1)
 
         model = args.model or get_runtime_typed("AI_DEDUP_MODEL", session)
@@ -113,9 +124,11 @@ def main() -> None:
         client = get_anthropic_client()
 
         # Load all catalog products grouped by chain (skip chain-less rows).
-        products = list(session.execute(
-            select(Product).where(Product.external_source.like("catalog_%"))
-        ).scalars().all())
+        products = list(
+            session.execute(select(Product).where(Product.external_source.like("catalog_%")))
+            .scalars()
+            .all()
+        )
         by_chain: dict[str, list[Product]] = {}
         for p in products:
             chain = _chain_of(p)
@@ -129,8 +142,10 @@ def main() -> None:
             by_chain.setdefault(chain, []).append(p)
 
         chains = sorted(by_chain)
-        print(f"Loaded products across {len(chains)} chain(s): "
-              + ", ".join(f"{c}={len(by_chain[c])}" for c in chains))
+        print(
+            f"Loaded products across {len(chains)} chain(s): "
+            + ", ".join(f"{c}={len(by_chain[c])}" for c in chains)
+        )
 
         # Existing candidate rows, keyed by ordered pair, so we update in place.
         existing: dict[tuple[str, str], ProductMatchCandidate] = {}
@@ -194,7 +209,8 @@ def main() -> None:
                 conf = verdict.confidence if isinstance(verdict, AIVerdict) else None
                 keep = verdict.keep if isinstance(verdict, AIVerdict) else None
                 reason = (
-                    verdict.reason if isinstance(verdict, AIVerdict)
+                    verdict.reason
+                    if isinstance(verdict, AIVerdict)
                     else f"deterministic: {decision}"
                 )
 
@@ -226,6 +242,7 @@ def main() -> None:
                 row.ai_reason = reason[:300] if reason else None
                 row.ai_model = model
                 from datetime import datetime, timezone
+
                 row.ai_reviewed_at = datetime.now(timezone.utc)
 
                 # Auto-merge only high-confidence SAME verdicts.

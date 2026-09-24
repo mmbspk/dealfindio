@@ -36,7 +36,7 @@ import httpx
 from bs4 import BeautifulSoup
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
-from scrapers.base import Scraper, ScrapedProduct, ScraperError
+from scrapers.base import ScrapedProduct, Scraper, ScraperError
 
 logger = logging.getLogger(__name__)
 
@@ -153,9 +153,7 @@ class DrakesScraper(Scraper):
             List of raw HTML strings, one per page.
         """
         pages: list[str] = []
-        async with httpx.AsyncClient(
-            follow_redirects=True, timeout=self.TIMEOUT_S
-        ) as client:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=self.TIMEOUT_S) as client:
             # Bootstrap session / cookies
             await client.get(
                 _BASE_URL,
@@ -180,9 +178,7 @@ class DrakesScraper(Scraper):
         wait=wait_exponential(multiplier=2, min=2, max=30),
         reraise=True,
     )
-    async def _fetch_page(
-        self, client: httpx.AsyncClient, page: int
-    ) -> Optional[str]:
+    async def _fetch_page(self, client: httpx.AsyncClient, page: int) -> Optional[str]:
         params = {
             "page": page,
             "q[]": "special:1",

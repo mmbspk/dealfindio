@@ -10,9 +10,8 @@ Test cases:
 - Reputation scoring
 """
 
+
 import pytest
-from uuid import uuid4
-from datetime import datetime, timezone
 
 
 class TestGetCurrentUserProfile:

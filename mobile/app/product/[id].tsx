@@ -99,7 +99,7 @@ export default function ProductDetailScreen() {
     return (
       <View style={styles.center}>
         <Stack.Screen options={{ title: 'Product' }} />
-        <ActivityIndicator size="large" color="#4f46e5" />
+        <ActivityIndicator size="large" color="#164b40" />
       </View>
     )
   }
@@ -169,9 +169,10 @@ export default function ProductDetailScreen() {
         <View style={styles.storesSection}>
           <Text style={styles.sectionTitle}>Store Prices</Text>
           {stores.map((s) => (
-            <View key={s.store_id} style={styles.storeRow}>
+            <View key={s.store_id} style={[styles.storeRow, s.price_aud === lowestPrice && styles.bestStoreRow]}>
               <View style={styles.storeInfo}>
                 <Text style={styles.storeName}>{s.store_name}</Text>
+                {s.price_aud === lowestPrice && <Text style={styles.bestStoreLabel}>BEST PRICE</Text>}
                 <Text style={styles.storeLocation}>
                   {[s.chain, s.suburb, s.state].filter(Boolean).join(' · ')}
                 </Text>
@@ -196,11 +197,13 @@ export default function ProductDetailScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f9fafb' },
+  bestStoreRow: { borderColor: '#8cbf9f', backgroundColor: '#f0f8ec' },
+  bestStoreLabel: { color: '#176f50', fontSize: 11, fontWeight: '800', marginTop: 4, letterSpacing: 1 },
+  container: { flex: 1, backgroundColor: '#f5f7f2' },
   content: { paddingBottom: 40 },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 },
   errorText: { color: '#ef4444', textAlign: 'center', marginBottom: 16 },
-  retryBtn: { backgroundColor: '#4f46e5', borderRadius: 8, paddingHorizontal: 20, paddingVertical: 10 },
+  retryBtn: { backgroundColor: '#164b40', borderRadius: 12, paddingHorizontal: 20, paddingVertical: 10 },
   retryBtnText: { color: '#fff', fontWeight: '600' },
 
   image: {
@@ -211,50 +214,50 @@ const styles = StyleSheet.create({
   imagePlaceholder: {
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#f3f4f6',
+    backgroundColor: '#edf2e9',
   },
-  imagePlaceholderText: { color: '#9ca3af', fontSize: 14 },
+  imagePlaceholderText: { color: '#71877b', fontSize: 14 },
 
   header: {
     backgroundColor: '#fff',
     padding: 20,
     borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
+    borderBottomColor: '#dce5dd',
   },
-  name: { fontSize: 20, fontWeight: '700', color: '#111827' },
-  brand: { fontSize: 14, color: '#4f46e5', marginTop: 4 },
-  category: { fontSize: 13, color: '#9ca3af', marginTop: 2 },
-  lowestPrice: { fontSize: 22, fontWeight: '700', color: '#10b981', marginTop: 10 },
+  name: { fontSize: 20, fontWeight: '700', color: '#122923' },
+  brand: { fontSize: 14, color: '#164b40', marginTop: 4 },
+  category: { fontSize: 13, color: '#71877b', marginTop: 2 },
+  lowestPrice: { fontSize: 22, fontWeight: '700', color: '#176f50', marginTop: 10 },
 
   watchlistBtn: {
     margin: 16,
-    backgroundColor: '#4f46e5',
-    borderRadius: 10,
+    backgroundColor: '#164b40',
+    borderRadius: 14,
     paddingVertical: 14,
     alignItems: 'center',
   },
-  watchlistBtnAdded: { backgroundColor: '#10b981' },
+  watchlistBtnAdded: { backgroundColor: '#176f50' },
   watchlistBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
 
   storesSection: { marginHorizontal: 16 },
-  sectionTitle: { fontSize: 16, fontWeight: '700', color: '#111827', marginBottom: 10 },
+  sectionTitle: { fontSize: 16, fontWeight: '700', color: '#122923', marginBottom: 10 },
   storeRow: {
     backgroundColor: '#fff',
-    borderRadius: 8,
+    borderRadius: 12,
     padding: 14,
     marginBottom: 8,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: '#dce5dd',
   },
   storeInfo: { flex: 1, marginRight: 12 },
-  storeName: { fontSize: 15, fontWeight: '600', color: '#111827' },
-  storeLocation: { fontSize: 12, color: '#6b7280', marginTop: 2 },
+  storeName: { fontSize: 15, fontWeight: '600', color: '#122923' },
+  storeLocation: { fontSize: 12, color: '#5d7469', marginTop: 2 },
   storePriceWrap: { alignItems: 'flex-end' },
-  storePrice: { fontSize: 18, fontWeight: '700', color: '#111827' },
-  wasPrice: { fontSize: 13, color: '#9ca3af', textDecorationLine: 'line-through', marginTop: 1 },
+  storePrice: { fontSize: 18, fontWeight: '700', color: '#122923' },
+  wasPrice: { fontSize: 13, color: '#71877b', textDecorationLine: 'line-through', marginTop: 1 },
   discountBadge: {
     backgroundColor: '#fef3c7',
     borderRadius: 4,

@@ -29,6 +29,7 @@ interface ProductWithPrice extends Product {
   sale_pct_off?: number
   store_name?: string
   is_on_sale?: boolean
+  image_url?: string | null
 }
 
 function PriceTag({ price, pctOff }: { price: number; pctOff?: number }) {
@@ -167,7 +168,7 @@ export default function ProductsScreen() {
           hitSlop={8}
         >
           {isSaving ? (
-            <ActivityIndicator size="small" color="#4f46e5" />
+            <ActivityIndicator size="small" color="#164b40" />
           ) : (
             <Text style={[styles.saveBtnText, saved && styles.saveBtnTextDone]}>
               {saved ? '✓' : '+'}
@@ -180,6 +181,13 @@ export default function ProductsScreen() {
 
   return (
     <View style={styles.container}>
+      <View style={styles.intro}>
+        <Text style={styles.introEyebrow}>SHOP SMARTER</Text>
+        <Text style={styles.introTitle}>Compare your everyday groceries.</Text>
+        <Pressable onPress={() => router.push('/(tabs)/deals')} accessibilityRole="link">
+          <Text style={styles.introLink}>See nearby deals →</Text>
+        </Pressable>
+      </View>
       {/* Search bar */}
       <View style={styles.searchRow}>
         <TextInput
@@ -223,7 +231,7 @@ export default function ProductsScreen() {
 
       {/* Results */}
       {loading ? (
-        <ActivityIndicator size="large" color="#4f46e5" style={styles.spinner} />
+        <ActivityIndicator size="large" color="#164b40" style={styles.spinner} />
       ) : error ? (
         <Text style={styles.errorText}>{error}</Text>
       ) : filteredProducts.length === 0 ? (
@@ -248,34 +256,38 @@ export default function ProductsScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f9fafb' },
-  searchRow: { flexDirection: 'row', padding: 12, gap: 8, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#f3f4f6' },
+  intro: { backgroundColor: '#164b40', paddingHorizontal: 20, paddingTop: 20, paddingBottom: 17 },
+  introEyebrow: { color: '#ddf67a', fontSize: 11, fontWeight: '800', letterSpacing: 2 },
+  introTitle: { color: '#fff', fontSize: 25, lineHeight: 30, fontWeight: '700', maxWidth: 300, marginTop: 5 },
+  introLink: { color: '#ddf67a', fontSize: 14, fontWeight: '700', marginTop: 10 },
+  container: { flex: 1, backgroundColor: '#f5f7f2' },
+  searchRow: { flexDirection: 'row', padding: 12, gap: 8, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#edf2e9' },
   input: {
     flex: 1,
-    backgroundColor: '#f9fafb',
-    borderRadius: 8,
+    backgroundColor: '#f5f7f2',
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: '#dce5dd',
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 16,
   },
-  searchBtn: { backgroundColor: '#4f46e5', borderRadius: 8, paddingHorizontal: 16, justifyContent: 'center' },
+  searchBtn: { backgroundColor: '#164b40', borderRadius: 12, paddingHorizontal: 16, justifyContent: 'center' },
   searchBtnText: { color: '#fff', fontWeight: '600', fontSize: 14 },
-  filterRow: { backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#f3f4f6' },
+  filterRow: { backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#edf2e9' },
   filterScroll: { paddingHorizontal: 12, paddingVertical: 8, gap: 8 },
   filterChip: {
     paddingHorizontal: 12, paddingVertical: 6,
-    borderRadius: 20, borderWidth: 1, borderColor: '#e5e7eb',
+    borderRadius: 20, borderWidth: 1, borderColor: '#dce5dd',
     backgroundColor: '#fff', marginRight: 6,
   },
-  filterChipActive: { backgroundColor: '#eef2ff', borderColor: '#6366f1' },
-  filterChipText: { fontSize: 13, color: '#6b7280', fontWeight: '500' },
-  filterChipTextActive: { color: '#4f46e5', fontWeight: '600' },
+  filterChipActive: { backgroundColor: '#e9f3eb', borderColor: '#176f50' },
+  filterChipText: { fontSize: 13, color: '#5d7469', fontWeight: '500' },
+  filterChipTextActive: { color: '#164b40', fontWeight: '600' },
   spinner: { marginTop: 48 },
   errorText: { color: '#ef4444', textAlign: 'center', marginTop: 40, paddingHorizontal: 24, fontSize: 14 },
   emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  emptyText: { color: '#9ca3af', textAlign: 'center', fontSize: 15, paddingHorizontal: 32 },
+  emptyText: { color: '#71877b', textAlign: 'center', fontSize: 15, paddingHorizontal: 32 },
   list: { padding: 10 },
   row: { justifyContent: 'space-between' },
   card: {
@@ -284,7 +296,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     marginBottom: 10,
     borderWidth: 1,
-    borderColor: '#f3f4f6',
+    borderColor: '#edf2e9',
     overflow: 'hidden',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
@@ -292,34 +304,34 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 1,
   },
-  imageContainer: { position: 'relative', width: '100%', aspectRatio: 1, backgroundColor: '#f9fafb' },
+  imageContainer: { position: 'relative', width: '100%', aspectRatio: 1, backgroundColor: '#f5f7f2' },
   image: { width: '100%', height: '100%' },
-  imagePlaceholder: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#f3f4f6' },
+  imagePlaceholder: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#edf2e9' },
   imagePlaceholderText: { fontSize: 32 },
   salePill: {
     position: 'absolute', top: 6, left: 6,
-    backgroundColor: '#ef4444', borderRadius: 10,
+    backgroundColor: '#ef4444', borderRadius: 14,
     paddingHorizontal: 6, paddingVertical: 2,
   },
   salePillText: { color: '#fff', fontSize: 11, fontWeight: '700' },
   cardBody: { padding: 10, paddingBottom: 6 },
-  brand: { fontSize: 11, color: '#6366f1', fontWeight: '600', marginBottom: 1 },
-  name: { fontSize: 13, fontWeight: '600', color: '#111827', lineHeight: 18 },
+  brand: { fontSize: 11, color: '#176f50', fontWeight: '600', marginBottom: 1 },
+  name: { fontSize: 14, fontWeight: '600', color: '#122923', lineHeight: 18 },
   priceRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 },
-  price: { fontSize: 15, fontWeight: '700', color: '#059669' },
-  badge: { backgroundColor: '#fee2e2', borderRadius: 8, paddingHorizontal: 4, paddingVertical: 1 },
+  price: { fontSize: 15, fontWeight: '700', color: '#176f50' },
+  badge: { backgroundColor: '#fee2e2', borderRadius: 12, paddingHorizontal: 4, paddingVertical: 1 },
   badgeText: { fontSize: 10, fontWeight: '700', color: '#dc2626' },
-  storeName: { fontSize: 11, color: '#9ca3af', marginTop: 2 },
+  storeName: { fontSize: 12, color: '#71877b', marginTop: 2 },
   saveBtn: {
     marginHorizontal: 10,
     marginBottom: 10,
-    backgroundColor: '#eef2ff',
-    borderRadius: 8,
+    backgroundColor: '#e9f3eb',
+    borderRadius: 12,
     paddingVertical: 7,
     alignItems: 'center',
     justifyContent: 'center',
   },
   saveBtnDone: { backgroundColor: '#d1fae5' },
-  saveBtnText: { fontSize: 16, fontWeight: '700', color: '#4f46e5' },
+  saveBtnText: { fontSize: 16, fontWeight: '700', color: '#164b40' },
   saveBtnTextDone: { color: '#065f46' },
 })
