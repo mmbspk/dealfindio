@@ -180,6 +180,13 @@ export default function ProductsScreen() {
 
   return (
     <View style={styles.container}>
+      <View style={styles.intro}>
+        <Text style={styles.introEyebrow}>SHOP SMARTER</Text>
+        <Text style={styles.introTitle}>Compare your everyday groceries.</Text>
+        <Pressable onPress={() => router.push('/(tabs)/deals')} accessibilityRole="link">
+          <Text style={styles.introLink}>See nearby deals →</Text>
+        </Pressable>
+      </View>
       {/* Search bar */}
       <View style={styles.searchRow}>
         <TextInput
@@ -248,6 +255,10 @@ export default function ProductsScreen() {
 }
 
 const styles = StyleSheet.create({
+  intro: { backgroundColor: '#164b40', paddingHorizontal: 20, paddingTop: 20, paddingBottom: 17 },
+  introEyebrow: { color: '#ddf67a', fontSize: 11, fontWeight: '800', letterSpacing: 2 },
+  introTitle: { color: '#fff', fontSize: 25, lineHeight: 30, fontWeight: '700', maxWidth: 300, marginTop: 5 },
+  introLink: { color: '#ddf67a', fontSize: 14, fontWeight: '700', marginTop: 10 },
   container: { flex: 1, backgroundColor: '#f5f7f2' },
   searchRow: { flexDirection: 'row', padding: 12, gap: 8, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#edf2e9' },
   input: {
@@ -304,12 +315,12 @@ const styles = StyleSheet.create({
   salePillText: { color: '#fff', fontSize: 11, fontWeight: '700' },
   cardBody: { padding: 10, paddingBottom: 6 },
   brand: { fontSize: 11, color: '#176f50', fontWeight: '600', marginBottom: 1 },
-  name: { fontSize: 13, fontWeight: '600', color: '#122923', lineHeight: 18 },
+  name: { fontSize: 14, fontWeight: '600', color: '#122923', lineHeight: 18 },
   priceRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 },
   price: { fontSize: 15, fontWeight: '700', color: '#176f50' },
   badge: { backgroundColor: '#fee2e2', borderRadius: 12, paddingHorizontal: 4, paddingVertical: 1 },
   badgeText: { fontSize: 10, fontWeight: '700', color: '#dc2626' },
-  storeName: { fontSize: 11, color: '#71877b', marginTop: 2 },
+  storeName: { fontSize: 12, color: '#71877b', marginTop: 2 },
   saveBtn: {
     marginHorizontal: 10,
     marginBottom: 10,
