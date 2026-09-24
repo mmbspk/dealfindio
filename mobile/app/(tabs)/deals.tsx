@@ -101,6 +101,7 @@ export default function DealsScreen() {
           {item.is_verified ? <Text style={styles.verifiedBadge}>Verified</Text> : null}
         </View>
           </View>
+        </View>
       </View>
     )
   }
