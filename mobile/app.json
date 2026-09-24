@@ -1,0 +1,46 @@
+{
+  "expo": {
+    "name": "dealfindio",
+    "slug": "dealfindio",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "dealfindio",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": false,
+    "splash": {
+      "resizeMode": "contain",
+      "backgroundColor": "#4f46e5"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "au.com.dealfindio.app",
+      "infoPlist": {
+        "NSCameraUsageDescription": "dealfindio uses the camera to scan barcodes and photograph receipts for price reporting.",
+        "NSLocationWhenInUseUsageDescription": "dealfindio uses your location to find nearby stores and validate price reports."
+      }
+    },
+    "android": {
+      "package": "au.com.dealfindio.app",
+      "permissions": [
+        "CAMERA",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION"
+      ]
+    },
+    "plugins": [
+      "expo-router",
+      "expo-camera",
+      "expo-location",
+      "expo-image-picker"
+    ],
+    "extra": {
+      "apiUrl": "http://192.168.0.63:8000",
+      "firebaseApiKey": "AIzaSyD-C_NpRFYBR4b8MjEVyXWGMb8fedoydS0",
+      "firebaseAuthDomain": "dealfindio-dev.firebaseapp.com",
+      "firebaseProjectId": "dealfindio-dev",
+      "firebaseStorageBucket": "dealfindio-dev.appspot.com",
+      "firebaseMessagingSenderId": "REPLACE_WITH_YOUR_SENDER_ID",
+      "firebaseAppId": "REPLACE_WITH_YOUR_APP_ID"
+    }
+  }
+}
