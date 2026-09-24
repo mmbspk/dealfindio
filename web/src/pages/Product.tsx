@@ -233,7 +233,7 @@ export const Product: React.FC = () => {
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Breadcrumb / sticky top bar */}
-      <div className="bg-white border-b sticky top-[65px] z-40 shadow-sm">
+      <div className="bg-white border-b sticky top-[72px] z-40 shadow-sm">
         <div className="max-w-[1280px] mx-auto px-6 sm:px-8 lg:px-10 py-3 flex items-center gap-2 text-sm">
           <button
             onClick={() => navigate(-1)}
