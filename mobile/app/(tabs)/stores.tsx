@@ -75,7 +75,7 @@ const PIN_COLORS: Record<string, string> = {
   woolworths: '#16a34a',  // green-600
   aldi: '#2563eb',        // blue-600
   iga: '#f97316',         // orange-500
-  dan_murphys: '#7c3aed', // violet-600
+  dan_murphys: '#176f50', // violet-600
 }
 
 /** Chain → card left-border colour (same hues, used in list). */
@@ -228,7 +228,7 @@ export default function StoresScreen() {
 
   function renderStoreCard({ item }: { item: StoreResult }) {
     const chain = item.chain.toLowerCase()
-    const borderColor = BORDER_COLORS[chain] ?? '#4f46e5'
+    const borderColor = BORDER_COLORS[chain] ?? '#164b40'
     const label = CHAIN_LABELS[chain] ?? item.chain
 
     return (
@@ -275,7 +275,7 @@ export default function StoresScreen() {
   if (screenState === 'loading') {
     return (
       <View style={styles.center}>
-        <ActivityIndicator size="large" color="#4f46e5" />
+        <ActivityIndicator size="large" color="#164b40" />
         <Text style={styles.loadingText}>Finding stores…</Text>
       </View>
     )
@@ -319,7 +319,7 @@ export default function StoresScreen() {
             <TextInput
               style={styles.manualInput}
               placeholder="e.g. Bondi Junction or 2022"
-              placeholderTextColor="#9ca3af"
+              placeholderTextColor="#71877b"
               value={manualQuery}
               onChangeText={setManualQuery}
               onSubmitEditing={handleManualSearch}
@@ -361,7 +361,7 @@ export default function StoresScreen() {
           <Circle
             center={{ latitude: userLocation!.latitude, longitude: userLocation!.longitude }}
             radius={radiusKm * 1000}
-            strokeColor="#4f46e5"
+            strokeColor="#164b40"
             strokeWidth={1.5}
             fillColor="rgba(79, 70, 229, 0.08)"
           />
@@ -370,7 +370,7 @@ export default function StoresScreen() {
           <Marker
             coordinate={{ latitude: userLocation!.latitude, longitude: userLocation!.longitude }}
             title="You are here"
-            pinColor="#4f46e5"
+            pinColor="#164b40"
             zIndex={999}
           />
 
@@ -381,7 +381,7 @@ export default function StoresScreen() {
               coordinate={{ latitude: store.lat, longitude: store.lon }}
               title={store.name}
               description={[store.suburb, store.state].filter(Boolean).join(', ')}
-              pinColor={PIN_COLORS[store.chain.toLowerCase()] ?? '#6b7280'}
+              pinColor={PIN_COLORS[store.chain.toLowerCase()] ?? '#5d7469'}
             />
           ))}
         </MapView>
@@ -470,17 +470,17 @@ export default function StoresScreen() {
 // ── Styles ─────────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
-  flex: { flex: 1, backgroundColor: '#f9fafb' },
+  flex: { flex: 1, backgroundColor: '#f5f7f2' },
 
   // ── Shared loading / prompt ────────────────────────────────────────────────
   center: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#f9fafb',
+    backgroundColor: '#f5f7f2',
     gap: 12,
   },
-  loadingText: { color: '#6b7280', fontSize: 15 },
+  loadingText: { color: '#5d7469', fontSize: 15 },
 
   // ── Prompt screen ──────────────────────────────────────────────────────────
   promptContainer: {
@@ -491,8 +491,8 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   promptEmoji: { fontSize: 52 },
-  promptTitle: { fontSize: 22, fontWeight: '700', color: '#111827', textAlign: 'center' },
-  promptSub: { fontSize: 14, color: '#6b7280', textAlign: 'center', marginBottom: 8 },
+  promptTitle: { fontSize: 22, fontWeight: '700', color: '#122923', textAlign: 'center' },
+  promptSub: { fontSize: 14, color: '#5d7469', textAlign: 'center', marginBottom: 8 },
   permissionNote: {
     fontSize: 13,
     color: '#b45309',
@@ -500,35 +500,35 @@ const styles = StyleSheet.create({
     backgroundColor: '#fef3c7',
     paddingHorizontal: 16,
     paddingVertical: 10,
-    borderRadius: 8,
+    borderRadius: 12,
     overflow: 'hidden',
   },
   errorText: { color: '#ef4444', fontSize: 14, textAlign: 'center' },
   primaryBtn: {
-    backgroundColor: '#4f46e5',
-    borderRadius: 10,
+    backgroundColor: '#164b40',
+    borderRadius: 14,
     paddingHorizontal: 32,
     paddingVertical: 14,
     width: '100%',
     alignItems: 'center',
   },
   primaryBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
-  orLabel: { color: '#9ca3af', fontSize: 13, marginTop: 4 },
+  orLabel: { color: '#71877b', fontSize: 13, marginTop: 4 },
   manualRow: { flexDirection: 'row', width: '100%', gap: 8 },
   manualInput: {
     flex: 1,
     backgroundColor: '#fff',
     borderWidth: 1,
     borderColor: '#d1d5db',
-    borderRadius: 8,
+    borderRadius: 12,
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 15,
-    color: '#111827',
+    color: '#122923',
   },
   manualBtn: {
-    backgroundColor: '#4f46e5',
-    borderRadius: 8,
+    backgroundColor: '#164b40',
+    borderRadius: 12,
     paddingHorizontal: 16,
     alignItems: 'center',
     justifyContent: 'center',
@@ -545,22 +545,22 @@ const styles = StyleSheet.create({
   mapPlaceholder: {
     width: '100%',
     height: 280,
-    backgroundColor: '#e5e7eb',
+    backgroundColor: '#dce5dd',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  mapPlaceholderText: { color: '#9ca3af' },
+  mapPlaceholderText: { color: '#71877b' },
 
   // ── Controls bar ──────────────────────────────────────────────────────────
   controlsBar: {
     backgroundColor: '#fff',
     borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
+    borderBottomColor: '#dce5dd',
     paddingVertical: 8,
     paddingHorizontal: 12,
     gap: 6,
   },
-  controlLabel: { fontSize: 12, color: '#6b7280', fontWeight: '500' },
+  controlLabel: { fontSize: 12, color: '#5d7469', fontWeight: '500' },
   radiusRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   radiusBtn: {
     paddingHorizontal: 12,
@@ -570,8 +570,8 @@ const styles = StyleSheet.create({
     borderColor: '#d1d5db',
     backgroundColor: '#fff',
   },
-  radiusBtnActive: { backgroundColor: '#4f46e5', borderColor: '#4f46e5' },
-  radiusBtnText: { fontSize: 12, color: '#374151', fontWeight: '500' },
+  radiusBtnActive: { backgroundColor: '#164b40', borderColor: '#164b40' },
+  radiusBtnText: { fontSize: 12, color: '#29463a', fontWeight: '500' },
   radiusBtnTextActive: { color: '#fff' },
 
   chainRow: { flexDirection: 'row', gap: 6, paddingRight: 4 },
@@ -583,8 +583,8 @@ const styles = StyleSheet.create({
     borderColor: '#d1d5db',
     backgroundColor: '#fff',
   },
-  chainPillFilterActive: { backgroundColor: '#4f46e5', borderColor: '#4f46e5' },
-  chainPillFilterText: { fontSize: 12, color: '#374151', fontWeight: '500' },
+  chainPillFilterActive: { backgroundColor: '#164b40', borderColor: '#164b40' },
+  chainPillFilterText: { fontSize: 12, color: '#29463a', fontWeight: '500' },
   chainPillFilterTextActive: { color: '#fff' },
 
   // ── Error banner ──────────────────────────────────────────────────────────
@@ -599,7 +599,7 @@ const styles = StyleSheet.create({
     borderBottomColor: '#fecaca',
   },
   errorBannerText: { color: '#ef4444', fontSize: 13, flex: 1 },
-  retryText: { color: '#4f46e5', fontWeight: '600', fontSize: 13, marginLeft: 12 },
+  retryText: { color: '#164b40', fontWeight: '600', fontSize: 13, marginLeft: 12 },
 
   // ── Empty state ───────────────────────────────────────────────────────────
   emptyBox: {
@@ -607,16 +607,16 @@ const styles = StyleSheet.create({
     paddingTop: 40,
     paddingHorizontal: 24,
   },
-  emptyText: { fontSize: 16, fontWeight: '600', color: '#374151', textAlign: 'center' },
-  emptySub: { fontSize: 13, color: '#9ca3af', textAlign: 'center', marginTop: 6 },
+  emptyText: { fontSize: 16, fontWeight: '600', color: '#29463a', textAlign: 'center' },
+  emptySub: { fontSize: 13, color: '#71877b', textAlign: 'center', marginTop: 6 },
 
   // ── Store list ────────────────────────────────────────────────────────────
   list: { padding: 12, gap: 8 },
   card: {
     backgroundColor: '#fff',
-    borderRadius: 8,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: '#dce5dd',
     borderLeftWidth: 4,
     flexDirection: 'row',
     alignItems: 'center',
@@ -632,9 +632,9 @@ const styles = StyleSheet.create({
     elevation: 1,
   },
   cardBody: { flex: 1 },
-  cardName: { fontSize: 15, fontWeight: '600', color: '#111827' },
-  cardSub: { fontSize: 13, color: '#6b7280', marginTop: 2 },
-  cardAddress: { fontSize: 12, color: '#9ca3af', marginTop: 1 },
+  cardName: { fontSize: 15, fontWeight: '600', color: '#122923' },
+  cardSub: { fontSize: 13, color: '#5d7469', marginTop: 2 },
+  cardAddress: { fontSize: 12, color: '#71877b', marginTop: 1 },
   cardRight: { alignItems: 'flex-end', gap: 6, marginLeft: 10 },
   chainPill: {
     paddingHorizontal: 8,
@@ -646,6 +646,6 @@ const styles = StyleSheet.create({
   distBadge: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#4f46e5',
+    color: '#164b40',
   },
 })
