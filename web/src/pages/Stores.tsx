@@ -237,7 +237,7 @@ export const Stores: React.FC = () => {
           <div className="text-center mb-8">
             <div className="relative w-24 h-24 mx-auto mb-6">
               {requesting && <div className="absolute inset-0 bg-emerald-100 rounded-full animate-ping opacity-40" />}
-              <div className={`relative w-24 h-24 rounded-full flex items-center justify-center shadow-lg ${requesting ? 'bg-emerald-400' : denied ? 'bg-amber-500' : 'bg-emerald-600'}`}>
+              <div className={`relative w-24 h-24 rounded-full flex items-center justify-center shadow-lg ${requesting ? 'bg-emerald-400' : denied ? 'bg-lime-300' : 'bg-[#176f50]'}`}>
                 <svg className="w-12 h-12 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/>
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/>
@@ -256,7 +256,7 @@ export const Stores: React.FC = () => {
           </div>
 
           {gpsErrorMsg && (
-            <div className="mb-4 bg-red-50 border border-red-200 rounded-xl p-3 text-sm text-red-700 flex items-start gap-2">
+            <div className="mb-4 bg-red-50 border border-red-200 rounded-2xl p-3 text-sm text-red-700 flex items-start gap-2">
               <svg className="w-4 h-4 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
               </svg>
@@ -267,7 +267,7 @@ export const Stores: React.FC = () => {
           {!requesting && (
             <button
               onClick={handleGpsRequest}
-              className="w-full inline-flex items-center justify-center gap-2 bg-amber-500 text-gray-900 px-6 py-3.5 rounded-xl font-semibold text-base hover:bg-amber-600 transition shadow-md cursor-pointer mb-4"
+              className="w-full inline-flex items-center justify-center gap-2 bg-lime-300 text-gray-900 px-6 py-3.5 rounded-2xl font-semibold text-base hover:bg-lime-400 transition shadow-md cursor-pointer mb-4"
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/>
@@ -295,12 +295,12 @@ export const Stores: React.FC = () => {
                   value={manualQuery}
                   onChange={e => { setManualQuery(e.target.value); setGeocodeError('') }}
                   onKeyDown={e => e.key === 'Enter' && handleManualSearch()}
-                  className="flex-1 px-4 py-3 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                  className="flex-1 px-4 py-3 border border-gray-200 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
                 />
                 <button
                   onClick={handleManualSearch}
                   disabled={geocoding || !manualQuery.trim()}
-                  className="px-5 py-3 bg-amber-500 text-gray-900 rounded-xl font-semibold text-sm hover:bg-amber-600 transition disabled:opacity-50 cursor-pointer"
+                  className="px-5 py-3 bg-lime-300 text-gray-900 rounded-2xl font-semibold text-sm hover:bg-lime-400 transition disabled:opacity-50 cursor-pointer"
                 >
                   {geocoding ? '…' : 'Go'}
                 </button>
@@ -312,7 +312,7 @@ export const Stores: React.FC = () => {
           )}
 
           {denied && (
-            <div className="mt-4 bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-800">
+            <div className="mt-4 bg-amber-50 border border-amber-200 rounded-2xl p-4 text-sm text-amber-800">
               <p className="font-semibold mb-1">To re-enable GPS in Chrome:</p>
               <p>Click the lock icon in the address bar → Site settings → Location → Allow, then reload the page.</p>
             </div>
@@ -338,7 +338,7 @@ export const Stores: React.FC = () => {
             {/* Location pill — click to change */}
             <button
               onClick={() => setShowManual(v => !v)}
-              className="flex items-center gap-2 text-sm text-emerald-600 bg-emerald-50 px-3 py-1.5 rounded-full border border-emerald-100 flex-shrink-0 hover:bg-emerald-100 transition cursor-pointer"
+              className="flex items-center gap-2 text-sm text-[#176f50] bg-emerald-50 px-3 py-1.5 rounded-full border border-emerald-100 flex-shrink-0 hover:bg-emerald-100 transition cursor-pointer"
               title="Change location"
             >
               <svg className="w-3.5 h-3.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
@@ -365,7 +365,7 @@ export const Stores: React.FC = () => {
                 className="flex-1 h-2 rounded-full appearance-none cursor-pointer accent-emerald-600"
                 aria-label="Search radius in kilometres"
               />
-              <span className="text-sm font-semibold text-emerald-700 w-12 text-right whitespace-nowrap">
+              <span className="text-sm font-semibold text-[#135d46] w-12 text-right whitespace-nowrap">
                 {pendingRadius} km
               </span>
             </div>
@@ -393,8 +393,8 @@ export const Stores: React.FC = () => {
                 onClick={() => setSelectedChain(c.value)}
                 className={`flex-shrink-0 px-3 py-1 text-xs font-medium rounded-full border transition cursor-pointer ${
                   selectedChain === c.value
-                    ? 'bg-emerald-600 text-white border-emerald-600'
-                    : 'bg-white text-gray-600 border-gray-200 hover:border-emerald-300 hover:text-emerald-600'
+                    ? 'bg-[#176f50] text-white border-[#176f50]'
+                    : 'bg-white text-gray-600 border-gray-200 hover:border-[#a8cdb1] hover:text-[#176f50]'
                 }`}
               >
                 {c.label}
@@ -412,7 +412,7 @@ export const Stores: React.FC = () => {
             <div className="mt-3 flex gap-2 items-start flex-wrap">
               <button
                 onClick={() => { setShowManual(false); handleGpsRequest() }}
-                className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg text-sm font-medium hover:bg-emerald-100 transition cursor-pointer"
+                className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-50 text-[#135d46] border border-emerald-200 rounded-lg text-sm font-medium hover:bg-emerald-100 transition cursor-pointer"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/>
@@ -432,7 +432,7 @@ export const Stores: React.FC = () => {
               <button
                 onClick={handleManualSearch}
                 disabled={geocoding || !manualQuery.trim()}
-                className="px-4 py-2 bg-amber-500 text-gray-900 rounded-lg text-sm font-semibold hover:bg-amber-600 transition disabled:opacity-50 cursor-pointer whitespace-nowrap"
+                className="px-4 py-2 bg-lime-300 text-gray-900 rounded-lg text-sm font-semibold hover:bg-lime-400 transition disabled:opacity-50 cursor-pointer whitespace-nowrap"
               >
                 {geocoding ? 'Searching…' : 'Search'}
               </button>
@@ -513,7 +513,7 @@ function StoreCard({ store }: { store: NearbyStore }) {
   return (
     <div
       id={`store-${store.id}`}
-      className={`bg-white rounded-xl border ${meta.border} p-4 hover:shadow-md transition-all flex flex-col`}
+      className={`bg-white rounded-2xl border ${meta.border} p-4 hover:shadow-md transition-all flex flex-col`}
     >
       {/* Header row */}
       <div className="flex items-start justify-between gap-3 mb-3">
@@ -526,7 +526,7 @@ function StoreCard({ store }: { store: NearbyStore }) {
             <span className={`text-xs font-medium ${meta.color}`}>{meta.label}</span>
           </div>
         </div>
-        <div className="flex-shrink-0 flex items-center gap-1 bg-emerald-50 text-emerald-700 text-xs font-semibold px-2.5 py-1 rounded-full border border-emerald-100">
+        <div className="flex-shrink-0 flex items-center gap-1 bg-emerald-50 text-[#135d46] text-xs font-semibold px-2.5 py-1 rounded-full border border-emerald-100">
           <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
             <path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd"/>
           </svg>
@@ -576,7 +576,7 @@ function StoreCard({ store }: { store: NearbyStore }) {
 
 function DistanceBar({ km }: { km: number }) {
   const pct = Math.min((km / 20) * 100, 100)
-  const color = km <= 2 ? 'bg-emerald-500' : km <= 7 ? 'bg-emerald-500' : 'bg-amber-500'
+  const color = km <= 2 ? 'bg-emerald-500' : km <= 7 ? 'bg-emerald-500' : 'bg-lime-300'
   return (
     <div className="mt-2">
       <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
@@ -590,7 +590,7 @@ function StoresSkeleton() {
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
       {Array.from({ length: 9 }).map((_, i) => (
-        <div key={i} className="bg-white rounded-xl border border-gray-100 p-4 animate-pulse">
+        <div key={i} className="bg-white rounded-2xl border border-gray-100 p-4 animate-pulse">
           <div className="flex items-center gap-3 mb-3">
             <div className="w-9 h-9 bg-gray-100 rounded-lg" />
             <div className="flex-1">
@@ -632,7 +632,7 @@ function EmptyState({
         {radius < 20 && (
           <button
             onClick={onExpandRadius}
-            className="px-5 py-2 bg-amber-500 text-gray-900 rounded-lg text-sm font-semibold hover:bg-amber-600 transition cursor-pointer"
+            className="px-5 py-2 bg-lime-300 text-gray-900 rounded-lg text-sm font-semibold hover:bg-lime-400 transition cursor-pointer"
           >
             Expand to 20 km
           </button>
@@ -640,7 +640,7 @@ function EmptyState({
         {chain && (
           <button
             onClick={onClearChain}
-            className="px-5 py-2 border border-gray-200 text-gray-600 rounded-lg text-sm font-medium hover:border-emerald-300 hover:text-emerald-600 transition cursor-pointer"
+            className="px-5 py-2 border border-gray-200 text-gray-600 rounded-lg text-sm font-medium hover:border-[#a8cdb1] hover:text-[#176f50] transition cursor-pointer"
           >
             Show all chains
           </button>
