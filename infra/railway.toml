@@ -1,0 +1,29 @@
+# railway.toml
+
+[build]
+builder = "dockerfile"
+dockerfilePath = "backend/Dockerfile"
+
+[deploy]
+startCommand = "cd backend && alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+healthcheckPath = "/health"
+healthcheckTimeout = 100
+
+[env]
+DATABASE_URL = "${{ DATABASE_URL }}"
+REDIS_URL = "${{ REDIS_URL }}"
+FIREBASE_PROJECT_ID = "${{ FIREBASE_PROJECT_ID }}"
+FIREBASE_SERVICE_ACCOUNT_JSON = "${{ FIREBASE_SERVICE_ACCOUNT_JSON }}"
+ANTHROPIC_API_KEY = "${{ ANTHROPIC_API_KEY }}"
+ENVIRONMENT = "production"
+LOG_LEVEL = "INFO"
+SENTRY_DSN = "${{ SENTRY_DSN }}"
+
+[services.postgres]
+image = "postgres:16"
+envPrefix = "PG_"
+plan = "pro"
+
+[services.redis]
+image = "redis:7"
+plan = "pro"
