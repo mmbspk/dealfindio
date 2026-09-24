@@ -8,6 +8,7 @@ import {
   FlatList,
   StyleSheet,
   Text,
+  Image,
   TouchableOpacity,
   View,
 } from 'react-native'
@@ -17,6 +18,7 @@ import apiClient from '@/api/client'
 interface Deal {
   id: string
   product_id: string
+  image_url?: string | null
   product_name: string
   brand: string | null
   category: string | null
@@ -84,6 +86,9 @@ export default function DealsScreen() {
 
     return (
       <View style={styles.card}>
+        <View style={styles.cardMain}>
+          {item.image_url ? <Image source={{ uri: item.image_url }} style={styles.dealImage} resizeMode="contain" /> : null}
+          <View style={styles.cardCopy}>
         <Text style={styles.name}>{item.product_name}</Text>
         {item.brand ? <Text style={styles.brand}>{item.brand}</Text> : null}
         <Text style={styles.store}>{storeLine}{distLine}</Text>
@@ -95,6 +100,7 @@ export default function DealsScreen() {
           {pctOff ? <Text style={styles.badge}>{pctOff}% off</Text> : null}
           {item.is_verified ? <Text style={styles.verifiedBadge}>Verified</Text> : null}
         </View>
+          </View>
       </View>
     )
   }
@@ -129,6 +135,9 @@ export default function DealsScreen() {
 }
 
 const styles = StyleSheet.create({
+  cardMain: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+  cardCopy: { flex: 1 },
+  dealImage: { width: 76, height: 82, borderRadius: 12, backgroundColor: '#f5f7f2' },
   container: { flex: 1, backgroundColor: '#f5f7f2' },
   spinner: { flex: 1, backgroundColor: '#f5f7f2' },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
