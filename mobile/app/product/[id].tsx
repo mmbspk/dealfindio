@@ -169,9 +169,10 @@ export default function ProductDetailScreen() {
         <View style={styles.storesSection}>
           <Text style={styles.sectionTitle}>Store Prices</Text>
           {stores.map((s) => (
-            <View key={s.store_id} style={styles.storeRow}>
+            <View key={s.store_id} style={[styles.storeRow, s.price_aud === lowestPrice && styles.bestStoreRow]}>
               <View style={styles.storeInfo}>
                 <Text style={styles.storeName}>{s.store_name}</Text>
+                {s.price_aud === lowestPrice && <Text style={styles.bestStoreLabel}>BEST PRICE</Text>}
                 <Text style={styles.storeLocation}>
                   {[s.chain, s.suburb, s.state].filter(Boolean).join(' · ')}
                 </Text>
@@ -196,6 +197,8 @@ export default function ProductDetailScreen() {
 }
 
 const styles = StyleSheet.create({
+  bestStoreRow: { borderColor: '#8cbf9f', backgroundColor: '#f0f8ec' },
+  bestStoreLabel: { color: '#176f50', fontSize: 11, fontWeight: '800', marginTop: 4, letterSpacing: 1 },
   container: { flex: 1, backgroundColor: '#f5f7f2' },
   content: { paddingBottom: 40 },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 },
