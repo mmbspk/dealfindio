@@ -50,7 +50,7 @@ export default function ScanScreen() {
   }
 
   if (!permission) {
-    return <ActivityIndicator size="large" color="#4f46e5" style={styles.center} />
+    return <ActivityIndicator size="large" color="#164b40" style={styles.center} />
   }
 
   if (!permission.granted) {
@@ -105,7 +105,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     padding: 24,
-    backgroundColor: '#f9fafb',
+    backgroundColor: '#f5f7f2',
   },
   overlay: {
     ...StyleSheet.absoluteFillObject,
@@ -122,12 +122,12 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
   },
   hint: { color: '#fff', fontSize: 16, fontWeight: '500' },
-  info: { fontSize: 16, color: '#111827', textAlign: 'center', marginBottom: 16 },
+  info: { fontSize: 16, color: '#122923', textAlign: 'center', marginBottom: 16 },
   btn: {
-    backgroundColor: '#4f46e5',
+    backgroundColor: '#164b40',
     paddingHorizontal: 20,
     paddingVertical: 12,
-    borderRadius: 8,
+    borderRadius: 12,
   },
   btnText: { color: '#fff', fontWeight: '600', fontSize: 16 },
 })
