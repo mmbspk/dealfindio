@@ -1,0 +1,131 @@
+version: '3.9'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: dealfindio_postgres
+    environment:
+      POSTGRES_USER: dealfindio
+      POSTGRES_PASSWORD: dealfindio_dev
+      POSTGRES_DB: dealfindio_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dealfindio"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres_init:
+    image: postgres:16-alpine
+    container_name: dealfindio_postgres_init
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: dealfindio_dev
+    command: |
+      psql -h postgres -U dealfindio -d dealfindio_dev -c "CREATE EXTENSION IF NOT EXISTS postgis; CREATE EXTENSION IF NOT EXISTS pg_trgm; CREATE EXTENSION IF NOT EXISTS uuid-ossp;"
+    volumes:
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+
+  redis:
+    image: redis:7-alpine
+    container_name: dealfindio_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dealfindio_api
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://dealfindio:dealfindio_dev@postgres:5432/dealfindio_dev
+      REDIS_URL: redis://redis:6379/0
+      ENVIRONMENT: development
+      LOG_LEVEL: INFO
+      # Add your Firebase / Anthropic keys here:
+      # FIREBASE_PROJECT_ID: your-project
+      # ANTHROPIC_API_KEY: sk-ant-...
+    ports:
+      - "8010:8010"
+    volumes:
+      - .:/app
+    command: >
+      sh -c "
+      alembic upgrade head &&
+      uvicorn app.main:app --host 0.0.0.0 --port 8010 --reload
+      "
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8010/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  celery_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dealfindio_celery_worker
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://dealfindio:dealfindio_dev@postgres:5432/dealfindio_dev
+      REDIS_URL: redis://redis:6379/0
+      ENVIRONMENT: development
+      LOG_LEVEL: INFO
+    volumes:
+      - .:/app
+    command: celery -A app.workers.celery_app worker --loglevel=info
+    healthcheck:
+      test: ["CMD", "celery", "-A", "app.workers.celery_app", "inspect", "active"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  celery_beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dealfindio_celery_beat
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://dealfindio:dealfindio_dev@postgres:5432/dealfindio_dev
+      REDIS_URL: redis://redis:6379/0
+      ENVIRONMENT: development
+      LOG_LEVEL: INFO
+    volumes:
+      - .:/app
+      - celerybeat_data:/app/celerybeat-schedule
+    command: celery -A app.workers.celery_app beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+
+volumes:
+  postgres_data:
+  redis_data:
+  celerybeat_data:

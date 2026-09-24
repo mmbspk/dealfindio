@@ -1,0 +1,16 @@
+FROM node:18-alpine
+
+WORKDIR /app
+
+# Install dependencies
+COPY package*.json ./
+RUN npm install --legacy-peer-deps
+
+# Copy source
+COPY . .
+
+# Expose Vite dev server port
+EXPOSE 5173
+
+# Run dev server (binds to 0.0.0.0 so it's accessible from host)
+CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
