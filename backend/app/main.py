@@ -5,12 +5,10 @@ Creates and configures the FastAPI application with middleware stack,
 error handling, dependency injection, and startup/shutdown lifespan.
 """
 
-import json
 import logging
 import logging.config
 import sys
 from contextlib import asynccontextmanager
-from typing import Any, Optional
 
 import sentry_sdk
 from fastapi import FastAPI, HTTPException, Request, status

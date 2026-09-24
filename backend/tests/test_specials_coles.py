@@ -5,19 +5,19 @@ Tests cover JSON response parsing, pagination logic, image URL helper,
 and bot-challenge detection — without any real HTTP calls.
 """
 
-import pytest
 from datetime import date
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from scrapers.specials_coles import (
     ColesSpecialsScraper,
-    _extract_results,
-    _total_results,
-    _parse_item,
     _absolute_image_url,
+    _extract_results,
+    _parse_item,
     _to_cents,
+    _total_results,
 )
-
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 

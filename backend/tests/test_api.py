@@ -9,9 +9,9 @@ Authenticated flows (watchlist CRUD, authed price-report submit, notifications,
 receipt upload) live in test_authed_api.py.
 """
 
-import pytest
-from uuid import UUID, uuid4
+from uuid import uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.models import Product, Store
@@ -84,8 +84,9 @@ class TestProductSearchEndpoints:
         self, test_client: TestClient, test_db_session, sample_products: list[Product]
     ):
         """On-sale products should appear before non-sale products for the same query."""
-        from app.models import PriceReport, Store
         from datetime import datetime, timezone
+
+        from app.models import PriceReport, Store
 
         # Find any store to attach the price report to
         store = test_db_session.execute(
@@ -137,6 +138,7 @@ class TestSearchService:
 
     def test_rrf_fusion_deduplicates_and_sums(self):
         from unittest.mock import MagicMock
+
         from app.services.search import _fuse_rrf
 
         p1, p2, p3 = MagicMock(), MagicMock(), MagicMock()
@@ -195,7 +197,7 @@ class TestSearchService:
         assert resp.status_code == 422
 
     def test_sale_bonus_function(self):
-        from app.services.search import _sale_bonus, _SALE_BONUS_MAX
+        from app.services.search import _SALE_BONUS_MAX, _sale_bonus
         assert _sale_bonus(None) == 0.0
         assert _sale_bonus(0.0) == 0.0
         assert abs(_sale_bonus(100.0) - _SALE_BONUS_MAX) < 1e-9
@@ -203,7 +205,7 @@ class TestSearchService:
         assert _sale_bonus(200.0) == _SALE_BONUS_MAX  # capped at 100%
 
     def test_geo_bonus_decays_with_distance(self):
-        from app.services.search import _geo_bonus, _GEO_BONUS_MAX
+        from app.services.search import _GEO_BONUS_MAX, _geo_bonus
         assert abs(_geo_bonus(0.0) - _GEO_BONUS_MAX) < 1e-9
         assert _geo_bonus(5.0) == _GEO_BONUS_MAX * 0.5   # half-life
         assert _geo_bonus(1000.0) < 0.0001                # negligible at far distance
@@ -244,7 +246,7 @@ class TestSearchService:
         assert _parse_negations(words) == []
 
     def test_negation_multiplier_penalises_brand_mismatch(self):
-        from app.services.search import _negation_score_multiplier, _NEGATION_PENALTY
+        from app.services.search import _NEGATION_PENALTY, _negation_score_multiplier
         # "Dairy Milk Freddo" contains "dairy" but NOT "free" → penalty
         mult = _negation_score_multiplier("Dairy Milk Freddo 200g", ["dairy"])
         assert mult == _NEGATION_PENALTY
@@ -270,6 +272,7 @@ class TestSearchService:
 
     def test_rrf_fusion_intent_flag(self):
         from unittest.mock import MagicMock
+
         from app.services.search import _fuse_rrf
 
         p1, p2 = MagicMock(), MagicMock()

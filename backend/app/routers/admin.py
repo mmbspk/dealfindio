@@ -5,13 +5,14 @@ All endpoints require the authenticated user to have is_admin=True.
 """
 
 import json
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Iterator, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import func, select as sa_select, text
+from sqlalchemy import func, text
+from sqlalchemy import select as sa_select
 from sqlalchemy.orm import Session
 
 from app.deps import get_db, get_redis, require_admin, require_admin_sse
@@ -632,8 +633,8 @@ def get_catalog_product_counts(
     _admin=Depends(require_admin),
 ) -> dict[str, int]:
     """Return total product count per chain (keyed by chain name, not external_source)."""
-    from sqlalchemy import func, text as sa_text
-    from app.models import Product
+    from sqlalchemy import text as sa_text
+
 
     rows = db.execute(
         sa_text(
@@ -701,7 +702,6 @@ def get_catalog_coverage(
         ORDER BY total DESC
     """)).fetchall()
 
-    from app.models import CatalogCrawlRun as CCR
 
     # Latest completed run per chain for category counts
     cat_rows = db.execute(text("""
@@ -822,8 +822,10 @@ def set_config(
     """Create or update a config value. Secrets are Fernet-encrypted before storage."""
     from app.services.config_store import (
         KNOWN_KEYS,
-        set_config as _set,
         validate_value,
+    )
+    from app.services.config_store import (
+        set_config as _set,
     )
 
     valid_keys = {k["key"] for k in KNOWN_KEYS}
@@ -1015,8 +1017,9 @@ def list_dedup_candidates(
     _admin=Depends(require_admin),
 ) -> CandidatePage:
     """Return paginated match candidates with rich product detail."""
-    from app.models.product_match import ProductMatchCandidate
     from sqlalchemy import select as sa_select
+
+    from app.models.product_match import ProductMatchCandidate
 
     q = (
         sa_select(ProductMatchCandidate)
@@ -1072,9 +1075,11 @@ def decide_candidate(
     admin=Depends(require_admin),
 ) -> MatchCandidateResponse:
     """Approve, reject, or skip a match candidate."""
-    from app.models.product_match import ProductMatchCandidate
-    from sqlalchemy import select as sa_select
     import uuid as _uuid
+
+    from sqlalchemy import select as sa_select
+
+    from app.models.product_match import ProductMatchCandidate
 
     cid = _uuid.UUID(candidate_id)
     row = db.execute(
@@ -1226,9 +1231,11 @@ def propose_manual_match(
     admin=Depends(require_admin),
 ) -> MatchCandidateResponse:
     """Manually propose two products as a match for review."""
-    from app.models.product_match import ProductMatchCandidate
-    from sqlalchemy import select as sa_select
     import uuid
+
+    from sqlalchemy import select as sa_select
+
+    from app.models.product_match import ProductMatchCandidate
 
     a_id = uuid.UUID(body.product_a_id)
     b_id = uuid.UUID(body.product_b_id)
@@ -1331,8 +1338,9 @@ def _run_ai_dedup_stream(
     # immediately without a backend restart.
     try:
         from anthropic import Anthropic
-        from app.services.config_store import get_runtime_value
+
         from app.config import get_settings as _get_settings
+        from app.services.config_store import get_runtime_value
 
         _settings = _get_settings()
         api_key = get_runtime_value("ANTHROPIC_API_KEY", db) or _settings.ANTHROPIC_API_KEY

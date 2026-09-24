@@ -21,9 +21,9 @@ os.environ.setdefault("DATABASE_URL", os.environ.get("DATABASE_URL", ""))
 os.environ.setdefault("REDIS_URL", "redis://localhost/0")
 os.environ.setdefault("SECRET_KEY", "backfill-script")
 
-from sqlalchemy import create_engine, select, text
-from sqlalchemy.orm import Session
 from rapidfuzz.process import extractOne
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.models import Product

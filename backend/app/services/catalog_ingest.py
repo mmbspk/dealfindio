@@ -72,8 +72,9 @@ def _propose_candidate(
     session: Session, product_a: "Product", product_b: "Product", score: float
 ) -> None:
     """Write a pending match candidate if one doesn't already exist for this pair."""
-    from app.models.product_match import ProductMatchCandidate
     from sqlalchemy import select as sa_select
+
+    from app.models.product_match import ProductMatchCandidate
 
     a_id, b_id = sorted([product_a.id, product_b.id])
     existing = session.execute(

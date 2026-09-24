@@ -25,7 +25,7 @@ if not os.environ.get("TEST_DATABASE_URL"):
         allow_module_level=True,
     )
 
-from app.models import Product, Store, PriceReport  # noqa: E402
+from app.models import PriceReport, Product, Store  # noqa: E402
 
 
 @pytest.fixture

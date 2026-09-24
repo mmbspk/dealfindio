@@ -43,19 +43,29 @@ from tenacity import (
     wait_exponential,
 )
 
+from app.services.category_normaliser import normalise_category as _normalise_category
 from scrapers.base import ScraperError
+from scrapers.catalog_base import (
+    HTML_HEADERS as _HTML_HEADERS,
+)
+from scrapers.catalog_base import (
+    JSON_HEADERS as _JSON_HEADERS_BASE,
+)
 from scrapers.catalog_base import (
     AuthExpiredError,
     CatalogProduct,
     CatalogScraper,
     CategoryNode,
-    HTML_HEADERS as _HTML_HEADERS,
-    JSON_HEADERS as _JSON_HEADERS_BASE,
-    parse_retry_after as _retry_after,
-    to_cents as _to_cents,
+)
+from scrapers.catalog_base import (
     get_scraper_proxy as _get_proxy,
 )
-from app.services.category_normaliser import normalise_category as _normalise_category
+from scrapers.catalog_base import (
+    parse_retry_after as _retry_after,
+)
+from scrapers.catalog_base import (
+    to_cents as _to_cents,
+)
 
 # Coles JSON requests must carry a Referer; override the shared base.
 _JSON_HEADERS = {**_JSON_HEADERS_BASE, "Accept": "application/json", "Referer": "https://www.coles.com.au/browse"}
@@ -335,7 +345,7 @@ class ColesCatalogScraper(CatalogScraper):
                     raise AuthExpiredError(
                         f"Coles on-special non-JSON body ({len(resp.content)}b) — bot block"
                     )
-            except (httpx.HTTPError,) as exc:
+            except httpx.HTTPError as exc:
                 raise ScraperError(f"Coles on-special fetch failed: {exc}") from exc
 
             results = _extract_results(data)
@@ -423,7 +433,7 @@ class ColesCatalogScraper(CatalogScraper):
                 raise AuthExpiredError(
                     f"Coles returned non-JSON body ({len(resp.content)}b) — likely bot-protection challenge"
                 )
-        except (httpx.HTTPError,) as exc:
+        except httpx.HTTPError as exc:
             raise ScraperError(f"Coles page parse failed: {exc}") from exc
 
 

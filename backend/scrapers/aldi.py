@@ -20,7 +20,7 @@ import redis
 from bs4 import BeautifulSoup
 from sqlalchemy.orm import Session
 
-from .base import Scraper, ScrapedProduct, ScraperError
+from .base import ScrapedProduct, Scraper, ScraperError
 
 logger = logging.getLogger(__name__)
 
@@ -262,7 +262,7 @@ class ALDIScraper(Scraper):
             try:
                 import pytesseract
                 from pdf2image import convert_from_bytes
-                from PIL import Image
+                from PIL import Image  # noqa: F401
 
                 self.logger.debug("Converting PDF to images for OCR")
                 images = convert_from_bytes(flyer_data)

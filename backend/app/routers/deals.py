@@ -9,7 +9,6 @@ Both accept optional lat/lon/radius_km to restrict to nearby stores.
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
-from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import and_, desc, func, select

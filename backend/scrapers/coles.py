@@ -14,12 +14,13 @@ from datetime import date, timedelta
 from typing import Optional
 
 import httpx
-from bs4 import BeautifulSoup
 import redis
+from bs4 import BeautifulSoup
 from sqlalchemy.orm import Session
 
-from .base import Scraper, ScrapedProduct, ScraperError
 from scrapers.catalog_base import get_scraper_proxy as _get_proxy
+
+from .base import ScrapedProduct, Scraper, ScraperError
 
 logger = logging.getLogger(__name__)
 

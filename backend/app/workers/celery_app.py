@@ -10,11 +10,10 @@ Configures:
 """
 
 import logging
-import os
-from kombu import Exchange, Queue
 
 from celery import Celery
 from celery.signals import task_failure, task_retry, task_success, worker_process_init
+from kombu import Exchange, Queue
 
 from app.config import get_settings
 
@@ -258,14 +257,14 @@ def load_tasks():
     """Import task modules to register them with Celery."""
     try:
         # Import all task modules to register them
-        from app.workers import (
-            scraper_tasks,
+        from app.workers import (  # noqa: F401
+            catalog_tasks,
+            embedding_tasks,
+            image_tasks,
             ml_tasks,
             notification_tasks,
             report_validator,
-            image_tasks,
-            catalog_tasks,
-            embedding_tasks,
+            scraper_tasks,
         )
         logger.info("Successfully loaded all task modules")
     except ImportError as e:

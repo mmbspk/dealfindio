@@ -48,19 +48,29 @@ from tenacity import (
     wait_exponential,
 )
 
+from app.services.category_normaliser import normalise_category as _normalise_category
 from scrapers.base import ScraperError
+from scrapers.catalog_base import (
+    HTML_HEADERS as _HTML_HEADERS,
+)
+from scrapers.catalog_base import (
+    JSON_HEADERS as _JSON_HEADERS_BASE,
+)
 from scrapers.catalog_base import (
     AuthExpiredError,
     CatalogProduct,
     CatalogScraper,
     CategoryNode,
-    HTML_HEADERS as _HTML_HEADERS,
-    JSON_HEADERS as _JSON_HEADERS_BASE,
-    parse_retry_after as _parse_retry_after,
-    to_cents as _to_cents,
+)
+from scrapers.catalog_base import (
     get_scraper_proxy as _get_proxy,
 )
-from app.services.category_normaliser import normalise_category as _normalise_category
+from scrapers.catalog_base import (
+    parse_retry_after as _parse_retry_after,
+)
+from scrapers.catalog_base import (
+    to_cents as _to_cents,
+)
 
 # ── Headers ──────────────────────────────────────────────────────────────────
 # Woolworths JSON calls need a same-origin Referer and Origin.

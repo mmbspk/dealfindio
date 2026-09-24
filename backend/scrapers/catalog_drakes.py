@@ -40,7 +40,6 @@ Product fields extracted from the card HTML:
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
 from datetime import date
@@ -50,15 +49,15 @@ import httpx
 from bs4 import BeautifulSoup
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
+from app.services.category_normaliser import normalise_category as _normalise_category
 from scrapers.base import ScraperError
 from scrapers.catalog_base import (
+    SCRAPER_UA,
     CatalogProduct,
     CatalogScraper,
     CategoryNode,
     HumanLikeRateLimiter,
-    SCRAPER_UA,
 )
-from app.services.category_normaliser import normalise_category as _normalise_category
 
 logger = logging.getLogger(__name__)
 

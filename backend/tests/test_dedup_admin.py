@@ -10,14 +10,13 @@ Covers:
   dropped product's price_reports onto the kept product.
 """
 
+import os
 from datetime import datetime, timezone
 from uuid import uuid4
 
-import os
-
 import pytest
 
-from app.deps import get_current_user, get_db, get_redis, require_admin
+from app.deps import get_current_user, get_db, require_admin
 from app.main import app
 from app.models import PriceReport, Product, Store
 from app.models.product_match import ProductMatchCandidate
@@ -123,6 +122,7 @@ class TestDecideCandidateApprove:
     @pytest.fixture
     def admin_client(self, test_db_session):
         from fastapi.testclient import TestClient
+
         from app.models.user import User
 
         def override_get_db():
@@ -163,6 +163,7 @@ class TestDecideCandidateApprove:
     @pytest.mark.integration
     def test_approve_returns_200_and_merges(self, admin_client, test_db_session):
         import uuid as _uuid
+
         from sqlalchemy import select
 
         keep, drop, candidate, pr = self._seed_pair(test_db_session)

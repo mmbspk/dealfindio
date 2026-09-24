@@ -14,8 +14,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-import sys
 import os
+import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 os.environ.setdefault("DATABASE_URL", os.environ.get("DATABASE_URL", ""))
@@ -25,8 +25,6 @@ os.environ.setdefault("SECRET_KEY", "backfill-script")
 import httpx
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
-
-from app.config import get_settings
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)

@@ -13,7 +13,6 @@ Usage:
 import asyncio
 import json
 import logging
-from datetime import datetime
 
 import httpx
 from sqlalchemy import func, select

@@ -21,11 +21,11 @@ from uuid import uuid4
 from celery import group
 
 from app.config import get_settings
-from app.models import FlyScrapeRun, PriceReport, Product, Store
-from scrapers import ALDIScraper, ScraperError
+from app.models import FlyScrapeRun
+from app.services.product_dedup import DuplicateError, ingest_scraped_price
 from app.workers.celery_app import celery_app
 from app.workers.tasks_base import CallbackTask
-from app.services.product_dedup import ingest_scraped_price, DuplicateError
+from scrapers import ALDIScraper, ScraperError
 
 PROGRESS_TTL = 3600  # seconds — key lives 1 hour after task finishes
 
@@ -409,9 +409,11 @@ def expire_stale_specials(self, chains: list[str] | None = None) -> dict:
         dict: { chain: rows_expired } for each chain processed.
     """
     from datetime import datetime, timezone
+
     from sqlalchemy import update
-    from app.models import PriceReport
+
     from app.deps import _SessionLocal
+    from app.models import PriceReport
 
     if not _SessionLocal:
         raise RuntimeError("Database not initialized")

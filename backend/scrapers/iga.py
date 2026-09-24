@@ -15,7 +15,7 @@ import httpx
 import redis
 from sqlalchemy.orm import Session
 
-from .base import Scraper, ScrapedProduct, ScraperError
+from .base import ScrapedProduct, Scraper, ScraperError
 
 logger = logging.getLogger(__name__)
 

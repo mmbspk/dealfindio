@@ -9,7 +9,6 @@ Provides a reusable foundation for all Celery tasks with:
 """
 
 import logging
-from typing import Any
 
 from celery import Task
 

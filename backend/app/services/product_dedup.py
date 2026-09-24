@@ -13,18 +13,18 @@ reports aren't ingested multiple times within a catalogue cycle.
 """
 
 import logging
-from datetime import date, datetime, timezone, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 from uuid import UUID
 
 import httpx
-from redis import Redis
 from rapidfuzz.process import extractOne
-from sqlalchemy.ext.asyncio import AsyncSession
+from redis import Redis
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.product import Product
 from app.models.price_report import PriceReport
+from app.models.product import Product
 from app.models.store import Store
 
 logger = logging.getLogger(__name__)

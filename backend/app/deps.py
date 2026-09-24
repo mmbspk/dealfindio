@@ -5,19 +5,18 @@ Provides database connections, Redis connections, Firebase JWT verification,
 and user authentication with proper error handling.
 """
 
-import json
 import logging
 from typing import Generator, Optional
 
 import firebase_admin
 import httpx
 from fastapi import Depends, Header, HTTPException, status
-from firebase_admin import auth, credentials
+from firebase_admin import credentials
 from jose import JWTError, jwt
 from redis import Redis
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import get_settings
@@ -108,7 +107,8 @@ def init_database(database_url: str, pool_size: int, echo: bool):
         async_url = database_url.replace("postgresql://", "postgresql+asyncpg://", 1)
         if not database_url.startswith("sqlite"):
             try:
-                from sqlalchemy.ext.asyncio import create_async_engine as _cae, async_sessionmaker as _asm
+                from sqlalchemy.ext.asyncio import async_sessionmaker as _asm
+                from sqlalchemy.ext.asyncio import create_async_engine as _cae
                 _async_engine = _cae(
                     async_url,
                     pool_size=pool_size,

@@ -12,8 +12,7 @@ from sqlalchemy import and_, asc, desc, func, select
 from sqlalchemy.orm import Session
 
 from app.deps import get_db
-from app.models import Product, PriceReport, Store, PricePrediction
-from app.services.search import search_products_by_gtin, search_products_ranked
+from app.models import PricePrediction, PriceReport, Product, Store
 from app.schemas.prediction import PricePredictionResponse
 from app.schemas.product import (
     PriceByChainResponse,
@@ -22,8 +21,8 @@ from app.schemas.product import (
     ProductDetailResponse,
     ProductResponse,
 )
-from app.schemas.store import StoreResponse
 from app.services.geo import haversine_km
+from app.services.search import search_products_by_gtin, search_products_ranked
 
 logger = logging.getLogger(__name__)
 

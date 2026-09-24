@@ -33,25 +33,26 @@ Product fields used:
 
 from __future__ import annotations
 
-import re
 from datetime import date
 from typing import Any, Optional
 
 import httpx
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
+from app.services.category_normaliser import normalise_category as _normalise_category
 from scrapers.base import ScraperError
+from scrapers.catalog_base import (
+    HTML_HEADERS as _HTML_HEADERS_BASE,
+)
 from scrapers.catalog_base import (
     AuthExpiredError,
     CatalogProduct,
     CatalogScraper,
     CategoryNode,
-    HTML_HEADERS as _HTML_HEADERS_BASE,
-    SCRAPER_UA,
-    parse_retry_after as _parse_retry_after,
+)
+from scrapers.catalog_base import (
     to_cents as _to_cents,
 )
-from app.services.category_normaliser import normalise_category as _normalise_category
 
 _BOOTSTRAP_URL = "https://api.danmurphys.com.au/bootstrap/path"
 _PRODUCTS_URL = "https://api.danmurphys.com.au/apis/ui/ProductGroup/Products/{slug}"

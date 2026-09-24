@@ -7,7 +7,7 @@ Parallel to ``FlyScrapeRun`` but for the authenticated full-catalog scraper
 
 from datetime import datetime
 
-from sqlalchemy import Index, JSON, String
+from sqlalchemy import JSON, Index, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base

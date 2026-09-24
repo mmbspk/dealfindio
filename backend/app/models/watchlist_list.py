@@ -7,7 +7,7 @@ UserWatchlist items now belong to a WatchlistList via list_id.
 
 from uuid import UUID
 
-from sqlalchemy import ForeignKey, Index, String, UniqueConstraint
+from sqlalchemy import ForeignKey, Index, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base

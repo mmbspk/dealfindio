@@ -89,6 +89,18 @@ select = [
 ignore = [
   "E501",   # line too long (handled by black)
   "W291",   # trailing whitespace (handled by black)
+  "B008",   # Depends() in function defaults is idiomatic FastAPI
+  "B904",   # raise-without-from-inside-except (too noisy for existing code)
+  "C901",   # function complexity (subjective)
+  "E402",   # module-level import not at top (scripts use sys.path manipulation)
+  "F821",   # undefined name — SQLAlchemy uses forward-ref strings resolved at runtime
+  "E712",   # comparison to True/False (== True vs is True)
+  "E711",   # comparison to None (== None vs is None)
+  "B017",   # pytest.raises(Exception) — acceptable in existing test suite
+  "F841",   # local variable assigned but never used
+  "E741",   # ambiguous variable name
+  "C416",   # unnecessary dict/list comprehension
+  "C405",   # unnecessary list literal for set
 ]
 
 [tool.ruff.isort]

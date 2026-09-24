@@ -13,10 +13,7 @@ from __future__ import annotations
 
 import re
 import threading
-from functools import lru_cache
 from typing import TYPE_CHECKING
-
-import numpy as np
 
 if TYPE_CHECKING:
     from sentence_transformers import SentenceTransformer

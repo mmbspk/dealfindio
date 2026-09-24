@@ -134,10 +134,11 @@ def parse_element(el: dict, chain_key: str) -> dict | None:
 
 
 def seed():
-    from app.config import get_settings
-    from app.models import Store
     from sqlalchemy import create_engine, select
     from sqlalchemy.orm import Session
+
+    from app.config import get_settings
+    from app.models import Store
 
     settings = get_settings()
     engine = create_engine(settings.DATABASE_URL.replace("+asyncpg", ""))

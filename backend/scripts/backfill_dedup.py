@@ -17,8 +17,8 @@ Safe to re-run: already-merged rows are skipped because they no longer exist.
 from __future__ import annotations
 
 import argparse
-import sys
 import os
+import sys
 
 # Allow running from repo root or backend/
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -27,13 +27,12 @@ os.environ.setdefault("DATABASE_URL", os.environ.get("DATABASE_URL", ""))
 os.environ.setdefault("REDIS_URL", "redis://localhost/0")
 os.environ.setdefault("SECRET_KEY", "backfill-script")
 
+from rapidfuzz.process import extractOne
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
-from rapidfuzz.process import extractOne
 
 from app.config import get_settings
-from app.models import Product, PriceReport
-from app.models.watchlist import UserWatchlist
+from app.models import Product
 from app.services.product_dedup import FuzzyMatcher, brands_conflict
 
 _matcher = FuzzyMatcher()
@@ -117,7 +116,7 @@ def run_backfill(session: Session, source_chain: str, dry_run: bool) -> tuple[in
     # Candidates = everything NOT from this chain
     candidates = load_candidates(session, [source_chain])
     if not candidates:
-        print(f"  No candidate products to match against.")
+        print("  No candidate products to match against.")
         return len(source_products), 0
 
     # Filter candidates to those with meaningful names (≥15 normalized chars).

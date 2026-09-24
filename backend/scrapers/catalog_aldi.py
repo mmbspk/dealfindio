@@ -25,14 +25,14 @@ from typing import Any, Optional
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
 
+from app.services.category_normaliser import normalise_category as _normalise_category
 from scrapers.base import ScraperError
 from scrapers.catalog_base import (
+    SCRAPER_UA,
     CatalogProduct,
     CatalogScraper,
     CategoryNode,
-    SCRAPER_UA,
 )
-from app.services.category_normaliser import normalise_category as _normalise_category
 
 _GLUE_BASE = "https://asl.api.aldi.com.au/commerce"
 _CATEGORY_TREE_URL = f"{_GLUE_BASE}/v2/product-category-tree"

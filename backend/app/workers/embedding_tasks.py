@@ -25,7 +25,9 @@ logger = logging.getLogger(__name__)
 def embed_product(self, product_id: str) -> dict:
     """Encode a single product's name and persist the embedding."""
     from uuid import UUID
+
     from sqlalchemy import select
+
     from app.deps import _SessionLocal
     from app.models import Product
     from app.services.embeddings import embed_text
@@ -68,6 +70,7 @@ def backfill_product_embeddings(self, batch_size: int = 512) -> dict:
     Scheduled weekly via Celery Beat (or run manually after a large catalog import).
     """
     from sqlalchemy import select
+
     from app.deps import _SessionLocal
     from app.models import Product
     from app.services.embeddings import embed_batch
@@ -90,7 +93,7 @@ def backfill_product_embeddings(self, batch_size: int = 512) -> dict:
                 names = [p.name for p in products]
                 embeddings = embed_batch(names)
 
-                for product, vec in zip(products, embeddings):
+                for product, vec in zip(products, embeddings, strict=False):
                     product.name_embedding = vec
 
                 session.commit()

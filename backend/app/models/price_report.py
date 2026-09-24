@@ -6,10 +6,10 @@ Price reports can come from community users or automated scrapers.
 Includes sale information, confidence scores, and validity ranges.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import CheckConstraint, Column, DateTime, ForeignKey, Index, String, func
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base

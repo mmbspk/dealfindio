@@ -22,16 +22,15 @@ from redis import Redis
 from sqlalchemy import and_, desc, func, select
 from sqlalchemy.orm import Session
 
-from app.deps import get_db, get_redis, get_current_user, verify_firebase_token
-from app.models import PriceReport, Product, Store, UserProfile, User
-from app.services.geo import haversine_km
+from app.deps import get_current_user, get_db, get_redis, verify_firebase_token
+from app.models import PriceReport, Product, Store, User, UserProfile
 from app.schemas.price_report import (
     CommunityPriceReportRequest,
-    PriceReportResponse,
     FlaggedReportResponse,
     FlaggedReportsListResponse,
+    PriceReportResponse,
 )
-from app.schemas.user import UserProfileResponse, UserProfilePublicResponse
+from app.services.geo import haversine_km
 from app.workers.celery_app import celery_app
 
 logger = logging.getLogger(__name__)

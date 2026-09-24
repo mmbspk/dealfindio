@@ -9,13 +9,12 @@ Tests:
 - Error handling and edge cases
 """
 
-import pytest
-from sqlalchemy.orm import Session
-from unittest.mock import Mock, patch, MagicMock
 from datetime import date
 
-from app.models import Product, PriceReport, Store
-from app.schemas.product import ProductResponse
+import pytest
+from sqlalchemy.orm import Session
+
+from app.models import Product, Store
 from scrapers.base import ScrapedProduct
 from scrapers.coles import ColesScraper
 
@@ -309,8 +308,9 @@ class TestPriceReportIngestion:
     @pytest.mark.integration
     def test_price_report_missing_product(self, test_db_session: Session, sample_store: Store):
         """A report referencing a non-existent product fails the FK on flush."""
-        from app.models import PriceReport
         from uuid import uuid4
+
+        from app.models import PriceReport
 
         report = PriceReport(
             product_id=uuid4(),  # Non-existent product

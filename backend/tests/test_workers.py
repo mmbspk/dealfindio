@@ -342,9 +342,10 @@ class TestNotifyPredictionDrops:
     def test_sends_prediction_drop_notification(
         self, test_db_session, sample_product: Product
     ):
-        from datetime import datetime, timezone, timedelta
-        from app.models.watchlist import UserWatchlist
+        from datetime import datetime, timedelta, timezone
+
         from app.models.prediction import PricePrediction
+        from app.models.watchlist import UserWatchlist
 
         watcher = UserProfile(
             id=uuid4(), firebase_uid="predwatcher", email="pred@x.com",
@@ -392,10 +393,11 @@ class TestNotifyPredictionDrops:
     def test_dedup_skips_recent_prediction_notif(
         self, test_db_session, sample_product: Product
     ):
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime, timedelta, timezone
+
         from app.models import Notification
-        from app.models.watchlist import UserWatchlist
         from app.models.prediction import PricePrediction
+        from app.models.watchlist import UserWatchlist
 
         watcher = UserProfile(
             id=uuid4(), firebase_uid="preddedup", email="dedup@x.com",

@@ -46,7 +46,7 @@ from app.services.oft_image_enricher import (
     OFTRateLimiter,
     _parse_retry_after,
 )
-from app.services.product_dedup import brands_conflict, get_fuzzy_matcher
+from app.services.product_dedup import brands_conflict
 from app.services.receipt_parser import _strip_json_fences
 
 logger = logging.getLogger(__name__)

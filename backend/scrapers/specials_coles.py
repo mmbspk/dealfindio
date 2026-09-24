@@ -31,7 +31,7 @@ from tenacity import (
     wait_exponential,
 )
 
-from scrapers.base import Scraper, ScrapedProduct, ScraperError
+from scrapers.base import ScrapedProduct, Scraper, ScraperError
 
 _HOME_URL = "https://www.coles.com.au/"
 _IMAGE_CDN_BASE = "https://productimages.coles.com.au/productimages"

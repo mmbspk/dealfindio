@@ -15,7 +15,7 @@ import asyncio
 import logging
 from asyncio import CancelledError
 from datetime import datetime, timezone
-from typing import Optional, TypedDict
+from typing import TypedDict
 from uuid import uuid4
 
 from celery.exceptions import SoftTimeLimitExceeded
@@ -242,7 +242,7 @@ def run_catalog_crawl(self, chain: str, mode: str = "full") -> CatalogResult:
             products_updated=totals["updated"],
             errors=[str(exc)],
         )
-    except SoftTimeLimitExceeded as exc:
+    except SoftTimeLimitExceeded:
         logger.warning("Catalog crawl timed out chain=%s after %ds", chain, self.soft_time_limit)
         session.rollback()
         try:

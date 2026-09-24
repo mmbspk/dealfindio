@@ -17,7 +17,6 @@ from uuid import uuid4
 import pytest
 
 from app.models import Product, Store, UserProfile
-from app.models.watchlist import UserWatchlist
 
 
 class TestUsersMe:

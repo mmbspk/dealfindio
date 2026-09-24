@@ -19,7 +19,7 @@ from uuid import uuid4
 import fakeredis
 import pytest
 
-from app.models import CatalogCrawlRun, PriceReport, Product, Store
+from app.models import CatalogCrawlRun, PriceReport, Product
 from scrapers.catalog_base import (
     AuthExpiredError,
     CatalogProduct,
@@ -28,7 +28,6 @@ from scrapers.catalog_base import (
     CategoryNode,
     HumanLikeRateLimiter,
 )
-
 
 # ── HumanLikeRateLimiter ─────────────────────────────────────────────────────
 
@@ -65,8 +64,8 @@ class TestCatalogRegistry:
 
     @pytest.mark.unit
     def test_get_scraper_builds_coles(self):
-        from scrapers.catalog_registry import get_catalog_scraper
         from scrapers.catalog_coles import ColesCatalogScraper
+        from scrapers.catalog_registry import get_catalog_scraper
 
         s = get_catalog_scraper("coles")
         assert isinstance(s, ColesCatalogScraper)

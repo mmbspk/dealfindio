@@ -45,9 +45,9 @@ from app.config import get_settings
 from app.models import Product
 from app.models.product_match import ProductMatchCandidate
 from app.services.ai_dedup import (
+    AIVerdict,
     DedupDecision,
     ProductFacts,
-    AIVerdict,
     choose_survivor,
     judge_pair,
 )

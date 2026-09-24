@@ -401,6 +401,7 @@ class TestAdminAiFields:
     @pytest.fixture
     def admin_client(self, test_db_session):
         from fastapi.testclient import TestClient
+
         from app.deps import get_current_user, get_db, require_admin
         from app.main import app
         from app.models.user import User

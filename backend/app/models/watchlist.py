@@ -9,9 +9,9 @@ from uuid import UUID
 
 from sqlalchemy import (
     ARRAY,
+    JSON,
     ForeignKey,
     Index,
-    JSON,
     String,
     UniqueConstraint,
 )

@@ -14,7 +14,6 @@ The watchlist model's ``preferred_chains`` column uses a JSON variant on
 SQLite (see app/models/watchlist.py) so the schema builds here.
 """
 
-from datetime import date, datetime, timezone
 from uuid import uuid4
 
 import pytest
@@ -22,7 +21,6 @@ from sqlalchemy.orm import Session
 
 from app.models import PriceReport, Product, Store, UserProfile
 from app.models.watchlist import UserWatchlist
-
 
 # ---------------------------------------------------------------------------
 # Fixtures specific to the reporting flow

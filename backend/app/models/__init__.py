@@ -15,7 +15,7 @@ Models:
 """
 
 from .app_config import AppConfig
-from .base import Base, BaseModel, PlainBase
+from .base import Base, BaseModel
 from .catalog_run import CatalogCrawlRun
 from .notification import Notification
 from .prediction import PricePrediction

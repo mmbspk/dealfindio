@@ -16,7 +16,6 @@ Bugs fixed from original:
   - Email dispatch via Resend
 """
 
-import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import TypedDict
@@ -487,8 +486,6 @@ def send_weekly_digest(self) -> dict:
     emails_sent = 0
 
     try:
-        from sqlalchemy import and_
-        from app.models import WatchlistList
 
         session = get_db_session()
         now = datetime.now(timezone.utc)
@@ -513,8 +510,9 @@ def send_weekly_digest(self) -> dict:
                 product_ids = [w.product_id for w in watchlist_items]
 
                 # Get best active price report per product (is_on_sale)
-                from app.models import PriceReport, Product, Store
                 from sqlalchemy import desc
+
+                from app.models import PriceReport, Product, Store
 
                 deals = []
                 for pid in product_ids:

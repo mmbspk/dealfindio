@@ -12,14 +12,14 @@ Provides endpoints for:
 
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, status
 from sqlalchemy import desc, text
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.deps import get_db, get_redis, _redis_pool, _engine
+from app.deps import _engine, _redis_pool, get_db, get_redis
 from app.models import FlyScrapeRun
 
 logger = logging.getLogger(__name__)

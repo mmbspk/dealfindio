@@ -17,7 +17,6 @@ from uuid import UUID
 import pandas as pd
 from prophet import Prophet
 from sqlalchemy import select
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)

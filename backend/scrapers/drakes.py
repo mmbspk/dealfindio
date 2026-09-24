@@ -36,7 +36,7 @@ import httpx
 from bs4 import BeautifulSoup
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
-from scrapers.base import Scraper, ScrapedProduct, ScraperError
+from scrapers.base import ScrapedProduct, Scraper, ScraperError
 
 logger = logging.getLogger(__name__)
 

@@ -5,7 +5,6 @@ UserProfile stores Firebase authentication data and user preferences.
 User is a lightweight DTO for dependency injection (not mapped to DB).
 """
 
-from uuid import UUID
 
 from sqlalchemy import Index, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship

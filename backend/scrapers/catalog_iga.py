@@ -45,15 +45,17 @@ from typing import Any, Optional
 import httpx
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
+from app.services.category_normaliser import normalise_category as _normalise_category
 from scrapers.base import ScraperError
 from scrapers.catalog_base import (
+    SCRAPER_UA,
     CatalogProduct,
     CatalogScraper,
     CategoryNode,
-    SCRAPER_UA,
+)
+from scrapers.catalog_base import (
     to_cents as _to_cents,
 )
-from app.services.category_normaliser import normalise_category as _normalise_category
 
 _BASE = "https://www.igashop.com.au/api/storefront"
 _DEFAULT_STORE_ID = "32600"

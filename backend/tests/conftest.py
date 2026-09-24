@@ -13,27 +13,18 @@ import asyncio
 import json
 import logging
 from pathlib import Path
-from typing import AsyncGenerator, Generator
+from typing import Generator
 from uuid import uuid4
 
 import pytest
 from fakeredis import FakeStrictRedis
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event, pool
-from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import Settings, get_settings
-from app.deps import (
-    _engine,
-    _redis_pool,
-    _SessionLocal,
-    close_connections,
-    init_database,
-    init_redis,
-)
-from app.main import app, create_app
+from app.main import app
 from app.models import Base, Product, Store
-from fastapi.testclient import TestClient
 
 logger = logging.getLogger(__name__)
 

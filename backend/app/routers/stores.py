@@ -16,7 +16,6 @@ from sqlalchemy.orm import Session
 
 from app.deps import get_db
 from app.models import PriceReport, Product, Store
-from app.services.geo import haversine_km
 from app.schemas.store import (
     DealResponse,
     NearbyStoresResponse,
@@ -24,6 +23,7 @@ from app.schemas.store import (
     StoreDetailResponse,
     StoreResponse,
 )
+from app.services.geo import haversine_km
 
 logger = logging.getLogger(__name__)
 

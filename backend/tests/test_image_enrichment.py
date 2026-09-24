@@ -12,7 +12,7 @@ Covers:
 
 import asyncio
 from datetime import date
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import httpx
@@ -32,7 +32,6 @@ from app.services.oft_image_enricher import (
     OFTRateLimiter,
     _parse_retry_after,
 )
-
 
 # ── object_store ─────────────────────────────────────────────────────────────
 

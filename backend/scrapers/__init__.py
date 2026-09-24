@@ -17,13 +17,13 @@ Example usage:
         print(f"{product.product_name}: ${product.price_cents/100:.2f}")
 """
 
-from .base import Scraper, ScrapedProduct, ScraperError
-from .coles import ColesScraper          # kept for backwards-compat / tests
-from .specials_coles import ColesSpecialsScraper
 from .aldi import ALDIScraper
-from .iga import IGAScraper
-from .woolworths import WoolworthsScraper
+from .base import ScrapedProduct, Scraper, ScraperError
+from .coles import ColesScraper  # kept for backwards-compat / tests
 from .drakes import DrakesScraper
+from .iga import IGAScraper
+from .specials_coles import ColesSpecialsScraper
+from .woolworths import WoolworthsScraper
 
 __all__ = [
     "Scraper",

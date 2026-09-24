@@ -29,7 +29,6 @@ import logging
 import random
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import date
 from typing import Any, Optional
 
 import redis as redis_lib

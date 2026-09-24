@@ -21,9 +21,8 @@ Fallback chain:
 from __future__ import annotations
 
 import math
-import re
 
-from sqlalchemy import and_, case, func, literal, select, text
+from sqlalchemy import and_, case, func, literal, select
 from sqlalchemy.orm import Session
 
 from app.models import PriceReport, Product, Store
@@ -232,8 +231,9 @@ def _trigram_lane(
 def _vector_lane(session, q, filters, on_sale) -> list[tuple[Product, float]]:
     try:
         from pgvector.sqlalchemy import Vector
-        from app.services.embeddings import embed_text
         from sqlalchemy import cast
+
+        from app.services.embeddings import embed_text
 
         query_vec = embed_text(q)
         cosine_dist = Product.name_embedding.op("<=>")(cast(query_vec, Vector(384)))

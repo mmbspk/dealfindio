@@ -7,7 +7,6 @@ GET /api/v1/predictions/{product_id}
 
 import logging
 from datetime import datetime, timezone
-from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
