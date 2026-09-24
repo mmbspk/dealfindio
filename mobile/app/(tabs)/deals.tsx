@@ -9,10 +9,12 @@ import {
   StyleSheet,
   Text,
   Image,
+  Pressable,
   TouchableOpacity,
   View,
 } from 'react-native'
 import * as Location from 'expo-location'
+import { router } from 'expo-router'
 import apiClient from '@/api/client'
 
 interface Deal {
@@ -85,7 +87,7 @@ export default function DealsScreen() {
     const distLine = item.distance_km != null ? ` · ${item.distance_km.toFixed(1)} km away` : ''
 
     return (
-      <View style={styles.card}>
+      <Pressable style={styles.card} onPress={() => router.push(`/product/${item.product_id}`)} accessibilityRole="button" accessibilityLabel={`Compare prices for ${item.product_name}`}>
         <View style={styles.cardMain}>
           {item.image_url ? <Image source={{ uri: item.image_url }} style={styles.dealImage} resizeMode="contain" /> : null}
           <View style={styles.cardCopy}>
@@ -102,7 +104,7 @@ export default function DealsScreen() {
         </View>
           </View>
         </View>
-      </View>
+      </Pressable>
     )
   }
 
