@@ -31,7 +31,7 @@ export default function TabsLayout() {
       hitSlop={8}
       accessibilityLabel={unreadCount > 0 ? `${unreadCount} unread notifications` : 'Notifications'}
     >
-      <Text style={styles.bell}>♧</Text>
+      <Text style={styles.bell}>🔔</Text>
       {unreadCount > 0 && (
         <View style={styles.badge}><Text style={styles.badgeText}>{unreadCount > 99 ? '99+' : unreadCount}</Text></View>
       )}
