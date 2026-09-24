@@ -65,9 +65,9 @@ export const Header: React.FC = () => {
         {/* Desktop nav */}
         <nav className="hidden md:flex gap-5 items-center">
           <Link to="/" className={navClass('/')}>Explore</Link>
-          <Link to="/stores" className={navClass('/stores')}>Stores</Link>
           <Link to="/products" className={navClass('/products')}>Compare</Link>
           <Link to="/deals" className={navClass('/deals')}>Deals</Link>
+          <Link to="/stores" className={navClass('/stores')}>Stores</Link>
           <Link to="/watchlist" className={navClass('/watchlist')}>Saved</Link>
           {isAdmin && (
             <Link to="/admin" className={navClass('/admin')}>Admin</Link>
