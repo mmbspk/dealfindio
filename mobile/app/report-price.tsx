@@ -132,27 +132,27 @@ export default function ReportPriceScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f9fafb', padding: 20 },
-  product: { fontSize: 20, fontWeight: '700', color: '#111827', marginBottom: 16 },
-  label: { fontSize: 14, color: '#6b7280', marginTop: 12, marginBottom: 4 },
+  container: { flex: 1, backgroundColor: '#f5f7f2', padding: 20 },
+  product: { fontSize: 20, fontWeight: '700', color: '#122923', marginBottom: 16 },
+  label: { fontSize: 14, color: '#5d7469', marginTop: 12, marginBottom: 4 },
   input: {
     backgroundColor: '#fff',
-    borderRadius: 8,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: '#dce5dd',
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 16,
   },
-  geo: { marginTop: 16, color: '#6b7280', fontSize: 14 },
+  geo: { marginTop: 16, color: '#5d7469', fontSize: 14 },
   submit: {
-    backgroundColor: '#4f46e5',
-    borderRadius: 8,
+    backgroundColor: '#164b40',
+    borderRadius: 12,
     padding: 16,
     alignItems: 'center',
     marginTop: 24,
   },
   submitDisabled: { opacity: 0.6 },
   submitText: { color: '#fff', fontWeight: '600', fontSize: 16 },
-  message: { marginTop: 16, textAlign: 'center', color: '#111827' },
+  message: { marginTop: 16, textAlign: 'center', color: '#122923' },
 })
