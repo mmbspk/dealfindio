@@ -29,7 +29,7 @@ import type { UserProfile } from '@/types'
 
 const TIER_COLORS: Record<string, string> = {
   bronze: '#b45309',
-  silver: '#6b7280',
+  silver: '#5d7469',
   gold: '#f59e0b',
 }
 
@@ -110,7 +110,7 @@ export default function ProfileScreen() {
   }
 
   if (profileLoading) {
-    return <ActivityIndicator size="large" color="#4f46e5" style={styles.spinner} />
+    return <ActivityIndicator size="large" color="#164b40" style={styles.spinner} />
   }
 
   // ── Unauthenticated ────────────────────────────────────────────────────────
@@ -132,7 +132,7 @@ export default function ProfileScreen() {
           <TextInput
             style={styles.input}
             placeholder="Email"
-            placeholderTextColor="#9ca3af"
+            placeholderTextColor="#71877b"
             keyboardType="email-address"
             autoCapitalize="none"
             autoCorrect={false}
@@ -142,7 +142,7 @@ export default function ProfileScreen() {
           <TextInput
             style={styles.input}
             placeholder="Password"
-            placeholderTextColor="#9ca3af"
+            placeholderTextColor="#71877b"
             secureTextEntry
             value={password}
             onChangeText={setPassword}
@@ -190,7 +190,7 @@ export default function ProfileScreen() {
           <View
             style={[
               styles.tierBadge,
-              { backgroundColor: TIER_COLORS[user.tier] ?? '#6b7280' },
+              { backgroundColor: TIER_COLORS[user.tier] ?? '#5d7469' },
             ]}
           >
             <Text style={styles.tierText}>{user.tier.toUpperCase()}</Text>
@@ -256,9 +256,9 @@ function friendlyError(msg: string): string {
 }
 
 const styles = StyleSheet.create({
-  flex: { flex: 1, backgroundColor: '#f9fafb' },
-  spinner: { flex: 1, backgroundColor: '#f9fafb' },
-  container: { flex: 1, backgroundColor: '#f9fafb' },
+  flex: { flex: 1, backgroundColor: '#f5f7f2' },
+  spinner: { flex: 1, backgroundColor: '#f5f7f2' },
+  container: { flex: 1, backgroundColor: '#f5f7f2' },
   scrollContent: { padding: 16 },
 
   authContainer: {
@@ -270,13 +270,13 @@ const styles = StyleSheet.create({
   authTitle: {
     fontSize: 28,
     fontWeight: '700',
-    color: '#4f46e5',
+    color: '#164b40',
     textAlign: 'center',
     marginBottom: 4,
   },
   authSubtitle: {
     fontSize: 15,
-    color: '#6b7280',
+    color: '#5d7469',
     textAlign: 'center',
     marginBottom: 16,
   },
@@ -284,10 +284,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderWidth: 1,
     borderColor: '#d1d5db',
-    borderRadius: 8,
+    borderRadius: 12,
     padding: 14,
     fontSize: 16,
-    color: '#111827',
+    color: '#122923',
   },
   authError: {
     color: '#ef4444',
@@ -295,8 +295,8 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   primaryBtn: {
-    backgroundColor: '#4f46e5',
-    borderRadius: 8,
+    backgroundColor: '#164b40',
+    borderRadius: 12,
     padding: 16,
     alignItems: 'center',
     marginTop: 4,
@@ -304,7 +304,7 @@ const styles = StyleSheet.create({
   primaryBtnDisabled: { opacity: 0.6 },
   primaryBtnText: { color: '#fff', fontSize: 16, fontWeight: '600' },
   toggleText: {
-    color: '#4f46e5',
+    color: '#164b40',
     fontSize: 14,
     textAlign: 'center',
     marginTop: 4,
@@ -316,11 +316,11 @@ const styles = StyleSheet.create({
     padding: 20,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: '#dce5dd',
   },
-  emailText: { fontSize: 18, fontWeight: '600', color: '#111827' },
+  emailText: { fontSize: 18, fontWeight: '600', color: '#122923' },
   newUserNote: {
-    color: '#6b7280',
+    color: '#5d7469',
     marginTop: 8,
     fontSize: 13,
     textAlign: 'center',
@@ -334,18 +334,18 @@ const styles = StyleSheet.create({
   tierText: { color: '#fff', fontWeight: '700', fontSize: 12 },
   statsRow: { flexDirection: 'row', marginTop: 20, gap: 40 },
   stat: { alignItems: 'center' },
-  statValue: { fontSize: 24, fontWeight: '700', color: '#4f46e5' },
-  statLabel: { fontSize: 12, color: '#6b7280', marginTop: 2 },
+  statValue: { fontSize: 24, fontWeight: '700', color: '#164b40' },
+  statLabel: { fontSize: 12, color: '#5d7469', marginTop: 2 },
 
   actions: { marginTop: 24, gap: 10 },
   action: {
     backgroundColor: '#fff',
-    borderRadius: 8,
+    borderRadius: 12,
     padding: 16,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: '#dce5dd',
   },
-  actionText: { fontSize: 16, color: '#111827', fontWeight: '500' },
+  actionText: { fontSize: 16, color: '#122923', fontWeight: '500' },
   signOutBtn: { borderColor: '#fca5a5' },
   signOutText: {
     fontSize: 16,
