@@ -1,0 +1,155 @@
+version: '3.9'
+
+services:
+  postgres:
+    image: postgis/postgis:16-3.4-alpine
+    container_name: dealfindio_postgres
+    environment:
+      POSTGRES_USER: dealfindio
+      POSTGRES_PASSWORD: dealfindio_dev
+      POSTGRES_DB: dealfindio_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dealfindio"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres_init:
+    image: postgis/postgis:16-3.4-alpine
+    container_name: dealfindio_postgres_init
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: dealfindio_dev
+    command: |
+      psql -h postgres -U dealfindio -d dealfindio_dev -c "CREATE EXTENSION IF NOT EXISTS postgis; CREATE EXTENSION IF NOT EXISTS pg_trgm; CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\"; CREATE EXTENSION IF NOT EXISTS cube; CREATE EXTENSION IF NOT EXISTS earthdistance;"
+    # Schema is built by Alembic (see api service startCommand), not a SQL dump.
+
+  redis:
+    image: redis:7-alpine
+    container_name: dealfindio_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: dealfindio_api
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://dealfindio:dealfindio_dev@postgres:5432/dealfindio_dev
+      REDIS_URL: redis://redis:6379/0
+      ENVIRONMENT: development
+      LOG_LEVEL: INFO
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      # Add your Firebase / Anthropic keys here:
+      # FIREBASE_PROJECT_ID: your-project
+      # FIREBASE_SERVICE_ACCOUNT_JSON: /path/to/service-account-key.json
+      # ANTHROPIC_API_KEY: sk-ant-...
+      # SENTRY_DSN: https://...
+    ports:
+      - "8010:8010"
+    volumes:
+      - ./backend:/app
+    command: >
+      sh -c "
+      python -m alembic upgrade head &&
+      python -m app.db.seed_stores &&
+      uvicorn app.main:app --host 0.0.0.0 --port 8010 --reload
+      "
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8010/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  celery_worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: dealfindio_celery_worker
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://dealfindio:dealfindio_dev@postgres:5432/dealfindio_dev
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      ENVIRONMENT: development
+      LOG_LEVEL: INFO
+    volumes:
+      - ./backend:/app
+    command: celery -A app.workers.celery_app worker -Q scraper,celery --loglevel=info -c 2
+
+  celery_beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: dealfindio_celery_beat
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://dealfindio:dealfindio_dev@postgres:5432/dealfindio_dev
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      ENVIRONMENT: development
+      LOG_LEVEL: INFO
+    volumes:
+      - ./backend:/app
+      - celerybeat_data:/app/celerybeat-schedule
+    command: celery -A app.workers.celery_app beat --loglevel=info
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile.dev
+    container_name: dealfindio_web
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      VITE_API_URL: http://localhost:8010
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./web:/app
+      - /app/node_modules
+    command: npm run dev
+
+volumes:
+  postgres_data:
+  redis_data:
+  celerybeat_data:
+
+networks:
+  default:
+    name: dealfindio_network
