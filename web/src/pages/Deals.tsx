@@ -12,7 +12,6 @@ const KNOWN_CHAINS = [
   { value: 'woolworths', label: 'Woolworths' },
   { value: 'aldi', label: 'ALDI' },
   { value: 'iga', label: 'IGA' },
-  { value: 'dan_murphys', label: "Dan Murphy's" },
   { value: 'drakes', label: 'Drakes' },
 ]
 

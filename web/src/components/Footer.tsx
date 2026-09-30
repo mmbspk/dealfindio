@@ -64,7 +64,6 @@ const NAV = [
       { label: 'Woolworths', to: '/deals?chain=woolworths' },
       { label: 'ALDI', to: '/deals?chain=aldi' },
       { label: 'IGA', to: '/deals?chain=iga' },
-      { label: "Dan Murphy's", to: '/deals?chain=dan_murphys' },
       { label: 'Drakes', to: '/deals?chain=drakes' },
     ],
   },

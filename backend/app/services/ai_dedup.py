@@ -79,9 +79,6 @@ def _build_store_url(
     if chain == "aldi":
         slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") if name else ""
         return f"https://www.aldi.com.au/product/{slug}-{external_id}" if slug else None
-    if chain == "dan_murphys":
-        slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") if name else ""
-        return f"https://www.danmurphys.com.au/product/DM_{slug}" if slug else None
     return None
 
 

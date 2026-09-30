@@ -38,7 +38,6 @@ const CHAIN_META: Record<string, { color: string; bg: string; border: string; la
   woolworths:  { color: 'text-green-700',  bg: 'bg-green-50 border-green-200',   border: 'border-green-200',  label: 'Woolworths' },
   aldi:        { color: 'text-blue-700',   bg: 'bg-blue-50 border-blue-200',     border: 'border-blue-200',   label: 'ALDI' },
   iga:         { color: 'text-orange-700', bg: 'bg-orange-50 border-orange-200', border: 'border-orange-200', label: 'IGA' },
-  dan_murphys: { color: 'text-purple-700', bg: 'bg-purple-50 border-purple-200', border: 'border-purple-200', label: "Dan Murphy's" },
   drakes:      { color: 'text-yellow-700', bg: 'bg-yellow-50 border-yellow-200', border: 'border-yellow-200', label: 'Drakes' },
 }
 
@@ -48,7 +47,6 @@ const CHAINS = [
   { value: 'woolworths', label: 'Woolworths' },
   { value: 'aldi', label: 'ALDI' },
   { value: 'iga', label: 'IGA' },
-  { value: 'dan_murphys', label: "Dan Murphy's" },
   { value: 'drakes', label: 'Drakes' },
 ]
 

@@ -87,7 +87,7 @@ def get_redis():
 @celery_app.task(
     bind=True,
     name="app.workers.scraper_tasks.run_flyer_scrape",
-    queue="scraper",
+    queue="catalog",
     base=CallbackTask,
     time_limit=3600,
     soft_time_limit=3000,

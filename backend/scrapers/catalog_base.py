@@ -75,19 +75,45 @@ JSON_HEADERS: dict[str, str] = {
 }
 
 
-def get_scraper_proxy() -> Optional[str]:
+def get_scraper_proxy(session_id: Optional[str] = None) -> Optional[str]:
     """Return the configured proxy URL for Coles/Woolworths scrapers, or None.
 
-    Reads SCRAPER_PROXY_URL from settings. Pass the return value directly to
-    ``httpx.AsyncClient(proxies=...)``.  Returns None when no proxy is configured
-    so callers can omit the kwarg entirely (httpx treats None as no proxy).
-    """
-    try:
-        from app.config import get_settings
+    Checks the DB config store first (set via Admin UI), then falls back to
+    the SCRAPER_PROXY_URL environment variable / .env setting.
+    Pass the return value directly to ``httpx.AsyncClient(proxies=...)``.
+    Returns None when no proxy is configured.
 
-        return get_settings().SCRAPER_PROXY_URL or None
+    If ``session_id`` is provided, it is appended as ``sess=<id>`` to the proxy
+    URL so DataImpulse pins every connection in this run to the same exit IP —
+    including re-auth connections after a bot-block.  Without this, each new
+    TLS connection may get a different IP even when ``sessttl`` is set.
+    """
+    raw: Optional[str] = None
+    try:
+        from app.deps import _SessionLocal
+        from app.services.config_store import get_config
+
+        if _SessionLocal:
+            session = _SessionLocal()
+            try:
+                raw = get_config("SCRAPER_PROXY_URL", session) or None
+            finally:
+                session.close()
     except Exception:
+        pass
+    if not raw:
+        try:
+            from app.config import get_settings
+
+            raw = get_settings().SCRAPER_PROXY_URL or None
+        except Exception:
+            return None
+    if not raw:
         return None
+    if session_id:
+        sep = "&" if "?" in raw else "?"
+        raw = f"{raw}{sep}sess={session_id}"
+    return raw
 
 
 def to_cents(value: Any) -> Optional[int]:
@@ -290,12 +316,16 @@ class CatalogScraper(ABC):
     async def parse_products(self, raw: Any, category: CategoryNode) -> list[CatalogProduct]:
         """Parse a category's raw response into products."""
 
-    async def crawl_specials(self, auth: dict) -> Any:
+    async def crawl_specials(self, auth: dict, product_sink=None, resume_page: int = 1) -> Any:
         """Fetch all on-special products from the store's promotions endpoint.
 
         Override in each concrete scraper. Raise ``NotImplementedError`` is the
         default so that calling ``run_specials`` on a scraper that hasn't
         implemented this method gives a clear error immediately.
+
+        ``product_sink`` is the same async callable used by the category loop —
+        stores that paginate (e.g. Coles) should call it per page so products are
+        ingested incrementally rather than buffered until the end.
         """
         raise NotImplementedError(
             f"{self.__class__.__name__} has no specials mode — implement crawl_specials()"
@@ -444,16 +474,18 @@ class CatalogScraper(ABC):
             on_categories_discovered=on_categories_discovered,
         )
 
-    async def run_specials(self, product_sink=None) -> dict:
+    async def run_specials(self, product_sink=None, resume_page: int = 1) -> dict:
         """Fetch only on-special products via the store's promotions endpoint.
 
         Skips category discovery entirely — calls ``crawl_specials`` which hits
         the store's dedicated specials/promotions endpoint directly. Fast: a
         typical specials run takes <2 min vs hours for a full crawl.
-        """
-        return await self._run(mode="specials", product_sink=product_sink)
 
-    async def _run(self, mode: str, product_sink=None, on_categories_discovered=None) -> dict:
+        ``resume_page`` skips pages already fetched in a same-day run.
+        """
+        return await self._run(mode="specials", product_sink=product_sink, resume_page=resume_page)
+
+    async def _run(self, mode: str, product_sink=None, on_categories_discovered=None, resume_page: int = 1) -> dict:
         errors: list[str] = []
         categories_found = 0
         categories_crawled = 0
@@ -465,27 +497,33 @@ class CatalogScraper(ABC):
         # ── Specials mode: bypass category loop entirely ──────────────────────
         if mode == "specials":
             try:
-                raw = await self._specials_with_reauth(auth)
+                raw = await self._specials_with_reauth(auth, product_sink=product_sink, resume_page=resume_page)
             except Exception as exc:
                 self.logger.exception("Specials fetch failed for %s", self.chain)
                 raise ScraperError(f"Specials fetch failed: {exc}") from exc
 
-            try:
-                products = await self.parse_specials(raw)
-            except Exception as exc:
-                self.logger.exception("Specials parse failed for %s", self.chain)
-                raise ScraperError(f"Specials parse failed: {exc}") from exc
+            # If crawl_specials already flushed via product_sink (e.g. Coles),
+            # raw will contain only a products_found count; otherwise parse+sink now.
+            already_sunk = isinstance(raw, dict) and raw.get("_sunk", False)
+            products_found = raw.get("products_found", 0) if already_sunk else 0
 
-            products_found = len(products)
-            specials_cat = CategoryNode(id="specials", name="Specials")
-
-            if product_sink is not None and products:
+            if not already_sunk:
                 try:
-                    await product_sink(products, specials_cat)
+                    products = await self.parse_specials(raw)
                 except Exception as exc:
-                    msg = f"Specials ingest failed: {exc}"
-                    self.logger.warning(msg)
-                    errors.append(msg)
+                    self.logger.exception("Specials parse failed for %s", self.chain)
+                    raise ScraperError(f"Specials parse failed: {exc}") from exc
+
+                products_found = len(products)
+                specials_cat = CategoryNode(id="specials", name="Specials")
+
+                if product_sink is not None and products:
+                    try:
+                        await product_sink(products, specials_cat)
+                    except Exception as exc:
+                        msg = f"Specials ingest failed: {exc}"
+                        self.logger.warning(msg)
+                        errors.append(msg)
 
             return {
                 "chain": self.chain,
@@ -596,15 +634,25 @@ class CatalogScraper(ABC):
             auth = await self._get_or_refresh_auth()
             return await self.crawl_category(category, auth)
 
-    async def _specials_with_reauth(self, auth: dict) -> Any:
-        """Call crawl_specials, re-authenticating once on an auth failure."""
+    async def _specials_with_reauth(self, auth: dict, product_sink=None, resume_page: int = 1) -> Any:
+        """Call crawl_specials, re-authenticating once on an auth failure.
+
+        If the second attempt also raises AuthExpiredError the site is bot-blocking
+        the session entirely (not just the token). Raise ScraperError to surface a
+        clean failure rather than letting AuthExpiredError propagate unhandled.
+        """
         try:
-            return await self.crawl_specials(auth)
+            return await self.crawl_specials(auth, product_sink=product_sink, resume_page=resume_page)
         except AuthExpiredError:
             self.logger.info("Auth expired fetching specials for %s; re-authenticating", self.chain)
             await self._invalidate_auth()
             auth = await self._get_or_refresh_auth()
-            return await self.crawl_specials(auth)
+            try:
+                return await self.crawl_specials(auth, product_sink=product_sink, resume_page=resume_page)
+            except AuthExpiredError as exc:
+                raise ScraperError(
+                    f"{self.chain} specials bot-blocked after re-auth — site is blocking this session"
+                ) from exc
 
 
 class AuthExpiredError(ScraperError):

@@ -28,7 +28,6 @@ CATEGORY_MAP: dict[str, str] = {
     "Beer, Wine & Spirits > LIQUOR": "Beer, Wine & Spirits",
     "Liquorland": "Beer, Wine & Spirits",
     "Liquor": "Beer, Wine & Spirits",
-    # Dan Murphy's sub-categories → merged
     "Bourbon": "Beer, Wine & Spirits",
     "Brandy & Cognac": "Beer, Wine & Spirits",
     "Champagne & Sparkling": "Beer, Wine & Spirits",

@@ -54,7 +54,7 @@ interface LatLon {
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
-const CHAINS = ['All', 'Coles', 'Woolworths', 'ALDI', 'IGA', "Dan Murphy's"] as const
+const CHAINS = ['All', 'Coles', 'Woolworths', 'ALDI', 'IGA', 'Drakes'] as const
 type ChainFilter = (typeof CHAINS)[number]
 
 const RADIUS_OPTIONS = [2, 5, 10, 20] as const
@@ -66,7 +66,7 @@ const CHAIN_LABELS: Record<string, string> = {
   woolworths: 'Woolworths',
   aldi: 'ALDI',
   iga: 'IGA',
-  dan_murphys: "Dan Murphy's",
+  drakes: 'Drakes',
 }
 
 /** Chain → map pin colour. */
@@ -75,7 +75,7 @@ const PIN_COLORS: Record<string, string> = {
   woolworths: '#16a34a',  // green-600
   aldi: '#2563eb',        // blue-600
   iga: '#f97316',         // orange-500
-  dan_murphys: '#176f50', // violet-600
+  drakes: '#ca8a04',      // yellow-600
 }
 
 /** Chain → card left-border colour (same hues, used in list). */
@@ -84,7 +84,6 @@ const BORDER_COLORS = PIN_COLORS
 /** Chain filter label → API query param value. */
 function chainParam(filter: ChainFilter): string | undefined {
   if (filter === 'All') return undefined
-  if (filter === "Dan Murphy's") return 'dan_murphys'
   return filter.toLowerCase()
 }
 
@@ -294,7 +293,7 @@ export default function StoresScreen() {
           <Text style={styles.promptEmoji}>📍</Text>
           <Text style={styles.promptTitle}>Find Stores Near Me</Text>
           <Text style={styles.promptSub}>
-            Discover nearby Coles, Woolworths, ALDI, IGA and Dan Murphy's stores.
+            Discover nearby Coles, Woolworths, ALDI, IGA and Drakes stores.
           </Text>
 
           {locationDenied ? (

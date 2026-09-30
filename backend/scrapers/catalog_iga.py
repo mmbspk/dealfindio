@@ -183,7 +183,7 @@ class IGACatalogScraper(CatalogScraper):
 
         return products
 
-    async def crawl_specials(self, auth: dict) -> Any:
+    async def crawl_specials(self, auth: dict, product_sink=None, resume_page: int = 1) -> Any:
         """Fetch all IGA on-special products from the promotions endpoint.
 
         Uses /api/storefront/stores/{storeId}/promotions/products, paginated

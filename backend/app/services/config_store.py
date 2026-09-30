@@ -195,6 +195,14 @@ KNOWN_KEYS: list[dict] = [
         "group": "Monitoring",
         "is_secret": True,
     },
+    # ── Scrapers ─────────────────────────────────────────────────────────────
+    {
+        "key": "SCRAPER_PROXY_URL",
+        "label": "Scraper Proxy URL",
+        "description": "Residential proxy for Coles/Woolworths (bypasses Imperva). DataImpulse: http://USER:PASS@gw.dataimpulse.com:823?country=AU&sessttl=1800. Leave blank for direct connections.",
+        "group": "Scrapers",
+        "is_secret": True,
+    },
 ]
 
 _KNOWN_KEY_MAP: dict[str, dict] = {k["key"]: k for k in KNOWN_KEYS}

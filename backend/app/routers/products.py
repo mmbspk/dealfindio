@@ -24,6 +24,38 @@ from app.schemas.product import (
 from app.services.geo import haversine_km
 from app.services.search import search_products_by_gtin, search_products_ranked
 
+# ── Store URL builder ─────────────────────────────────────────────────────────
+
+import re as _re
+
+
+def _name_to_slug(name: str) -> str:
+    """Lowercase, strip non-alphanumeric, collapse spaces to hyphens."""
+    s = name.lower().strip()
+    s = _re.sub(r"[^a-z0-9\s-]", "", s)
+    s = _re.sub(r"\s+", "-", s)
+    return _re.sub(r"-+", "-", s)
+
+
+def _build_store_url(
+    external_source: str | None,
+    external_id: str | None,
+    name: str | None = None,
+) -> str | None:
+    if not external_source:
+        return None
+    if external_source == "catalog_woolworths" and external_id:
+        return f"https://www.woolworths.com.au/shop/productdetails/{external_id}/"
+    if external_source == "catalog_coles" and external_id and name:
+        return f"https://www.coles.com.au/product/{_name_to_slug(name)}-{external_id}"
+    if external_source == "catalog_iga" and external_id:
+        return f"https://www.igashop.com.au/product/{external_id}"
+    if external_source == "catalog_aldi" and external_id and name:
+        return f"https://www.aldi.com.au/product/{_name_to_slug(name)}-{external_id}"
+    if external_source == "catalog_drakes" and name:
+        return f"https://015.drakes.com.au/lines/{_name_to_slug(name)}"
+    return None
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Products"])
@@ -514,6 +546,7 @@ async def get_product_stores(
                     "is_on_sale": price_report.is_on_sale,
                     "discount_pct": price_report.sale_pct_off,
                     "distance_km": round(distance_km, 2) if distance_km is not None else None,
+                    "store_url": _build_store_url(product.external_source, product.external_id, product.name),
                 }
             )
 

@@ -31,7 +31,7 @@ from app.workers.tasks_base import CallbackTask
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-VALID_CHAINS = {"coles", "woolworths", "aldi", "iga", "dan_murphys"}
+VALID_CHAINS = {"coles", "woolworths", "aldi", "iga", "drakes"}
 
 
 class EnrichResult(TypedDict):

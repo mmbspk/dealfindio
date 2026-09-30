@@ -79,7 +79,7 @@ def trigger_all_scrapers(
 
     results = []
     for chain in sorted(VALID_CHAINS):
-        task = run_flyer_scrape.apply_async(args=[chain], queue="scraper")
+        task = run_flyer_scrape.apply_async(args=[chain], queue="catalog")
         redis.setex(f"scrape_active:{chain}", ACTIVE_TASK_TTL, task.id)
         results.append(
             TriggerResponse(
@@ -288,6 +288,69 @@ def get_scrape_weekly_counts(
         )
     ).fetchall()
     return {chain: products_found for chain, products_found in rows}
+
+
+class SpecialsFreshnessItem(BaseModel):
+    chain: str
+    label: str
+    last_run_at: datetime | None
+    last_refresh_expected_at: datetime | None
+    hours_since_run: float | None
+    hours_overdue: float | None
+    status: str  # "fresh" | "stale" | "overdue" | "never"
+    refresh_days_labels: list[str]
+
+
+@router.get("/scrape/freshness", response_model=list[SpecialsFreshnessItem])
+def get_specials_freshness(
+    db: Session = Depends(get_db),
+    _admin=Depends(require_admin),
+) -> list[SpecialsFreshnessItem]:
+    """Return per-chain specials freshness based on last successful run and known refresh schedule."""
+    from app.models import CatalogCrawlRun
+    from app.services.specials_schedule import all_chain_freshness
+
+    last_runs: dict[str, datetime | None] = {}
+    for chain in VALID_CHAINS:
+        last = (
+            db.query(CatalogCrawlRun.run_finished_at)
+            .filter(
+                CatalogCrawlRun.chain == chain,
+                CatalogCrawlRun.mode == "specials",
+                CatalogCrawlRun.status.in_(["success", "completed", "completed_with_errors"]),
+            )
+            .order_by(CatalogCrawlRun.run_finished_at.desc())
+            .first()
+        )
+        last_runs[chain] = last[0] if last else None
+
+    # ALDI uses flyer runs instead of catalog specials
+    aldi_flyer = (
+        db.query(FlyScrapeRun.run_finished_at)
+        .filter(
+            FlyScrapeRun.chain == "aldi",
+            FlyScrapeRun.status.in_(["completed", "completed_with_errors"]),
+        )
+        .order_by(FlyScrapeRun.run_finished_at.desc())
+        .first()
+    )
+    if aldi_flyer and (last_runs.get("aldi") is None or aldi_flyer[0] > last_runs["aldi"]):
+        last_runs["aldi"] = aldi_flyer[0]
+
+    results = all_chain_freshness(last_runs)
+    return [
+        SpecialsFreshnessItem(
+            chain=f.chain,
+            label=f.label,
+            last_run_at=f.last_run_at,
+            last_refresh_expected_at=f.last_refresh_expected_at,
+            hours_since_run=f.hours_since_run,
+            hours_overdue=f.hours_overdue,
+            status=f.status,
+            refresh_days_labels=f.refresh_days_labels,
+        )
+        for f in results
+    ]
 
 
 class DedupOverlapRow(BaseModel):
@@ -578,10 +641,16 @@ def trigger_catalog_all(
 def trigger_catalog(
     chain: str,
     mode: str = "full",
+    force: bool = False,
     db: Session = Depends(get_db),
+    redis=Depends(get_redis),
     _admin=Depends(require_admin),
 ) -> CatalogTriggerResponse:
-    """Trigger a catalog crawl for one chain. Returns 409 if one is already in progress."""
+    """Trigger a catalog crawl for one chain. Returns 409 if one is already in progress.
+
+    For specials mode, also returns 409 if a successful specials run completed within
+    the last 25 hours. Pass force=true to bypass that cooldown.
+    """
     if mode not in ("full", "delta", "specials"):
         raise HTTPException(status_code=422, detail="mode must be 'full', 'delta', or 'specials'")
     if chain not in _catalog_chains():
@@ -606,6 +675,20 @@ def trigger_catalog(
             detail=f"A {chain} catalog crawl is already running (started {active.run_started_at.isoformat()}).",
         )
 
+    # Guard: warn if specials ran successfully within the last 25 hours.
+    if mode == "specials" and not force:
+        last_success = redis.get(f"specials_last_success:{chain}")
+        if last_success:
+            last_ts = last_success if isinstance(last_success, str) else last_success.decode()
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "already_ran",
+                    "message": f"Specials for '{chain}' were already scraped successfully within the last 25 hours.",
+                    "last_run_at": last_ts,
+                },
+            )
+
     from app.workers.catalog_tasks import run_catalog_crawl
 
     task = run_catalog_crawl.apply_async(args=[chain, mode], queue="catalog")
@@ -617,8 +700,13 @@ def trigger_catalog(
     )
 
 
+class CatalogActiveEntry(BaseModel):
+    task_id: str
+    mode: str
+
+
 class CatalogActiveResponse(BaseModel):
-    active: dict[str, str]  # chain -> run_id (UUID string)
+    active: dict[str, CatalogActiveEntry]  # chain -> {task_id, mode}
 
 
 @router.get("/catalog/active", response_model=CatalogActiveResponse)
@@ -638,10 +726,13 @@ def get_catalog_active(
         .all()
     )
     # One entry per chain — keep the most recent
-    seen: dict[str, str] = {}
+    seen: dict[str, CatalogActiveEntry] = {}
     for row in rows:
         if row.chain not in seen:
-            seen[row.chain] = row.celery_task_id or str(row.id)
+            seen[row.chain] = CatalogActiveEntry(
+                task_id=row.celery_task_id or str(row.id),
+                mode=row.mode or "full",
+            )
     return CatalogActiveResponse(active=seen)
 
 
@@ -708,6 +799,34 @@ def get_catalog_progress(task_id: str, _admin=Depends(require_admin)) -> Catalog
     if async_result.successful() and isinstance(async_result.result, dict):
         result = async_result.result
     return CatalogProgressResponse(task_id=task_id, state=async_result.state, result=result)
+
+
+class CatalogLogEntry(BaseModel):
+    ts: str
+    level: str
+    msg: str
+
+
+@router.get("/catalog/logs/{task_id}", response_model=list[CatalogLogEntry])
+def get_catalog_logs(
+    task_id: str,
+    last_n: int = 100,
+    redis=Depends(get_redis),
+    _admin=Depends(require_admin),
+) -> list[CatalogLogEntry]:
+    """Return the last N log lines for a catalog crawl task from the Redis buffer."""
+    import json as _json
+
+    key = f"catalog_log:{task_id}"
+    raw_lines = redis.lrange(key, -max(1, min(last_n, 200)), -1)
+    out: list[CatalogLogEntry] = []
+    for raw in raw_lines:
+        try:
+            data = _json.loads(raw.decode() if isinstance(raw, bytes) else raw)
+            out.append(CatalogLogEntry(ts=data["ts"], level=data["level"], msg=data["msg"]))
+        except Exception:
+            continue
+    return out
 
 
 class CatalogCoverageRow(BaseModel):

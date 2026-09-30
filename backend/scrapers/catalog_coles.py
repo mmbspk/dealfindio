@@ -117,6 +117,10 @@ class ColesCatalogScraper(CatalogScraper):
         super().__init__(*args, **kwargs)
         self._client: Optional[httpx.AsyncClient] = None
         self._consecutive_bot_blocks: int = 0
+        # Set after a successful bootstrap — pinned session ID used for all data
+        # route requests so DataImpulse keeps the same exit IP mid-run.
+        # None until first successful bootstrap.
+        self._proxy_session_id: Optional[str] = None
 
     def _data_url(self, build_id: str, path: str) -> str:
         return f"{_HOME_URL}_next/data/{build_id}/en/{path}"
@@ -145,15 +149,23 @@ class ColesCatalogScraper(CatalogScraper):
         reraise=True,
     )
     async def _bootstrap(self) -> dict:
+        import secrets
+
         # Close any existing client before creating a fresh TLS session.
         if self._client:
             await self._client.aclose()
             self._client = None
+
+        # Use a fresh random sess= on every bootstrap attempt so each retry
+        # gets a different DataImpulse exit IP — rotating away from any IP
+        # that Imperva has already flagged.  Once this bootstrap succeeds we
+        # store the sess= token and reuse it for all data-route requests.
+        attempt_session_id = secrets.token_hex(8)
         client = httpx.AsyncClient(
             headers=_HTML_HEADERS,
             follow_redirects=True,
             timeout=self.TIMEOUT_S,
-            proxies=_get_proxy(),
+            proxies=_get_proxy(attempt_session_id),
         )
         try:
             resp = await client.get(_HOME_URL)
@@ -169,6 +181,9 @@ class ColesCatalogScraper(CatalogScraper):
         if not match:
             await client.aclose()
             raise _BotChallengeError(f"no buildId in {len(resp.text)}-byte response")
+
+        # Bootstrap succeeded — pin this session ID for the rest of the run.
+        self._proxy_session_id = attempt_session_id
         # Keep the client alive — Imperva ties incap_ses_* to this TLS session.
         self._client = client
         cookies = {c.name: c.value for c in client.cookies.jar}
@@ -266,7 +281,7 @@ class ColesCatalogScraper(CatalogScraper):
                 cookies=auth.get("cookies", {}),
                 follow_redirects=True,
                 timeout=self.TIMEOUT_S,
-                proxies=_get_proxy(),
+                proxies=_get_proxy(self._proxy_session_id),
             )
         else:
             # Switch to JSON accept header for data-route requests.
@@ -306,85 +321,134 @@ class ColesCatalogScraper(CatalogScraper):
                     products.append(product)
         return products
 
-    async def crawl_specials(self, auth: dict) -> Any:
+    async def crawl_specials(self, auth: dict, product_sink=None, resume_page: int = 1) -> Any:
         """Fetch all Coles on-special products from the Next.js on-special data route.
 
-        Coles serves ``/_next/data/{buildId}/en/on-special.json`` which returns
-        the same ``pageProps.searchResults.results`` shape as category pages.
-        Requires the buildId cached in ``auth`` by ``authenticate()``.
-        Returns ``{"pages": [raw_page_dict, ...]}``.
+        Rotates to a fresh DataImpulse IP every time Imperva bot-blocks us, resuming
+        from the blocked page each time until all pages are exhausted.  Products are
+        sunk page-by-page so nothing is lost across IP rotations.
+        Returns ``{"_sunk": True, "products_found": N}``.
         """
-        build_id = auth.get("build_id")
-        if not build_id:
-            raise AuthExpiredError("Coles buildId missing from auth — re-bootstrap required")
+        specials_cat = CategoryNode(id="specials", name="Specials")
+        today = date.today()
+        products_found = 0
+        start_page = max(1, resume_page)
+        rotation_count = 0
+        MAX_ROTATIONS = 20  # safety cap — 20 IPs × ~80 pages × ~60 products = 96,000 cap
 
-        pages: list[dict] = []
-        client = self._client
-        if client is None:
-            client = httpx.AsyncClient(
-                headers=_JSON_HEADERS,
-                cookies=auth.get("cookies", {}),
-                follow_redirects=True,
-                timeout=self.TIMEOUT_S,
-                proxies=_get_proxy(),
-            )
-        client.headers.update(_JSON_HEADERS)
+        while start_page <= self.config.max_pages_per_category:
+            build_id = auth.get("build_id")
+            if not build_id:
+                raise AuthExpiredError("Coles buildId missing from auth — re-bootstrap required")
 
-        for page in range(1, self.config.max_pages_per_category + 1):
-            await asyncio.sleep(random.uniform(2.0, 5.0))  # polite pacing
-            url = self._data_url(build_id, "on-special.json")
-            params = {"slug": "on-special", "page": page}
-            try:
-                resp = await client.get(url, params=params)
-            except httpx.HTTPError as exc:
-                raise ScraperError(f"Coles on-special fetch failed: {exc}") from exc
+            client = self._client
+            if client is None:
+                client = httpx.AsyncClient(
+                    headers=_JSON_HEADERS,
+                    cookies=auth.get("cookies", {}),
+                    follow_redirects=True,
+                    timeout=self.TIMEOUT_S,
+                    proxies=_get_proxy(self._proxy_session_id),
+                )
+            client.headers.update(_JSON_HEADERS)
 
-            if resp.status_code in (401, 403):
-                raise AuthExpiredError(f"Coles on-special returned {resp.status_code}")
-            if resp.status_code == 404:
-                raise AuthExpiredError("Coles on-special 404 (buildId rotated?)")
-            if resp.status_code == 429:
-                self.rate_limiter.on_rate_limited(_retry_after(resp.headers.get("Retry-After")))
-                raise ScraperError("Coles on-special rate-limited (429)")
-            try:
-                resp.raise_for_status()
-                if not resp.content:
-                    raise AuthExpiredError("Coles on-special empty body (bot block?)")
+            bot_blocked_at: Optional[int] = None
+
+            for page in range(start_page, self.config.max_pages_per_category + 1):
+                await asyncio.sleep(random.uniform(3.0, 8.0))
+                url = self._data_url(build_id, "on-special.json")
+                params = {"slug": "on-special", "page": page}
                 try:
-                    data = resp.json()
-                except ValueError:
-                    raise AuthExpiredError(
-                        f"Coles on-special non-JSON body ({len(resp.content)}b) — bot block"
-                    )
-            except httpx.HTTPError as exc:
-                raise ScraperError(f"Coles on-special fetch failed: {exc}") from exc
+                    resp = await client.get(url, params=params)
+                except httpx.HTTPError as exc:
+                    raise ScraperError(f"Coles on-special fetch failed: {exc}") from exc
 
-            results = _extract_results(data)
-            if not results:
-                break
-            pages.append(data)
-
-            total = _total_results(data)
-            if total is not None:
-                if page * self.config.page_size >= total:
+                if resp.status_code in (401, 403):
+                    bot_blocked_at = page
                     break
-            elif len(results) < self.config.page_size:
+                if resp.status_code == 404:
+                    bot_blocked_at = page
+                    break
+                if resp.status_code == 429:
+                    self.rate_limiter.on_rate_limited(_retry_after(resp.headers.get("Retry-After")))
+                    raise ScraperError("Coles on-special rate-limited (429)")
+                try:
+                    resp.raise_for_status()
+                    if not resp.content:
+                        bot_blocked_at = page
+                        break
+                    try:
+                        data = resp.json()
+                    except ValueError:
+                        self.logger.warning(
+                            "Coles on-special non-JSON body at page %d (%db) — bot block",
+                            page, len(resp.content),
+                        )
+                        bot_blocked_at = page
+                        break
+                except httpx.HTTPError as exc:
+                    raise ScraperError(f"Coles on-special fetch failed: {exc}") from exc
+
+                results = _extract_results(data)
+                if not results:
+                    # Genuine end of specials listing — done
+                    start_page = self.config.max_pages_per_category + 1
+                    break
+
+                page_products = []
+                for item in results:
+                    product = _parse_item(item, specials_cat, today, {})
+                    if product is not None:
+                        page_products.append(product)
+
+                if page_products and product_sink is not None:
+                    await product_sink(page_products, specials_cat, page=page)
+                products_found += len(page_products)
+
+                # Check if we've fetched everything Coles reports
+                total = _total_results(data)
+                if total is not None and products_found >= total:
+                    start_page = self.config.max_pages_per_category + 1
+                    break
+                elif total is None and len(results) < self.config.page_size:
+                    start_page = self.config.max_pages_per_category + 1
+                    break
+                else:
+                    start_page = page + 1
+
+            if bot_blocked_at is None:
+                # Inner loop completed without a block — all done
                 break
 
-        self.logger.info("Fetched %d Coles on-special pages", len(pages))
-        return {"pages": pages, "l2_map": {}}
+            # Bot-blocked mid-run — rotate to a fresh IP and resume
+            rotation_count += 1
+            if rotation_count > MAX_ROTATIONS:
+                self.logger.warning(
+                    "Coles on-special reached max IP rotations (%d) — stopping at page %d "
+                    "with %d products saved",
+                    MAX_ROTATIONS, bot_blocked_at, products_found,
+                )
+                break
+
+            self.logger.info(
+                "Coles on-special bot-blocked at page %d (%d products so far) — "
+                "rotating to fresh IP #%d and resuming",
+                bot_blocked_at, products_found, rotation_count,
+            )
+            start_page = bot_blocked_at
+            await self._invalidate_auth()
+            auth = await self._get_or_refresh_auth()
+            # _bootstrap assigned a new _proxy_session_id — next iteration uses fresh IP
+
+        self.logger.info(
+            "Fetched %d Coles on-special products across %d IP rotation(s)",
+            products_found, rotation_count,
+        )
+        return {"_sunk": True, "products_found": products_found}
 
     async def parse_specials(self, raw: Any) -> list[CatalogProduct]:
-        """Parse on-special pages using the shared item parser."""
-        specials_cat = CategoryNode(id="specials", name="Specials")
-        products: list[CatalogProduct] = []
-        today = date.today()
-        for page in raw.get("pages", []):
-            for item in _extract_results(page):
-                product = _parse_item(item, specials_cat, today, {})
-                if product is not None:
-                    products.append(product)
-        return products
+        """Products are already parsed and sunk inline in crawl_specials."""
+        return []
 
     async def _crawl_with_reauth(self, category: CategoryNode, auth: dict) -> Any:
         """Coles override: re-auth with Imperva cool-down before retrying.

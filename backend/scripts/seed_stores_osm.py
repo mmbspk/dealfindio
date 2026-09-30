@@ -1,7 +1,7 @@
 """
 Seed all Australian store locations from OpenStreetMap via the Overpass API.
 
-Fetches real lat/lon data for Coles, Woolworths, ALDI, IGA and Dan Murphy's.
+Fetches real lat/lon data for Coles, Woolworths, ALDI, IGA and Drakes.
 Safe to re-run — upserts by OSM node/way ID (stored in place_id), so existing
 rows are updated rather than duplicated.
 
@@ -29,7 +29,6 @@ CHAINS = [
     ("Woolworths", "woolworths"),
     ("ALDI", "aldi"),
     ("IGA", "iga"),
-    ("Dan Murphy's", "dan_murphys"),
     ("Drakes", "drakes"),
 ]
 

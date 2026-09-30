@@ -344,10 +344,10 @@ class DrakesCatalogScraper(CatalogScraper):
         """Return products already parsed inline during crawl_category."""
         return raw.get("products", [])
 
-    async def crawl_specials(self, auth: dict) -> Any:
-        """Fetch all Drakes on-sale products using the pjax sale filter.
+    async def crawl_specials(self, auth: dict, product_sink=None, resume_page: int = 1) -> Any:
+        """Fetch all Drakes on-sale products using the pjax special filter.
 
-        Uses ``q[]=sale:true`` on the same search endpoint as category crawls.
+        Uses ``q[]=special:true`` on the same search endpoint as category crawls.
         Products are parsed inline (same as crawl_category) to avoid buffering
         large HTML strings. Returns ``{"products": [CatalogProduct, ...]}``.
         """
@@ -365,7 +365,7 @@ class DrakesCatalogScraper(CatalogScraper):
             try:
                 r = await client.get(
                     _BASE + _SEARCH_PATH,
-                    params={"page": page, "q[]": "sale:true", "sort_by": "top_products"},
+                    params={"page": page, "q[]": "special:true", "sort_by": "top_products"},
                     headers=_PJAX_HEADERS,
                 )
             except httpx.HTTPError as exc:

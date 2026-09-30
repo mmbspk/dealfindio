@@ -34,7 +34,6 @@ const CHAIN_COLORS: Record<string, string> = {
   woolworths: '#16a34a', // green-600
   aldi:       '#2563eb', // blue-600
   iga:        '#f97316', // orange-500
-  dan_murphys:'#9333ea', // purple-600
   drakes:     '#ca8a04', // yellow-600
 }
 

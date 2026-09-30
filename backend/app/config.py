@@ -224,10 +224,6 @@ class Settings(BaseSettings):
     ALDI_PASSWORD: Optional[str] = Field(default=None, description="ALDI account password")
     IGA_EMAIL: Optional[str] = Field(default=None, description="IGA account email")
     IGA_PASSWORD: Optional[str] = Field(default=None, description="IGA account password")
-    DAN_MURPHYS_EMAIL: Optional[str] = Field(default=None, description="Dan Murphy's account email")
-    DAN_MURPHYS_PASSWORD: Optional[str] = Field(
-        default=None, description="Dan Murphy's account password"
-    )
 
     # Human-like pacing defaults (shared across catalog scrapers).
     # These are tuned for Coles' Imperva bot-protection — Imperva tracks request
@@ -255,7 +251,6 @@ class Settings(BaseSettings):
     CATALOG_WOOLWORTHS_ENABLED: bool = Field(default=False)
     CATALOG_ALDI_ENABLED: bool = Field(default=False)
     CATALOG_IGA_ENABLED: bool = Field(default=False)
-    CATALOG_DAN_MURPHYS_ENABLED: bool = Field(default=False)
     CATALOG_DRAKES_ENABLED: bool = Field(default=False)
 
     # Per-store DELTA cron (empty string = no scheduled delta; on-demand only).
@@ -264,7 +259,6 @@ class Settings(BaseSettings):
     CATALOG_WOOLWORTHS_CRON: str = Field(default="")
     CATALOG_ALDI_CRON: str = Field(default="")
     CATALOG_IGA_CRON: str = Field(default="")
-    CATALOG_DAN_MURPHYS_CRON: str = Field(default="")
     CATALOG_DRAKES_CRON: str = Field(default="")
 
     # ────────────────────────────────────────────────────────────────────
@@ -292,6 +286,10 @@ class Settings(BaseSettings):
     #         socks5://user:pass@proxy-host:port
     #
     # Providers (residential proxies):
+    #   DataImpulse: http://USERNAME:PASSWORD@gw.dataimpulse.com:823
+    #                Add &country=AU for Australian exit IPs (required for Coles/Woolworths)
+    #                Add &sessttl=1800 to hold the same IP for up to 30 min per crawl run
+    #                Full example: http://user:pass@gw.dataimpulse.com:823?country=AU&sessttl=1800
     #   Brightdata:  http://USERNAME:PASSWORD@brd.superproxy.io:22225
     #   Oxylabs:     http://USERNAME_country-AU:PASSWORD@pr.oxylabs.io:7777
     #   Smartproxy:  http://user:pass@gate.smartproxy.com:7000

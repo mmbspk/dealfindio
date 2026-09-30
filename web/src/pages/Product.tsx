@@ -39,6 +39,7 @@ interface StoreItem {
   is_on_sale: boolean
   discount_pct?: number | null
   distance_km?: number | null
+  store_url?: string | null
 }
 
 const CHAIN_COLORS: Record<string, string> = {
@@ -46,7 +47,6 @@ const CHAIN_COLORS: Record<string, string> = {
   woolworths: 'bg-green-50 text-green-700 border-green-200',
   aldi: 'bg-blue-50 text-blue-700 border-blue-200',
   iga: 'bg-orange-50 text-orange-700 border-orange-200',
-  dan_murphys: 'bg-purple-50 text-purple-700 border-purple-200',
   drakes: 'bg-yellow-50 text-yellow-700 border-yellow-200',
 }
 
@@ -55,7 +55,6 @@ const CHAIN_LABELS: Record<string, string> = {
   woolworths: 'Woolworths',
   aldi: 'ALDI',
   iga: 'IGA',
-  dan_murphys: "Dan Murphy's",
   drakes: 'Drakes',
 }
 
@@ -475,6 +474,17 @@ export const Product: React.FC = () => {
                             </span>
                           ) : (
                             <span className="text-[10px] text-gray-400">Regular</span>
+                          )}
+                          {store.store_url && (
+                            <a
+                              href={store.store_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="block text-[10px] text-[#176f50] hover:underline mt-0.5"
+                              onClick={e => e.stopPropagation()}
+                            >
+                              View ↗
+                            </a>
                           )}
                         </div>
                       </div>

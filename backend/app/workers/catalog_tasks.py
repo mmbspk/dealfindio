@@ -12,6 +12,7 @@ delta crawl across every enabled chain (used by the optional Beat schedule).
 """
 
 import asyncio
+import json
 import logging
 from asyncio import CancelledError
 from datetime import datetime, timezone
@@ -32,6 +33,19 @@ settings = get_settings()
 # Commit to the DB after roughly this many products so a long crawl persists
 # progress incrementally rather than in one giant transaction at the end.
 _COMMIT_EVERY = 500
+
+# Redis log buffer — keep the last 200 lines per task, expire after 2h.
+_LOG_KEY_PREFIX = "catalog_log:"
+_LOG_MAX_LINES = 200
+_LOG_TTL_S = 7200
+
+
+def _push_log(redis, task_id: str, level: str, msg: str) -> None:
+    key = f"{_LOG_KEY_PREFIX}{task_id}"
+    entry = json.dumps({"ts": datetime.now(timezone.utc).isoformat(), "level": level, "msg": msg})
+    redis.rpush(key, entry)
+    redis.ltrim(key, -_LOG_MAX_LINES, -1)
+    redis.expire(key, _LOG_TTL_S)
 
 
 class CatalogResult(TypedDict):
@@ -89,6 +103,8 @@ def run_catalog_crawl(self, chain: str, mode: str = "full") -> CatalogResult:
     logger.info("Starting catalog crawl chain=%s mode=%s", chain, mode)
     session = get_db_session()
     redis = get_redis()
+    task_id = self.request.id
+    _push_log(redis, task_id, "info", f"Starting {mode} crawl for {chain}")
 
     # Guard against re-delivery: if the worker is killed mid-task,
     # task_acks_late + task_reject_on_worker_lost will re-queue the message
@@ -136,6 +152,16 @@ def run_catalog_crawl(self, chain: str, mode: str = "full") -> CatalogResult:
             run.products_updated = totals["updated"]
             run.categories_crawled = (run.categories_crawled or 0) + 1
 
+            cat_name = getattr(category, "name", None) or str(category)
+            _push_log(
+                redis,
+                task_id,
+                "info",
+                f"Category '{cat_name}': {len(products)} products "
+                f"(+{counts.created} new, {counts.updated} updated) — "
+                f"total {totals['new']} new",
+            )
+
             if totals["since_commit"] >= _COMMIT_EVERY:
                 session.commit()
                 totals["since_commit"] = 0
@@ -144,6 +170,12 @@ def run_catalog_crawl(self, chain: str, mode: str = "full") -> CatalogResult:
                     chain,
                     totals["new"],
                     totals["updated"],
+                )
+                _push_log(
+                    redis,
+                    task_id,
+                    "info",
+                    f"Progress saved: {totals['new']} new, {totals['updated']} updated",
                 )
             else:
                 # Always persist the progress counters even if product threshold
@@ -154,11 +186,13 @@ def run_catalog_crawl(self, chain: str, mode: str = "full") -> CatalogResult:
             run.categories_found = count
             session.commit()
             logger.info("Catalog %s: discovered %d categories", chain, count)
+            _push_log(redis, task_id, "info", f"Discovered {count} categories to crawl")
 
         if mode == "specials":
             runner = scraper.run_specials
+            resume_page: int = 1  # kept for scrapers that still use page-based resume (e.g. Coles)
 
-            async def specials_sink(products, category):
+            async def specials_sink(products, category, *, page: int = 0):
                 cancel_key = f"catalog_cancel:{self.request.id}"
                 if redis.exists(cancel_key):
                     raise CancelledError(f"Crawl cancelled by user request (chain={chain})")
@@ -171,6 +205,17 @@ def run_catalog_crawl(self, chain: str, mode: str = "full") -> CatalogResult:
                 run.products_found = (run.products_found or 0) + len(products)
                 run.products_new = totals["new"]
                 run.products_updated = totals["updated"]
+                run.categories_crawled = (run.categories_crawled or 0) + 1
+
+                cat_name = getattr(category, "name", None) or str(category)
+                _push_log(
+                    redis,
+                    task_id,
+                    "info",
+                    f"Category '{cat_name}': {len(products)} specials "
+                    f"(+{counts.created} new, {counts.updated} updated) — "
+                    f"total {totals['new']} new",
+                )
 
                 if totals["since_commit"] >= _COMMIT_EVERY:
                     session.commit()
@@ -178,7 +223,7 @@ def run_catalog_crawl(self, chain: str, mode: str = "full") -> CatalogResult:
                 else:
                     session.commit()
 
-            summary = asyncio.run(runner(product_sink=specials_sink))
+            summary = asyncio.run(runner(product_sink=specials_sink, resume_page=resume_page))
         elif mode == "full":
             runner = scraper.run_full
             summary = asyncio.run(
@@ -203,6 +248,15 @@ def run_catalog_crawl(self, chain: str, mode: str = "full") -> CatalogResult:
             run.errors_json = {"errors": summary["errors"][:50]}
         session.commit()
 
+        # Mark successful specials run so the trigger endpoint can warn the admin
+        # if they try to re-run within 24 hours.
+        if mode == "specials" and run.status in ("completed", "completed_with_errors"):
+            redis.setex(
+                f"specials_last_success:{chain}",
+                90000,  # 25 hours
+                run.run_finished_at.isoformat(),
+            )
+
         logger.info(
             "Catalog crawl done chain=%s mode=%s: %d found, %d new, %d updated",
             chain,
@@ -211,6 +265,16 @@ def run_catalog_crawl(self, chain: str, mode: str = "full") -> CatalogResult:
             totals["new"],
             totals["updated"],
         )
+        _push_log(
+            redis,
+            task_id,
+            "info",
+            f"Done: {summary['products_found']} found, {totals['new']} new, "
+            f"{totals['updated']} updated. Status: {run.status}",
+        )
+        if summary["errors"]:
+            for err in summary["errors"][:5]:
+                _push_log(redis, task_id, "error", f"Error: {err}")
         return CatalogResult(
             chain=chain,
             mode=mode,
@@ -224,6 +288,7 @@ def run_catalog_crawl(self, chain: str, mode: str = "full") -> CatalogResult:
             errors=summary["errors"],
         )
     except CancelledError as exc:
+        _push_log(redis, task_id, "warn", f"Crawl cancelled: {exc}")
         session.rollback()
         try:
             run.status = "cancelled"
@@ -249,6 +314,7 @@ def run_catalog_crawl(self, chain: str, mode: str = "full") -> CatalogResult:
             errors=[str(exc)],
         )
     except SoftTimeLimitExceeded:
+        _push_log(redis, task_id, "error", "Crawl timed out (soft time limit exceeded)")
         logger.warning("Catalog crawl timed out chain=%s after %ds", chain, self.soft_time_limit)
         session.rollback()
         try:
@@ -260,6 +326,7 @@ def run_catalog_crawl(self, chain: str, mode: str = "full") -> CatalogResult:
             logger.error("Failed to record crawl timeout: %s", commit_err)
         raise
     except Exception as exc:
+        _push_log(redis, task_id, "error", f"Crawl failed: {exc}")
         logger.exception("Catalog crawl failed chain=%s: %s", chain, exc)
         session.rollback()
         try:

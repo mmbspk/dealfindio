@@ -89,12 +89,32 @@ _BROWSE_URL = "https://www.woolworths.com.au/apis/ui/browse/category"
 
 # NodeIds for sections we don't want to crawl (non-grocery / specials overlay).
 _SKIP_NODE_IDS = {
-    "specialsgroup",  # handled by the specials scraper (woolworths.py)
+    "specialsgroup",  # handled by crawl_specials via _SPECIALS_NODE_IDS
     "1_A363395",  # Everyday Market (third-party marketplace)
     "1_F89E4BB",  # Healthylife (health supplement store)
     "1_BC1E589",  # Gift Ideas
     "1_9E60D27",  # Footy Finals (seasonal)
     "1_B63CF9E",  # Front of Store (internal/restricted)
+}
+
+# Woolworths specials sub-category node IDs (from the /shop/specials/* pages).
+# These are the 13 dedicated specials categories Woolworths shows on their specials
+# landing page — crawling them directly is both faster and more accurate than
+# applying isSpecial=true to the full grocery category tree.
+# NodeId → (url_friendly_name, display_name)
+_SPECIALS_NODE_IDS: dict[str, tuple[str, str]] = {
+    "1-E5BEE36E": ("specials/fruit-veg", "Fruit & Veg"),
+    "1_D5A2236":  ("specials/poultry-meat-seafood", "Poultry, Meat & Seafood"),
+    "1_DEB537E":  ("specials/bakery", "Bakery"),
+    "1_6E4F4E4":  ("specials/dairy-eggs-fridge", "Dairy, Eggs & Fridge"),
+    "1_39FD49C":  ("specials/frozen", "Frozen"),
+    "1_ACA2FC2":  ("specials/pantry", "Pantry"),
+    "1_5AF3A0A":  ("specials/snacks-confectionery", "Snacks & Confectionery"),
+    "1_8E4DA6F":  ("specials/drinks", "Drinks"),
+    "1_61D6FEB":  ("specials/health-wellness", "Health & Wellness"),
+    "1_717A94B":  ("specials/cleaning-maintenance", "Cleaning & Maintenance"),
+    "1_894D0A8":  ("specials/baby", "Baby"),
+    "1_2432B58":  ("specials/pet", "Pet"),
 }
 
 
@@ -226,87 +246,174 @@ class WoolworthsCatalogScraper(CatalogScraper):
                 products.append(product)
         return products
 
-    async def crawl_specials(self, auth: dict) -> Any:
-        """Fetch all Woolworths specials via the search API (IsSpecial=true).
+    async def crawl_specials(self, auth: dict, product_sink=None, resume_page: int = 1) -> Any:
+        """Fetch all Woolworths specials via the dedicated specials sub-category nodes.
 
-        Warms up a session on the homepage for cookies, then paginates the
-        search API with ``searchTerm=a&IsSpecial=true``.
-        Returns a dict ``{"products": [raw_item, ...]}``.
+        Woolworths has 12 specials sub-category pages (/shop/specials/fruit-veg, etc.)
+        that map to specific NodeIds in the browse/category API. Crawling these
+        directly is faster and more accurate than applying isSpecial=true to the full
+        grocery tree (~7,700 specials vs ~22,000 with the isSpecial filter which
+        picks up non-promotional markdowns).
+
+        Per-node resume: completed node IDs are stored in Redis under
+        ``specials_resume:woolworths:{DATE}`` (25h TTL). If the same-day crawl is
+        re-triggered, already-finished nodes are skipped automatically.
         """
-        _SPECIALS_URL = "https://www.woolworths.com.au/apis/ui/Search/products"
-        PAGE_SIZE = 36
-        MAX_PAGES = 200
+        import json as _json
+        from datetime import date as _date
+        from scrapers.catalog_base import HumanLikeRateLimiter
 
-        all_products: list[dict] = []
+        PAGE_SIZE = 36
+        cookies = auth.get("cookies", {})
+        seen_stockcodes: set = set()
+        total_products = 0
+        today = _date.today()
+
+        # Per-node resume: load completed node IDs from Redis (same-day key).
+        redis = self.redis_client  # set by CatalogScraper.__init__ from db/redis args
+        _resume_key = f"specials_resume:woolworths:{today.isoformat()}"
+        completed_nodes: set[str] = set()
+        if redis is not None:
+            try:
+                raw_resume = redis.get(_resume_key)
+                if raw_resume:
+                    completed_nodes = set(_json.loads(raw_resume))
+                    self.logger.info(
+                        "Woolworths specials: resuming — skipping %d already-completed nodes: %s",
+                        len(completed_nodes), completed_nodes,
+                    )
+            except Exception as exc:
+                self.logger.warning("Could not read Woolworths specials resume key: %s", exc)
+
+        # Specials crawl uses a faster rate limiter — Akamai is cookie-based,
+        # not request-frequency-based, so we can safely go faster here than
+        # the full catalog crawl which has to stay stealthy across many hours.
+        specials_rate_limiter = HumanLikeRateLimiter(min_delay_s=1.0, max_delay_s=3.0)
 
         async with httpx.AsyncClient(
+            headers=_JSON_HEADERS,
+            cookies=cookies,
             follow_redirects=True,
             timeout=self.TIMEOUT_S,
             proxies=_get_proxy(),
-            http2=False,
         ) as client:
-            # Warm up homepage to get Akamai session cookies.
+            # Re-warm session cookies — bootstrap may be stale.
             try:
-                await client.get("https://www.woolworths.com.au/", headers=_HTML_HEADERS)
+                async with httpx.AsyncClient(
+                    headers=_HTML_HEADERS,
+                    follow_redirects=True,
+                    timeout=self.TIMEOUT_S,
+                    proxies=_get_proxy(),
+                ) as warm_client:
+                    await warm_client.get("https://www.woolworths.com.au/")
+                    for c in warm_client.cookies.jar:
+                        client.cookies.set(c.name, c.value, c.domain)
             except Exception as exc:
                 self.logger.warning("Woolworths homepage warm-up failed: %s", exc)
 
-            page = 1
-            total_reported: Optional[int] = None
+            remaining = len(_SPECIALS_NODE_IDS) - len(completed_nodes)
+            self.logger.info(
+                "Woolworths specials: crawling %d/%d specials categories",
+                remaining, len(_SPECIALS_NODE_IDS),
+            )
 
-            while page <= MAX_PAGES:
-                await self.rate_limiter.wait()
-                params = {
-                    "searchTerm": "a",
-                    "pageNumber": page,
-                    "pageSize": PAGE_SIZE,
-                    "sortType": "TraderRelevance",
-                    "IsSpecial": "true",
-                    "inStockProductsOnly": "false",
-                }
-                try:
-                    resp = await client.get(_SPECIALS_URL, params=params, headers=_JSON_HEADERS)
+            specials_cat = CategoryNode(id="specials", name="Specials")
+
+            for node_id, (url_name, cat_name) in _SPECIALS_NODE_IDS.items():
+                if node_id in completed_nodes:
+                    self.logger.info("Woolworths specials: skipping already-completed '%s'", cat_name)
+                    continue
+
+                cat_new_items: list[dict] = []
+                cat_total_fetched = 0  # total items seen (including cross-category dupes)
+
+                for page in range(1, self.config.max_pages_per_category + 1):
+                    await specials_rate_limiter.wait()
+                    try:
+                        resp = await client.get(
+                            _BROWSE_URL,
+                            params={
+                                "pageNumber": page,
+                                "pageSize": PAGE_SIZE,
+                                "sortType": "TraderRelevance",
+                                "url": f"/shop/{url_name}",
+                                "location": f"/shop/{url_name}",
+                                "formatObject": json.dumps({"name": cat_name}, separators=(",", ":")),
+                                "categoryId": node_id,
+                                "isSpecial": "true",
+                            },
+                        )
+                    except httpx.HTTPError as exc:
+                        self.logger.warning(
+                            "Woolworths specials: %s page %d failed: %s", cat_name, page, exc
+                        )
+                        break
+
                     if resp.status_code in (401, 403):
                         raise AuthExpiredError(f"Woolworths specials returned {resp.status_code}")
-                    resp.raise_for_status()
-                    data = resp.json()
-                except (httpx.HTTPError, ValueError) as exc:
-                    raise ScraperError(f"Woolworths specials fetch failed: {exc}") from exc
+                    if resp.status_code == 429:
+                        retry_after = _parse_retry_after(resp.headers.get("Retry-After"))
+                        specials_rate_limiter.on_rate_limited(retry_after)
+                        raise ScraperError("Woolworths specials rate-limited (429)")
+                    if resp.status_code != 200:
+                        break
 
-                if total_reported is None:
-                    total_reported = data.get("SearchResultsCount", 0)
-                    self.logger.info("Woolworths reports %d specials total", total_reported)
+                    try:
+                        data = resp.json()
+                    except ValueError:
+                        break
 
-                outer = data.get("Products") or []
-                page_products: list[dict] = []
-                for bundle in outer:
-                    page_products.extend(bundle.get("Products") or [])
+                    page_products = _extract_products(data)
+                    if not page_products:
+                        break
 
-                all_products.extend(page_products)
-                self.logger.debug(
-                    "Specials page %d: %d products (total so far: %d)",
-                    page,
-                    len(page_products),
-                    len(all_products),
-                )
+                    cat_total_fetched += len(page_products)
+                    for item in page_products:
+                        sc = item.get("Stockcode")
+                        key = sc if sc else id(item)
+                        if key not in seen_stockcodes:
+                            seen_stockcodes.add(key)
+                            cat_new_items.append(item)
 
-                if len(page_products) < PAGE_SIZE:
-                    break
-                page += 1
+                    total = data.get("TotalRecordCount") or 0
+                    if len(page_products) < PAGE_SIZE:
+                        break
+                    # Stop when we've fetched at least as many as TotalRecordCount.
+                    # Use a 10% margin because the proxy can return slightly more
+                    # items per page than PAGE_SIZE, so exact equality may never hit.
+                    if total > 0 and cat_total_fetched >= total * 0.9:
+                        break
 
-        self.logger.info("Fetched %d Woolworths specials across %d pages", len(all_products), page)
-        return {"products": all_products}
+                if cat_new_items:
+                    parsed = [
+                        p for item in cat_new_items
+                        if (p := _parse_item(item, specials_cat, today)) is not None
+                    ]
+                    if parsed and product_sink:
+                        await product_sink(parsed, specials_cat)
+                    total_products += len(cat_new_items)
+                    self.logger.info(
+                        "Woolworths specials: '%s' → %d unique products (running total: %d)",
+                        cat_name, len(cat_new_items), total_products,
+                    )
+
+                # Mark this node as done in Redis so a same-day re-run skips it.
+                if redis is not None:
+                    try:
+                        completed_nodes.add(node_id)
+                        redis.setex(_resume_key, 90000, _json.dumps(list(completed_nodes)))
+                    except Exception as exc:
+                        self.logger.warning("Could not save Woolworths specials resume key: %s", exc)
+
+        self.logger.info(
+            "Woolworths specials: fetched %d unique products across %d specials categories",
+            total_products, len(_SPECIALS_NODE_IDS),
+        )
+        return {"_sunk": True, "products_found": total_products}
 
     async def parse_specials(self, raw: Any) -> list[CatalogProduct]:
-        """Parse specials response into CatalogProducts using the shared item parser."""
-        specials_cat = CategoryNode(id="specials", name="Specials")
-        products: list[CatalogProduct] = []
-        today = date.today()
-        for item in raw.get("products", []):
-            product = _parse_item(item, specials_cat, today)
-            if product is not None:
-                products.append(product)
-        return products
+        """Products already parsed and flushed inline during crawl_specials."""
+        return []
 
     # ── Private helpers ───────────────────────────────────────────────────────
 

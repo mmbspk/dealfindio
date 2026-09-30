@@ -116,6 +116,7 @@ export function firebaseErrorMessage(err: unknown): string {
     case 'auth/popup-closed-by-user':
       return 'Sign-in cancelled.'
     default:
-      return 'Something went wrong. Please try again.'
+      console.error('Firebase auth error:', code, err)
+      return `Something went wrong (${code || 'unknown'}). Please try again.`
   }
 }

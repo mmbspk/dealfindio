@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback, forwardRef, useImperativeHandle } from 'react'
 import apiClient from '../api/client'
 
-const ALL_CHAINS = ['coles', 'woolworths', 'aldi', 'iga', 'drakes', 'dan_murphys'] as const
+const ALL_CHAINS = ['coles', 'woolworths', 'aldi', 'iga', 'drakes'] as const
 
 type CrawlerTab = 'catalog' | 'enrichment' | 'coverage'
 type DedupSubTab = 'health' | 'review' | 'run'
@@ -25,13 +25,14 @@ interface Stats {
 interface EnrichResult { chain: string | null; candidates: number; enriched: number; skipped: number; status: string }
 interface EnrichTask { taskId: string; state: string; result: EnrichResult | null; error: string | null }
 interface CatalogResult { chain: string; mode: string; status: string; categories_found: number; categories_crawled: number; categories_skipped: number; products_found: number; products_new: number; products_updated: number }
-interface CatalogTask { taskId: string; mode: string; state: string; result: CatalogResult | null; error: string | null }
+interface CatalogTask { taskId: string; mode: string; state: string; result: CatalogResult | null; error: string | null; alreadyRan?: { lastRunAt: string } }
 interface CatalogConfig { available_chains: string[]; enabled_chains: string[]; schedules: Record<string, string> }
 interface CatalogRun { id: string; chain: string; mode: string; status: string; celery_task_id: string | null; categories_found: number; categories_crawled: number; categories_skipped: number; products_found: number; products_new: number; products_updated: number; run_started_at: string; run_finished_at: string | null }
 interface ConfigEntry { key: string; label: string; description: string; group: string; is_secret: boolean; is_set: boolean; value: string | null; updated_at: string | null; type?: string; options?: string[] | null; min_value?: number | null; max_value?: number | null; default?: string | null }
 interface DedupOverlapRow { chains: string[]; product_count: number }
 interface DedupSampleProduct { product_id: string; name: string; chains: string[]; prices: Record<string, number> }
 interface DedupStats { total_products: number; products_in_1_chain: number; products_in_2plus_chains: number; products_in_3plus_chains: number; overlap_by_combo: DedupOverlapRow[]; sample_multi_chain: DedupSampleProduct[] }
+interface SpecialsFreshnessItem { chain: string; label: string; last_run_at: string | null; last_refresh_expected_at: string | null; hours_since_run: number | null; hours_overdue: number | null; status: 'fresh' | 'stale' | 'overdue' | 'never'; refresh_days_labels: string[] }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -39,14 +40,13 @@ interface DedupStats { total_products: number; products_in_1_chain: number; prod
 const STATUS_TONE: Record<string, PillTone> = {
   running: 'amber', completed: 'green', completed_with_errors: 'amber', failed: 'red', cancelled: 'gray',
 }
-const CHAIN_LOGO: Record<string, string> = { coles: '🔴', woolworths: '🟢', aldi: '🔵', iga: '🟠', dan_murphys: '🟣', drakes: '🟡' }
+const CHAIN_LOGO: Record<string, string> = { coles: '🔴', woolworths: '🟢', aldi: '🔵', iga: '🟠', drakes: '🟡' }
 // Chain → Tailwind badge classes (same convention as pages/Product.tsx & Stores.tsx).
 const CHAIN_BADGE: Record<string, string> = {
   coles: 'bg-red-50 text-red-700 border-red-200',
   woolworths: 'bg-emerald-50 text-emerald-700 border-emerald-200',
   aldi: 'bg-blue-50 text-blue-700 border-blue-200',
   iga: 'bg-orange-50 text-orange-700 border-orange-200',
-  dan_murphys: 'bg-purple-50 text-purple-700 border-purple-200',
   drakes: 'bg-yellow-50 text-yellow-700 border-yellow-200',
 }
 const CRAWLER_TABS: { id: CrawlerTab; label: string }[] = [
@@ -385,6 +385,124 @@ function CatalogRunHistory({ runs }: { runs: CatalogRun[] }) {
   )
 }
 
+interface CatalogLogEntry { ts: string; level: string; msg: string }
+
+function CatalogLogPanel({ taskId }: { taskId: string | null }) {
+  const [lines, setLines] = useState<CatalogLogEntry[]>([])
+  const [displayTaskId, setDisplayTaskId] = useState<string | null>(null)
+  const [search, setSearch] = useState('')
+  const [clearedAt, setClearedAt] = useState(0)
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const logRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (taskId && taskId !== displayTaskId) {
+      setDisplayTaskId(taskId)
+      setLines([])
+      setSearch('')
+      setClearedAt(0)
+    }
+  }, [taskId])
+
+  useEffect(() => {
+    if (!displayTaskId) return
+    const fetch = async () => {
+      try {
+        const r = await apiClient.get<CatalogLogEntry[]>(`/api/v1/admin/catalog/logs/${displayTaskId}?last_n=200`)
+        setLines(r.data)
+      } catch { /* silent */ }
+    }
+    void fetch()
+    pollRef.current = setInterval(() => void fetch(), 3000)
+    return () => { if (pollRef.current) clearInterval(pollRef.current) }
+  }, [displayTaskId])
+
+  const LEVEL_CLASS: Record<string, string> = {
+    error: 'text-red-400', warn: 'text-amber-400', info: 'text-emerald-400',
+  }
+
+  const visibleLines = lines.slice(clearedAt)
+  const filtered = search.trim()
+    ? visibleLines.filter(l => l.msg.toLowerCase().includes(search.toLowerCase()) || l.level.toLowerCase().includes(search.toLowerCase()))
+    : visibleLines
+
+  if (!displayTaskId) {
+    return (
+      <div className="flex items-center justify-center h-20 text-xs text-gray-400">
+        No active crawl — start a run to see live logs.
+      </div>
+    )
+  }
+
+  return (
+    <div>
+      <div className="flex items-center gap-2 mb-2">
+        <div className="relative flex-1">
+          <input
+            type="text"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Filter logs…"
+            className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-[11px] text-gray-300 placeholder-gray-600 focus:outline-none focus:border-gray-500"
+          />
+          {search && (
+            <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300 text-xs">✕</button>
+          )}
+        </div>
+        <button
+          onClick={() => setClearedAt(lines.length)}
+          className="px-2.5 py-1.5 text-[11px] text-gray-400 hover:text-gray-200 bg-gray-900 border border-gray-700 rounded-lg hover:border-gray-500 transition"
+        >
+          Clear
+        </button>
+      </div>
+      <div ref={logRef} className="overflow-y-auto max-h-64 bg-gray-950 rounded-xl p-3 font-mono text-[11px] leading-relaxed">
+        {filtered.length === 0 && (
+          <span className="text-gray-500">{search ? 'No matching log lines.' : 'Waiting for log output…'}</span>
+        )}
+        {filtered.map((l, i) => (
+          <div key={i} className="flex gap-2">
+            <span className="text-gray-600 flex-shrink-0 tabular-nums">
+              {l.ts.slice(11, 19)}
+            </span>
+            <span className={`flex-shrink-0 uppercase font-semibold w-[34px] ${LEVEL_CLASS[l.level] ?? 'text-gray-400'}`}>
+              {l.level}
+            </span>
+            <span className="text-gray-200 break-all">{l.msg}</span>
+          </div>
+        ))}
+      </div>
+      {search && <div className="mt-1 text-[10px] text-gray-500">{filtered.length} of {visibleLines.length} lines</div>}
+    </div>
+  )
+}
+
+function CollapsibleSection({ title, defaultOpen = true, onRefresh, children }: {
+  title: string
+  defaultOpen?: boolean
+  onRefresh?: () => void
+  children: React.ReactNode
+}) {
+  const [open, setOpen] = useState(defaultOpen)
+  return (
+    <div className="border-t border-gray-100">
+      <div className="flex items-center justify-between pt-4 mb-3">
+        <button
+          onClick={() => setOpen(o => !o)}
+          className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-gray-400 hover:text-gray-600 transition-colors"
+        >
+          <span className="text-[10px]">{open ? '▾' : '▸'}</span>
+          {title}
+        </button>
+        {onRefresh && (
+          <AdmButton variant="ghost" size="sm" onClick={onRefresh}>↻ Refresh</AdmButton>
+        )}
+      </div>
+      {open && children}
+    </div>
+  )
+}
+
 function CatalogTab() {
   const [config, setConfig] = useState<CatalogConfig | null>(null)
   const [tasks, setTasks] = useState<Record<string, CatalogTask>>({})
@@ -432,9 +550,11 @@ function CatalogTab() {
   }
   async function recoverActive() {
     try {
-      const r = await apiClient.get<{ active: Record<string, string> }>('/api/v1/admin/catalog/active')
-      for (const [chain, taskId] of Object.entries(r.data.active)) {
-        setTasks(p => ({ ...p, [chain]: { taskId, mode: 'full', state: 'STARTED', result: null, error: null } }))
+      const r = await apiClient.get<{ active: Record<string, { task_id: string; mode: string }> }>('/api/v1/admin/catalog/active')
+      for (const [chain, entry] of Object.entries(r.data.active)) {
+        const taskId = entry.task_id
+        const mode = (entry.mode as CatalogTask['mode']) || 'full'
+        setTasks(p => ({ ...p, [chain]: { taskId, mode, state: 'STARTED', result: null, error: null } }))
         if (taskId) startPolling(chain, taskId)
       }
     } catch { /* silent */ }
@@ -453,14 +573,23 @@ function CatalogTab() {
     }
     pollRefs.current[chain] = setInterval(poll, 5000); void poll()
   }
-  async function trigger(chain: string, mode: 'full' | 'delta' | 'specials') {
-    setTasks(p => ({ ...p, [chain]: { taskId: '', mode, state: 'PENDING', result: null, error: null } }))
+  async function trigger(chain: string, mode: 'full' | 'delta' | 'specials', force = false) {
+    setTasks(p => ({ ...p, [chain]: { taskId: '', mode, state: 'PENDING', result: null, error: null, alreadyRan: undefined } }))
     try {
-      const r = await apiClient.post<{ task_id: string }>(`/api/v1/admin/catalog/${chain}?mode=${mode}`)
+      const url = force
+        ? `/api/v1/admin/catalog/${chain}?mode=${mode}&force=true`
+        : `/api/v1/admin/catalog/${chain}?mode=${mode}`
+      const r = await apiClient.post<{ task_id: string }>(url)
       setTasks(p => ({ ...p, [chain]: { taskId: r.data.task_id, mode, state: 'PENDING', result: null, error: null } }))
       startPolling(chain, r.data.task_id)
     } catch (e) {
-      setTasks(p => ({ ...p, [chain]: { taskId: '', mode, state: 'FAILURE', result: null, error: apiError(e) } }))
+      const detail = (e as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
+      if (detail && typeof detail === 'object' && (detail as Record<string, unknown>).code === 'already_ran') {
+        const d = detail as { code: string; message: string; last_run_at: string }
+        setTasks(p => ({ ...p, [chain]: { taskId: '', mode, state: 'IDLE', result: null, error: null, alreadyRan: { lastRunAt: d.last_run_at } } }))
+      } else {
+        setTasks(p => ({ ...p, [chain]: { taskId: '', mode, state: 'FAILURE', result: null, error: apiError(e) } }))
+      }
     }
   }
   function dismiss(chain: string) {
@@ -596,15 +725,32 @@ function CatalogTab() {
                     })() : null}
                 </ProgressPanel>
               )}
-              <div className="flex gap-2 mt-2">
+              <div className="flex flex-wrap gap-2 mt-2">
                 {/* ALDI: Flyer button replaces Specials; other chains: Specials button */}
                 {isAldi
                   ? <AdmButton variant="primary" size="sm" className="flex-1" disabled={cardRunning} onClick={() => !cardRunning && void triggerFlyer()}>
                       {flyerRunning ? '⏳ Flyer…' : lastFlyer ? `★ Flyer (${relativeTime(lastFlyer.run_started_at)})` : '★ Flyer'}
                     </AdmButton>
-                  : <AdmButton variant="primary" size="sm" className="flex-1" disabled={catalogRunning} onClick={() => !catalogRunning && void trigger(chain, 'specials')}>
-                      {catalogRunning && task?.mode === 'specials' ? '⏳ Specials…' : '★ Specials'}
-                    </AdmButton>
+                  : task?.alreadyRan
+                    ? <div className="w-full">
+                        <div className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1.5 mb-1.5">
+                          Already ran {relativeTime(task.alreadyRan.lastRunAt)}. Run again?
+                        </div>
+                        <div className="flex gap-2">
+                          <AdmButton variant="primary" size="sm" className="flex-1" onClick={() => void trigger(chain, 'specials', true)}>
+                            Run anyway
+                          </AdmButton>
+                          <AdmButton variant="ghost" size="sm" onClick={() => dismiss(chain)}>
+                            Dismiss
+                          </AdmButton>
+                        </div>
+                      </div>
+                    : <AdmButton variant="primary" size="sm" className="flex-1" disabled={catalogRunning} onClick={() => !catalogRunning && void trigger(chain, 'specials')}>
+                        {catalogRunning && task?.mode === 'specials' ? '⏳ Specials…' : (() => {
+                          const lastSpecials = runs.find(r => r.chain === chain && r.mode === 'specials' && (r.status === 'completed' || r.status === 'completed_with_errors' || r.status === 'success'))
+                          return lastSpecials ? `★ Specials (${relativeTime(lastSpecials.run_started_at)})` : '★ Specials'
+                        })()}
+                      </AdmButton>
                 }
                 <AdmButton variant="secondary" size="sm" className="flex-1" disabled={cardRunning} onClick={() => !cardRunning && void trigger(chain, 'full')}>
                   {catalogRunning && task?.mode === 'full' ? '⏳ Full…' : '▶ Full'}
@@ -624,11 +770,27 @@ function CatalogTab() {
         })}
       </div>
 
-      <div className="flex items-center justify-between border-t border-gray-100 pt-4 mb-3">
-        <span className="text-[11px] font-bold uppercase tracking-wider text-gray-400">Catalog Run History</span>
-        <AdmButton variant="ghost" size="sm" onClick={() => { void loadRuns(); void loadProductCounts() }}>↻ Refresh</AdmButton>
-      </div>
-      <CatalogRunHistory runs={runs} />
+      {(() => {
+        // Show logs for the currently running task, or the most recent completed
+        // task if nothing is running — so logs persist after a run finishes.
+        const activeTaskId = Object.values(tasks).find(t => t.taskId && t.state !== 'SUCCESS' && t.state !== 'FAILURE' && t.state !== 'CANCELLED')?.taskId
+          ?? runs.find(r => r.status === 'running')?.celery_task_id
+          ?? Object.values(tasks).find(t => t.taskId)?.taskId
+          ?? runs.find(r => r.celery_task_id)?.celery_task_id
+          ?? null
+        return (
+          <CollapsibleSection title="Crawl Log" defaultOpen={true}>
+            <CatalogLogPanel taskId={activeTaskId} />
+          </CollapsibleSection>
+        )
+      })()}
+
+      <CollapsibleSection
+        title="Catalog Run History"
+        onRefresh={() => { void loadRuns(); void loadProductCounts() }}
+      >
+        <CatalogRunHistory runs={runs} />
+      </CollapsibleSection>
     </div>
   )
 }
@@ -1826,6 +1988,7 @@ export default function Admin() {
   const [stats, setStats] = useState<Stats | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [registeredChains, setRegisteredChains] = useState<number>(0)
+  const [freshness, setFreshness] = useState<SpecialsFreshnessItem[]>([])
   const [dedupRunState, setDedupRunState] = useState<DedupRunState>(DEDUP_RUN_INITIAL)
   const dedupEsRef = useRef<EventSource | null>(null)
 
@@ -1840,12 +2003,14 @@ export default function Admin() {
 
   async function loadStats() {
     try {
-      const [statsRes, catalogRes] = await Promise.all([
+      const [statsRes, catalogRes, freshnessRes] = await Promise.all([
         apiClient.get<Stats>('/api/v1/admin/stats'),
         apiClient.get<CatalogConfig>('/api/v1/admin/catalog/config'),
+        apiClient.get<SpecialsFreshnessItem[]>('/api/v1/admin/scrape/freshness'),
       ])
       setStats(statsRes.data)
       setRegisteredChains(catalogRes.data.available_chains.length)
+      setFreshness(freshnessRes.data)
       setError(null)
     }
     catch { setError('Could not load stats. Is the backend running?') }
@@ -1865,7 +2030,7 @@ export default function Admin() {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
             <StatCard value={stats.total_products.toLocaleString()} label="Total Products" color="#4f46e5" />
             <StatCard value={stats.total_price_reports.toLocaleString()} label="Price Reports" color="#0ea5e9" />
-            <StatCard value={Object.keys(stats.last_scrape_by_chain).filter(k => stats.last_scrape_by_chain[k]).length.toString()} label="Chains Scraped" color="#10b981" />
+            <StatCard value={freshness.filter(f => f.status === 'fresh').length.toString()} label="Specials Fresh" color={freshness.some(f => f.status === 'overdue') ? '#ef4444' : freshness.some(f => f.status === 'stale' || f.status === 'never') ? '#f59e0b' : '#10b981'} />
             <StatCard value={registeredChains.toString()} label="Registered Chains" color="#f59e0b" />
           </div>
         )}

@@ -28,7 +28,6 @@ def _load_registry() -> dict[str, type[CatalogScraper]]:
 
     from scrapers.catalog_aldi import ALDICatalogScraper
     from scrapers.catalog_coles import ColesCatalogScraper
-    from scrapers.catalog_danmurphys import DanMurphysCatalogScraper
     from scrapers.catalog_drakes import DrakesCatalogScraper
     from scrapers.catalog_iga import IGACatalogScraper
     from scrapers.catalog_woolworths import WoolworthsCatalogScraper
@@ -39,7 +38,6 @@ def _load_registry() -> dict[str, type[CatalogScraper]]:
             "woolworths": WoolworthsCatalogScraper,
             "aldi": ALDICatalogScraper,
             "iga": IGACatalogScraper,
-            "dan_murphys": DanMurphysCatalogScraper,
             "drakes": DrakesCatalogScraper,
         }
     )
