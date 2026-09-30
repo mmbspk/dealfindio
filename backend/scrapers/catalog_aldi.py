@@ -316,6 +316,10 @@ class ALDICatalogScraper(CatalogScraper):
         Calls ``product_sink(products, category_node)`` after each category page
         so the task log shows live per-category progress.  Returns a sentinel so
         catalog_tasks knows results were already flushed via the sink.
+
+        Uses ``_fetch_page`` for retry-on-429/5xx (tenacity, up to 4 attempts).
+        A category that still fails after retries is skipped with a warning so the
+        other categories' products are not lost.
         """
         valid_to = date.today() + timedelta(days=_SPECIALS_VALID_DAYS)
         products_found = 0
@@ -335,29 +339,16 @@ class ALDICatalogScraper(CatalogScraper):
                 )
                 offset = 0
                 while True:
-                    await self.rate_limiter.wait()
-                    resp = await client.get(
-                        _PRODUCT_SEARCH_URL,
-                        params={
-                            "categoryTree": cat_key,
-                            "limit": str(_PAGE_SIZE),
-                            "offset": str(offset),
-                        },
-                        timeout=self.TIMEOUT_S,
-                    )
-                    if resp.status_code == 429:
-                        retry_after = int(resp.headers.get("Retry-After", "30"))
-                        self.rate_limiter.on_rate_limited(retry_after)
-                        continue
-                    if resp.status_code != 200:
+                    try:
+                        data = await self._fetch_page(client, cat_key, offset)
+                    except ScraperError as exc:
                         logger.warning(
-                            "ALDI specials category %s returned %d, skipping",
+                            "ALDI specials category '%s' failed after retries, skipping: %s",
                             cat_display,
-                            resp.status_code,
+                            exc,
                         )
                         break
 
-                    data = resp.json()
                     page_products: list[CatalogProduct] = []
                     for item in data.get("data", []):
                         p = _product_from_api(item, cat_display)

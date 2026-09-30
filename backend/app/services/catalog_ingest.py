@@ -315,6 +315,11 @@ def ingest_catalog_product(
     sale_pct_off = ((was - cp.price_cents) / was * 100) if is_on_sale else None
     valid_from = cp.valid_from or date.today()
     valid_from_dt = datetime.combine(valid_from, datetime.min.time()).replace(tzinfo=timezone.utc)
+    valid_to_dt = (
+        datetime.combine(cp.valid_to, datetime.min.time()).replace(tzinfo=timezone.utc)
+        if cp.valid_to
+        else None
+    )
 
     price_report = PriceReport(
         product_id=product.id,
@@ -325,7 +330,7 @@ def ingest_catalog_product(
         is_on_sale=is_on_sale,
         sale_pct_off=sale_pct_off,
         valid_from=valid_from_dt,
-        valid_to=None,
+        valid_to=valid_to_dt,
         confidence=1.0,
         created_at=now,
     )

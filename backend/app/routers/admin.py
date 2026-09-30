@@ -324,19 +324,6 @@ def get_specials_freshness(
         )
         last_runs[chain] = last[0] if last else None
 
-    # ALDI uses flyer runs instead of catalog specials
-    aldi_flyer = (
-        db.query(FlyScrapeRun.run_finished_at)
-        .filter(
-            FlyScrapeRun.chain == "aldi",
-            FlyScrapeRun.status.in_(["completed", "completed_with_errors"]),
-        )
-        .order_by(FlyScrapeRun.run_finished_at.desc())
-        .first()
-    )
-    if aldi_flyer and (last_runs.get("aldi") is None or aldi_flyer[0] > last_runs["aldi"]):
-        last_runs["aldi"] = aldi_flyer[0]
-
     results = all_chain_freshness(last_runs)
     return [
         SpecialsFreshnessItem(
