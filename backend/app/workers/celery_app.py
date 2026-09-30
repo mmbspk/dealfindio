@@ -147,7 +147,7 @@ celery_app.conf.task_queues = (
 
 # Route tasks to appropriate queues based on task name
 celery_app.conf.task_routes = {
-    "app.workers.scraper_tasks.run_flyer_scrape": {"queue": "scraper"},
+    "app.workers.scraper_tasks.run_flyer_scrape": {"queue": "catalog"},
     "app.workers.scraper_tasks.expire_stale_specials": {"queue": "scraper"},
     "app.workers.ml_tasks.refit_and_predict_all": {"queue": "ml"},
     "app.workers.notification_tasks.check_watchlist_for_price": {"queue": "notification"},
@@ -292,22 +292,24 @@ celery_app.conf.beat_schedule = {
     # ALDI: Wed–Tue cycle. Expire Tuesday 13:30 UTC (= 23:30 AEST).
     # Coles/Woolworths/IGA/Drakes specials are set with valid_to at ingest time
     # (catalog pipeline) so no separate expiry task is needed for them.
+    # Pass both source names: legacy flyer runs used "aldi", catalog runs use
+    # "catalog_aldi".  The task filters on `source IN chains` so both are handled.
     "expire-stale-specials-aldi-wed": {
         "task": "app.workers.scraper_tasks.expire_stale_specials",
         "schedule": crontab(day_of_week=2, hour=13, minute=30),
-        "args": (["aldi"],),
+        "args": (["aldi", "catalog_aldi"],),
     },
     # ALDI Saturday Specialbuys expire Friday 20:30 UTC (= 06:30 AEST Sat).
     "expire-stale-specials-aldi-sat": {
         "task": "app.workers.scraper_tasks.expire_stale_specials",
         "schedule": crontab(day_of_week=5, hour=20, minute=30),
-        "args": (["aldi"],),
+        "args": (["aldi", "catalog_aldi"],),
     },
     # ── Weekly specials scrapes ───────────────────────────────────────────────
     #
-    # Coles / Woolworths / IGA / Drakes: now use catalog_tasks.run_catalog_crawl
-    # with mode="specials" so products go through the catalog dedup pipeline.
-    # ALDI still uses the PDF flyer scraper (no API).
+    # All chains now use catalog_tasks.run_catalog_crawl with mode="specials".
+    # ALDI uses ALDICatalogScraper.crawl_specials() which hits the three
+    # promotional categories (Lower Prices, Super Savers, Limited Time Only).
     #
     # All times UTC. AEST = UTC+10. New specials go live Wed 00:01 AEST = Tue 14:01 UTC.
     # Stagger by 10 min to avoid hammering servers simultaneously.
@@ -337,16 +339,16 @@ celery_app.conf.beat_schedule = {
         "args": ("drakes", "specials"),
     },
     # ALDI Wednesday grocery specials: live Wed 00:01 AEST → scrape Wed 20:43 UTC
-    "scrape-flyer-aldi-wed": {
-        "task": "app.workers.scraper_tasks.run_flyer_scrape",
+    "specials-catalog-aldi-wed": {
+        "task": "app.workers.catalog_tasks.run_catalog_crawl",
         "schedule": crontab(day_of_week=2, hour=20, minute=43),
-        "args": ("aldi",),
+        "args": ("aldi", "specials"),
     },
     # ALDI Saturday Specialbuys: live Sat 00:01 AEST → scrape Sat 20:53 UTC (Fri night UTC)
-    "scrape-flyer-aldi-sat": {
-        "task": "app.workers.scraper_tasks.run_flyer_scrape",
+    "specials-catalog-aldi-sat": {
+        "task": "app.workers.catalog_tasks.run_catalog_crawl",
         "schedule": crontab(day_of_week=6, hour=20, minute=53),
-        "args": ("aldi",),
+        "args": ("aldi", "specials"),
     },
     # ── ML & embeddings ───────────────────────────────────────────────────────
     #

@@ -19,7 +19,7 @@ just can't be purchased online; their prices are valid.
 from __future__ import annotations
 
 import re
-from datetime import date
+from datetime import date, timedelta
 from typing import Any, Optional
 
 import httpx
@@ -43,12 +43,24 @@ _IMAGE_URL = (
 _PAGE_SIZE = 48
 
 # Promotional categories — products change weekly and are also in their
-# parent grocery categories; including these causes duplicates.
+# parent grocery categories; including these causes duplicates in full/delta.
 _PROMO_CATEGORY_KEYS = {
     "1588161425841179",  # Lower Prices
     "1588161426952145",  # Super Savers
     "1588161420755352",  # Limited Time Only
 }
+
+# Ordered list for specials crawl — presented as (key, display_name) so the
+# log lines read clearly.
+_SPECIALS_CATEGORIES = [
+    ("1588161420755352", "Limited Time Only"),
+    ("1588161426952145", "Super Savers"),
+    ("1588161425841179", "Lower Prices"),
+]
+
+# ALDI specials run Wed + Sat; treat them as valid for 8 days so a missed
+# expiry run doesn't leave stale on-sale records forever.
+_SPECIALS_VALID_DAYS = 8
 
 _HEADERS = {
     "Accept": "application/vnd.api+json",
@@ -294,3 +306,78 @@ class ALDICatalogScraper(CatalogScraper):
                 products.append(product)
 
         return products
+
+    async def crawl_specials(self, auth: dict, product_sink=None, resume_page: int = 1) -> Any:
+        """Crawl ALDI's three promotional categories (weekly specials).
+
+        These are the same categories skipped during full/delta crawls to avoid
+        duplicates — they're exactly the weekly on-sale items.
+
+        Calls ``product_sink(products, category_node)`` after each category page
+        so the task log shows live per-category progress.  Returns a sentinel so
+        catalog_tasks knows results were already flushed via the sink.
+        """
+        valid_to = date.today() + timedelta(days=_SPECIALS_VALID_DAYS)
+        products_found = 0
+        seen_skus: set[str] = set()
+
+        async with httpx.AsyncClient(
+            headers=_HEADERS,
+            follow_redirects=True,
+            timeout=self.TIMEOUT_S,
+        ) as client:
+            for cat_key, cat_display in _SPECIALS_CATEGORIES:
+                cat_node = CategoryNode(
+                    id=cat_key,
+                    name=cat_display,
+                    url=f"{_PRODUCT_SEARCH_URL}?categoryTree={cat_key}",
+                    parent_id=None,
+                )
+                offset = 0
+                while True:
+                    await self.rate_limiter.wait()
+                    resp = await client.get(
+                        _PRODUCT_SEARCH_URL,
+                        params={
+                            "categoryTree": cat_key,
+                            "limit": str(_PAGE_SIZE),
+                            "offset": str(offset),
+                        },
+                        timeout=self.TIMEOUT_S,
+                    )
+                    if resp.status_code == 429:
+                        retry_after = int(resp.headers.get("Retry-After", "30"))
+                        self.rate_limiter.on_rate_limited(retry_after)
+                        continue
+                    if resp.status_code != 200:
+                        logger.warning(
+                            "ALDI specials category %s returned %d, skipping",
+                            cat_display,
+                            resp.status_code,
+                        )
+                        break
+
+                    data = resp.json()
+                    page_products: list[CatalogProduct] = []
+                    for item in data.get("data", []):
+                        p = _product_from_api(item, cat_display)
+                        if p is None or p.external_id in seen_skus:
+                            continue
+                        seen_skus.add(p.external_id)
+                        # Tag with valid_to so the expiry task can clean up
+                        p.valid_to = valid_to
+                        page_products.append(p)
+
+                    if page_products and product_sink is not None:
+                        await product_sink(page_products, cat_node)
+
+                    products_found += len(page_products)
+
+                    pagination = data.get("meta", {}).get("pagination", {})
+                    total = pagination.get("totalCount", 0)
+                    fetched_so_far = offset + _PAGE_SIZE
+                    if fetched_so_far >= total or not page_products:
+                        break
+                    offset = fetched_so_far
+
+        return {"_sunk": True, "products_found": products_found}

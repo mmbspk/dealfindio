@@ -9,16 +9,7 @@ type TopTab = 'crawlers' | 'dedup' | 'configs'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-interface FlyerRun {
-  id: string; chain: string; status: string
-  products_found: number; products_new: number
-  run_started_at: string; run_finished_at: string | null
-  errors_json: { errors?: string[] } | null
-}
-interface FlyerProgress { pct: number; stage: string; message: string }
-interface FlyerTask { taskId: string; progress: FlyerProgress | null; error: string | null }
-interface Stats {
-  total_products: number; total_price_reports: number
+interface Stats {  total_products: number; total_price_reports: number
   products_by_chain: Record<string, number>
   last_scrape_by_chain: Record<string, string | null>
 }
@@ -510,16 +501,10 @@ function CatalogTab() {
   const [productCounts, setProductCounts] = useState<Record<string, number>>({})
   const pollRefs = useRef<Record<string, ReturnType<typeof setInterval>>>({})
 
-  // ALDI flyer scraper state (lives here since there's no separate tab anymore)
-  const [flyerTask, setFlyerTask] = useState<FlyerTask | null>(null)
-  const [flyerRuns, setFlyerRuns] = useState<FlyerRun[]>([])
-  const flyerPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
-
   useEffect(() => {
     void loadConfig(); void loadRuns(); void loadProductCounts(); void recoverActive()
-    void loadFlyerRuns(); void recoverFlyerActive()
     const iv = setInterval(() => void loadRuns(), 8000)
-    return () => { clearInterval(iv); Object.values(pollRefs.current).forEach(clearInterval); if (flyerPollRef.current) clearInterval(flyerPollRef.current) }
+    return () => { clearInterval(iv); Object.values(pollRefs.current).forEach(clearInterval) }
   }, [])
 
   async function loadProductCounts() {
@@ -607,76 +592,25 @@ function CatalogTab() {
     }
   }
 
-  // ── ALDI flyer helpers ────────────────────────────────────────────────────
-  async function loadFlyerRuns() {
-    try { const r = await apiClient.get<FlyerRun[]>('/api/v1/admin/scrape/runs?limit=5&chain=aldi'); setFlyerRuns(r.data) } catch { /* silent */ }
-  }
-  async function recoverFlyerActive() {
-    try {
-      const r = await apiClient.get<{ active: Record<string, string> }>('/api/v1/admin/scrape/active')
-      const taskId = r.data.active['aldi']
-      if (taskId) { setFlyerTask({ taskId, progress: { pct: 0, stage: 'starting', message: 'Reconnecting…' }, error: null }); startFlyerPolling(taskId) }
-    } catch { /* silent */ }
-  }
-  function startFlyerPolling(taskId: string) {
-    if (flyerPollRef.current) clearInterval(flyerPollRef.current)
-    const poll = async () => {
-      try {
-        const r = await apiClient.get<FlyerProgress>(`/api/v1/admin/scrape/progress/${taskId}`)
-        setFlyerTask(t => ({ ...(t ?? { taskId, error: null }), progress: r.data }))
-        if (r.data.stage === 'done' || r.data.stage === 'failed' || r.data.stage === 'cancelled') {
-          if (flyerPollRef.current) clearInterval(flyerPollRef.current)
-          setTimeout(() => void loadFlyerRuns(), 1500)
-        }
-      } catch { /* keep polling */ }
-    }
-    flyerPollRef.current = setInterval(poll, 1000); void poll()
-  }
-  async function triggerFlyer() {
-    setFlyerTask({ taskId: '', progress: { pct: 0, stage: 'starting', message: 'Queued…' }, error: null })
-    try {
-      const r = await apiClient.post<{ task_id: string }>('/api/v1/admin/scrape/aldi')
-      setFlyerTask({ taskId: r.data.task_id, progress: { pct: 0, stage: 'starting', message: 'Queued…' }, error: null })
-      startFlyerPolling(r.data.task_id)
-    } catch (e) {
-      setFlyerTask({ taskId: '', progress: null, error: apiError(e) })
-    }
-  }
-  async function cancelFlyer() {
-    try {
-      await apiClient.delete('/api/v1/admin/scrape/aldi')
-      if (flyerPollRef.current) clearInterval(flyerPollRef.current)
-      setFlyerTask(t => ({ ...(t ?? { taskId: '', error: null }), progress: { pct: 100, stage: 'cancelled', message: 'Cancelled by user' } }))
-      setTimeout(() => void loadFlyerRuns(), 1500)
-    } catch (e) {
-      setFlyerTask(t => ({ ...(t ?? { taskId: '', progress: null }), error: apiError(e) }))
-    }
-  }
-
-  const flyerRunning = !!flyerTask && flyerTask.progress?.stage !== 'done' && flyerTask.progress?.stage !== 'failed' && flyerTask.progress?.stage !== 'cancelled'
-  const lastFlyer = flyerRuns[0]
-
   return (
     <div className="p-6 sm:p-7">
       <div className="flex items-start justify-between gap-5 mb-6">
         <div>
           <h2 className="text-lg font-bold text-gray-900 mb-1.5">Catalog Crawl</h2>
-          <p className="text-sm text-gray-500 leading-relaxed max-w-xl">Authenticated catalog crawls. <strong>Specials</strong> hits the promotions endpoint (fast, weekly). Full walks every category. Delta re-checks changed categories only. ALDI uses a PDF flyer scraper.</p>
+          <p className="text-sm text-gray-500 leading-relaxed max-w-xl">Authenticated catalog crawls. <strong>Specials</strong> hits the promotions endpoint (fast, weekly). Full walks every category. Delta re-checks changed categories only.</p>
         </div>
       </div>
 
       {config?.available_chains.length === 0 && <div className="text-center text-gray-400 py-10 text-sm">No catalog scrapers registered yet.</div>}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         {config?.available_chains.map(chain => {
-          const isAldi = chain === 'aldi'
           const task = tasks[chain]
           const catalogRunning = !!task && task.state !== 'SUCCESS' && task.state !== 'FAILURE' && task.state !== 'CANCELLED'
-          const cardRunning = isAldi ? (catalogRunning || flyerRunning) : catalogRunning
           const enabled = config.enabled_chains.includes(chain)
           const cron = config.schedules[chain] || ''
           return (
-            <ChainCard key={chain} chain={chain} isRunning={cardRunning} isDone={isAldi ? false : task?.state === 'SUCCESS'} isFailed={isAldi ? false : task?.state === 'FAILURE'}
-              onDismiss={task && !catalogRunning && !isAldi ? () => dismiss(chain) : undefined}>
+            <ChainCard key={chain} chain={chain} isRunning={catalogRunning} isDone={task?.state === 'SUCCESS'} isFailed={task?.state === 'FAILURE'}
+              onDismiss={task && !catalogRunning ? () => dismiss(chain) : undefined}>
               <div className="flex flex-col gap-1 text-xs text-gray-500 mb-1.5">
                 <Pill tone={enabled ? 'green' : 'gray'}>{enabled ? 'Scheduled' : 'On-demand'}</Pill>
                 <span>{cron ? `Cron: ${cron}` : 'Delta: on-demand'}</span>
@@ -687,7 +621,6 @@ function CatalogTab() {
                 </span>
                 <span className="text-xs text-gray-400">products</span>
               </div>
-              {/* catalog task progress */}
               {task && (
                 <ProgressPanel>
                   {task.error && task.state === 'CANCELLED' ? <div className="text-xs text-gray-500">↩ Cancelled</div>
@@ -703,66 +636,36 @@ function CatalogTab() {
                       return <div className="text-[11px] text-gray-500">⏳ {task.mode} crawl {task.state === 'PENDING' ? 'queued…' : `running… ${detail}`}</div>
                     })()}</ProgressPanel>
               )}
-              {/* ALDI flyer progress */}
-              {isAldi && flyerTask && (
-                <ProgressPanel>
-                  {flyerTask.error ? <div className="text-xs text-red-500">{flyerTask.error}</div>
-                  : flyerTask.progress ? (() => {
-                      const { stage, pct, message } = flyerTask.progress
-                      const done = stage === 'done'; const failed = stage === 'failed'; const cancelled = stage === 'cancelled'
-                      const color = failed ? 'text-red-500' : cancelled ? 'text-gray-400' : done ? 'text-emerald-600' : 'text-emerald-600'
-                      const bar = failed ? 'bg-red-500' : cancelled ? 'bg-gray-300' : 'bg-emerald-500'
-                      return <>
-                        <div className="flex justify-between text-xs font-semibold mb-1.5">
-                          <span className={color}>Flyer: {done ? 'Done' : failed ? 'Failed' : cancelled ? 'Cancelled' : stage}</span>
-                          <span className="text-gray-400">{pct}%</span>
-                        </div>
-                        <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden mb-1.5">
-                          <div className={`h-full rounded-full transition-all duration-500 ${bar}`} style={{ width: `${pct}%` }} />
-                        </div>
-                        <div className="text-[11px] text-gray-500">{message}</div>
-                      </>
-                    })() : null}
-                </ProgressPanel>
-              )}
               <div className="flex flex-wrap gap-2 mt-2">
-                {/* ALDI: Flyer button replaces Specials; other chains: Specials button */}
-                {isAldi
-                  ? <AdmButton variant="primary" size="sm" className="flex-1" disabled={cardRunning} onClick={() => !cardRunning && void triggerFlyer()}>
-                      {flyerRunning ? '⏳ Flyer…' : lastFlyer ? `★ Flyer (${relativeTime(lastFlyer.run_started_at)})` : '★ Flyer'}
-                    </AdmButton>
-                  : task?.alreadyRan
-                    ? <div className="w-full">
-                        <div className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1.5 mb-1.5">
-                          Already ran {relativeTime(task.alreadyRan.lastRunAt)}. Run again?
-                        </div>
-                        <div className="flex gap-2">
-                          <AdmButton variant="primary" size="sm" className="flex-1" onClick={() => void trigger(chain, 'specials', true)}>
-                            Run anyway
-                          </AdmButton>
-                          <AdmButton variant="ghost" size="sm" onClick={() => dismiss(chain)}>
-                            Dismiss
-                          </AdmButton>
-                        </div>
+                {task?.alreadyRan
+                  ? <div className="w-full">
+                      <div className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1.5 mb-1.5">
+                        Already ran {relativeTime(task.alreadyRan.lastRunAt)}. Run again?
                       </div>
-                    : <AdmButton variant="primary" size="sm" className="flex-1" disabled={catalogRunning} onClick={() => !catalogRunning && void trigger(chain, 'specials')}>
-                        {catalogRunning && task?.mode === 'specials' ? '⏳ Specials…' : (() => {
-                          const lastSpecials = runs.find(r => r.chain === chain && r.mode === 'specials' && (r.status === 'completed' || r.status === 'completed_with_errors' || r.status === 'success'))
-                          return lastSpecials ? `★ Specials (${relativeTime(lastSpecials.run_started_at)})` : '★ Specials'
-                        })()}
-                      </AdmButton>
+                      <div className="flex gap-2">
+                        <AdmButton variant="primary" size="sm" className="flex-1" onClick={() => void trigger(chain, 'specials', true)}>
+                          Run anyway
+                        </AdmButton>
+                        <AdmButton variant="ghost" size="sm" onClick={() => dismiss(chain)}>
+                          Dismiss
+                        </AdmButton>
+                      </div>
+                    </div>
+                  : <AdmButton variant="primary" size="sm" className="flex-1" disabled={catalogRunning} onClick={() => !catalogRunning && void trigger(chain, 'specials')}>
+                      {catalogRunning && task?.mode === 'specials' ? '⏳ Specials…' : (() => {
+                        const lastSpecials = runs.find(r => r.chain === chain && r.mode === 'specials' && (r.status === 'completed' || r.status === 'completed_with_errors' || r.status === 'success'))
+                        return lastSpecials ? `★ Specials (${relativeTime(lastSpecials.run_started_at)})` : '★ Specials'
+                      })()}
+                    </AdmButton>
                 }
-                <AdmButton variant="secondary" size="sm" className="flex-1" disabled={cardRunning} onClick={() => !cardRunning && void trigger(chain, 'full')}>
+                <AdmButton variant="secondary" size="sm" className="flex-1" disabled={catalogRunning} onClick={() => !catalogRunning && void trigger(chain, 'full')}>
                   {catalogRunning && task?.mode === 'full' ? '⏳ Full…' : '▶ Full'}
                 </AdmButton>
-                <AdmButton variant="secondary" size="sm" className="flex-1" disabled={cardRunning} onClick={() => !cardRunning && void trigger(chain, 'delta')}>
+                <AdmButton variant="secondary" size="sm" className="flex-1" disabled={catalogRunning} onClick={() => !catalogRunning && void trigger(chain, 'delta')}>
                   {catalogRunning && task?.mode === 'delta' ? '⏳ Delta…' : '↻ Delta'}
                 </AdmButton>
                 {catalogRunning && (
                   <AdmButton variant="danger" size="sm" onClick={() => void cancel(chain)} title="Stop this crawl">✕</AdmButton>
-                )}
-                {isAldi && flyerRunning && (
-                  <AdmButton variant="danger" size="sm" onClick={() => void cancelFlyer()} title="Stop flyer scrape">✕</AdmButton>
                 )}
               </div>
             </ChainCard>
