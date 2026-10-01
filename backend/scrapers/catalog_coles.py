@@ -329,7 +329,7 @@ class ColesCatalogScraper(CatalogScraper):
         sunk page-by-page so nothing is lost across IP rotations.
         Returns ``{"_sunk": True, "products_found": N}``.
         """
-        specials_cat = CategoryNode(id="specials", name="Specials")
+        specials_cat = CategoryNode(id="specials", name="")
         today = date.today()
         products_found = 0
         start_page = max(1, resume_page)

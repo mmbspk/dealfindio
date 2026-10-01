@@ -317,7 +317,7 @@ class WoolworthsCatalogScraper(CatalogScraper):
                 remaining, len(_SPECIALS_NODE_IDS),
             )
 
-            specials_cat = CategoryNode(id="specials", name="Specials")
+            specials_cat = CategoryNode(id="specials", name="")
 
             for node_id, (url_name, cat_name) in _SPECIALS_NODE_IDS.items():
                 if node_id in completed_nodes:
@@ -516,6 +516,13 @@ def _parse_item(item: dict, category: CategoryNode, today: date) -> Optional[Cat
     in_stock = bool(item.get("IsInStock", True)) and bool(item.get("IsAvailable", True))
 
     package_size = item.get("PackageSize") or None
+    # Woolworths uses "1EA" for single-item products (not informative — hide it).
+    # Normalise multi-pack count markers: "44PK", "44EA" → "44 Pack".
+    if package_size:
+        pk_m = re.match(r'^(\d+)\s*(?:ea|each|pk|pack)$', package_size, re.IGNORECASE)
+        if pk_m:
+            count = int(pk_m.group(1))
+            package_size = f"{count} Pack" if count > 1 else None
     cup_price = item.get("CupPrice")
     cup_measure = item.get("CupMeasure") or ""
     unit_price: Optional[float] = None

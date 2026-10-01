@@ -32,6 +32,8 @@ class ProductResponse(BaseModel):
 
     # Cheapest current price across all stores/chains (null if no price data yet)
     lowest_price_aud: float | None = Field(None, description="Cheapest current price in AUD")
+    cheapest_chain: str | None = Field(None, description="Chain name with the lowest price")
+    available_chains: list[str] = Field(default_factory=list, description="All chains currently carrying this product")
     was_price_aud: float | None = Field(
         None, description="Original price before discount, if on sale"
     )

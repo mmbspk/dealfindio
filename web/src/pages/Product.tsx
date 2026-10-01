@@ -7,6 +7,7 @@ import { PredictionCard } from '../components/PredictionCard'
 import type { Prediction } from '../components/PredictionCard'
 import { useGeolocation } from '../hooks/useGeolocation'
 import { SaveToListButton } from '../components/SaveToListButton'
+import { ChainBadge, CHAIN_META } from '../components/ChainBadge'
 import type { PricePoint, Product as ProductType } from '../types'
 
 const RADIUS_KEY = 'dealfindio_radius'
@@ -42,38 +43,10 @@ interface StoreItem {
   store_url?: string | null
 }
 
-const CHAIN_COLORS: Record<string, string> = {
-  coles: 'bg-red-50 text-red-700 border-red-200',
-  woolworths: 'bg-green-50 text-green-700 border-green-200',
-  aldi: 'bg-blue-50 text-blue-700 border-blue-200',
-  iga: 'bg-orange-50 text-orange-700 border-orange-200',
-  drakes: 'bg-yellow-50 text-yellow-700 border-yellow-200',
-}
-
-const CHAIN_LABELS: Record<string, string> = {
-  coles: 'Coles',
-  woolworths: 'Woolworths',
-  aldi: 'ALDI',
-  iga: 'IGA',
-  drakes: 'Drakes',
-}
-
-function ChainBadge({ chain }: { chain: string }) {
-  const cls = CHAIN_COLORS[chain.toLowerCase()] ?? 'bg-gray-50 text-gray-700 border-gray-200'
-  const label = CHAIN_LABELS[chain.toLowerCase()] ?? chain
-  return (
-    <span className={`inline-block text-xs font-semibold px-2 py-0.5 rounded border ${cls}`}>
-      {label}
-    </span>
-  )
-}
-
 function formatStoreName(name: string, chain: string): string {
-  // Strip "(catalog)" suffix — these are virtual catalog store rows, not physical locations
   const cleaned = name.replace(/\s*\(catalog\)\s*$/i, '').trim()
-  // If what remains is just the bare chain name (case-insensitive), use the chain label
   if (!cleaned || cleaned.toLowerCase() === chain.toLowerCase()) {
-    return CHAIN_LABELS[chain.toLowerCase()] ?? chain
+    return CHAIN_META[chain.toLowerCase()]?.label ?? chain
   }
   return cleaned
 }
@@ -229,6 +202,24 @@ export const Product: React.FC = () => {
   const onSaleStores = stores.filter(s => s.is_on_sale)
   const visibleStores = showAllStores ? stores : stores.slice(0, STORES_PREVIEW)
 
+  // Staleness / availability signals
+  const isUnavailable = product.in_stock === false
+  const daysSinceUpdate = product.last_updated
+    ? Math.floor((Date.now() - new Date(product.last_updated).getTime()) / 86_400_000)
+    : null
+  const STALE_DAYS = 7
+  const isStale = daysSinceUpdate !== null && daysSinceUpdate > STALE_DAYS
+  const showStaleBanner = isUnavailable || isStale
+
+  function lastSeenLabel(): string {
+    if (daysSinceUpdate === null) return ''
+    if (daysSinceUpdate === 0) return 'today'
+    if (daysSinceUpdate === 1) return 'yesterday'
+    if (daysSinceUpdate < 30) return `${daysSinceUpdate} days ago`
+    const months = Math.floor(daysSinceUpdate / 30)
+    return `${months} month${months > 1 ? 's' : ''} ago`
+  }
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Breadcrumb / sticky top bar */}
@@ -310,6 +301,23 @@ export const Product: React.FC = () => {
                 </span>
               )}
 
+              {/* Staleness / availability banner */}
+              {showStaleBanner && (
+                <div className={`flex items-start gap-2 px-3 py-2.5 rounded-xl mb-4 text-xs ${isUnavailable ? 'bg-amber-50 border border-amber-200 text-amber-800' : 'bg-gray-50 border border-gray-200 text-gray-500'}`}>
+                  <svg className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <div>
+                    {isUnavailable && <p className="font-semibold">Currently unavailable</p>}
+                    {daysSinceUpdate !== null && (
+                      <p className={isUnavailable ? 'mt-0.5 opacity-80' : 'font-medium'}>
+                        {isUnavailable ? `Last seen ${lastSeenLabel()}` : `Prices last updated ${lastSeenLabel()} — may have changed`}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {(product.package_size || product.unit_price != null) && (
                 <div className="flex items-center gap-3 mb-4 flex-wrap">
                   {product.package_size && (
@@ -329,13 +337,13 @@ export const Product: React.FC = () => {
               {lowestPrice != null && (
                 <div className="border-t border-gray-100 pt-4 mt-2">
                   <p className="text-xs text-gray-400 mb-1">
-                    {position ? 'Best price nearby' : 'Best price available'}
+                    {isUnavailable ? 'Last known price' : position ? 'Best price nearby' : 'Best price available'}
                   </p>
                   <div className="flex items-baseline gap-2">
-                    <span className={`text-3xl font-bold ${onSaleStores.length > 0 ? 'text-[#176f50]' : 'text-gray-900'}`}>
+                    <span className={`text-3xl font-bold ${isUnavailable ? 'text-gray-400' : onSaleStores.length > 0 ? 'text-[#176f50]' : 'text-gray-900'}`}>
                       ${lowestPrice.toFixed(2)}
                     </span>
-                    {onSaleStores.length > 0 && (
+                    {!isUnavailable && onSaleStores.length > 0 && (
                       <span className="text-xs text-[#176f50] font-medium">
                         On sale at {onSaleStores.length} store{onSaleStores.length > 1 ? 's' : ''}
                       </span>
@@ -370,14 +378,12 @@ export const Product: React.FC = () => {
                       </p>
                     )}
                   </div>
-                  {position && (
-                    <span className="text-xs text-emerald-500 flex items-center gap-1">
-                      <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
-                        <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z" />
-                      </svg>
-                      Sorted by distance
-                    </span>
-                  )}
+                  <span className="text-xs text-emerald-500 flex items-center gap-1">
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4h13M3 8h9m-9 4h6m4 0l4-4m0 0l4 4m-4-4v12" />
+                    </svg>
+                    Sorted by price
+                  </span>
                 </div>
 
                 {/* Radius slider — only shown when location is active */}
@@ -465,10 +471,12 @@ export const Product: React.FC = () => {
                         </div>
 
                         <div className="text-right flex-shrink-0">
-                          <p className={`text-base font-bold ${store.is_on_sale ? 'text-[#176f50]' : 'text-gray-900'}`}>
+                          <p className={`text-base font-bold ${isUnavailable ? 'text-gray-400' : store.is_on_sale ? 'text-[#176f50]' : 'text-gray-900'}`}>
                             ${store.price_aud.toFixed(2)}
                           </p>
-                          {store.is_on_sale ? (
+                          {isUnavailable ? (
+                            <span className="text-[10px] text-amber-500 font-medium">Last known</span>
+                          ) : store.is_on_sale ? (
                             <span className="text-[10px] text-[#176f50] font-semibold">
                               {store.discount_pct ? `-${Math.round(store.discount_pct)}%` : 'On Sale'}
                             </span>

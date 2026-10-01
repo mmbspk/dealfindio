@@ -141,8 +141,14 @@ def _product_from_api(item: dict, category_name: str) -> Optional[CatalogProduct
 
     unit_price, unit_price_label = _parse_comparison_display(price_obj.get("comparisonDisplay"))
 
-    # sellingSize: "200 g", "2 L", "1.5 kg" → normalise to our package_size format
+    # sellingSize: "200 g", "2 L", "44 each" → normalise to package_size format.
+    # ALDI returns count-based items as "44 each" — reformat to "44 Pack"; hide "1 each".
     selling_size = (item.get("sellingSize") or "").strip() or None
+    if selling_size:
+        count_m = re.match(r'^(\d+)\s*(?:each|ea|pk|pack)$', selling_size, re.IGNORECASE)
+        if count_m:
+            count = int(count_m.group(1))
+            selling_size = f"{count} Pack" if count > 1 else None
 
     # Category: use deepest available category name ("Dairy, Eggs & Fridge > Cheese")
     cats = item.get("categories") or []
@@ -357,6 +363,8 @@ class ALDICatalogScraper(CatalogScraper):
                         seen_skus.add(p.external_id)
                         # Tag with valid_to so the expiry task can clean up
                         p.valid_to = valid_to
+                        # All products in these promo categories are on sale by definition.
+                        p.is_on_sale = True
                         page_products.append(p)
 
                     if page_products and product_sink is not None:

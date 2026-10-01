@@ -392,7 +392,7 @@ class DrakesCatalogScraper(CatalogScraper):
                     continue
                 seen.add(product.external_id)
                 # Override category to "Specials" for sale items
-                product.category = "Specials"
+                product.category = None
                 products.append(product)
             del soup
 

@@ -22,10 +22,10 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
-from sqlalchemy import or_, select
+from sqlalchemy import desc, or_, select
 from sqlalchemy.orm import Session
 
 from app.models import PriceReport, Product, Store
@@ -36,6 +36,76 @@ from scrapers.catalog_base import CatalogProduct
 logger = logging.getLogger(__name__)
 
 _matcher = FuzzyMatcher()
+
+# ── Price sanity check ───────────────────────────────────────────────────────
+# Thresholds for detecting corrupt / mismatched prices. Two-condition design
+# avoids false-positives from legitimate deep discounts:
+#
+#   Rule A — extreme outlier: price alone is < 20% of baseline (>80% off).
+#             Any legitimate ~80% sale should still be verified by a human.
+#
+#   Rule B — moderate outlier with suspicious "was" price: price < 35% of
+#             baseline AND the retailer's own "was" price < 65% of baseline.
+#             On a genuine 70% sale the "was" price should match the known
+#             market price; when BOTH are far below baseline the product
+#             identity itself is almost certainly wrong (a mismatched item).
+#
+# Both rules require at least 2 clean, recent prices from OTHER chains as a
+# baseline so a single flawed report can't become the new normal.
+
+_SUSPECT_EXTREME_RATIO = 0.20    # Rule A: price < 20% of median → flag
+_SUSPECT_PRICE_RATIO = 0.35      # Rule B price leg: price < 35% of median
+_SUSPECT_WAS_RATIO = 0.65        # Rule B was-price leg: was < 65% of median
+_SUSPECT_MIN_SAMPLES = 2         # min other-chain prices needed for a baseline
+_SUSPECT_LOOKBACK_DAYS = 90      # how far back to look for baseline prices
+
+
+def _is_suspect_price(
+    session: Session,
+    product: Product,
+    chain: str,
+    price_cents: int,
+    was_price_cents: int | None,
+) -> bool:
+    """Return True if this price looks like corrupt/mismatched data.
+
+    Uses two independent rules so legitimate deep discounts aren't blocked:
+    - Rule A: price alone is < 20% of the recent median (catches obvious garbage).
+    - Rule B: BOTH price and was_price are well below baseline (the product
+      identity is likely wrong — a mismatched item from fuzzy dedup).
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(days=_SUSPECT_LOOKBACK_DAYS)
+    rows = session.execute(
+        select(PriceReport.price_cents)
+        .where(
+            PriceReport.product_id == product.id,
+            PriceReport.created_at >= cutoff,
+            PriceReport.is_flagged == False,  # noqa: E712 — SQLAlchemy needs ==
+            PriceReport.source != f"catalog_{chain}",
+        )
+        .order_by(PriceReport.created_at.desc())
+        .limit(20)
+    ).scalars().all()
+
+    if len(rows) < _SUSPECT_MIN_SAMPLES:
+        return False
+
+    sorted_prices = sorted(rows)
+    median = sorted_prices[len(sorted_prices) // 2]
+
+    # Rule A — extreme: price is < 20% of median
+    if price_cents < median * _SUSPECT_EXTREME_RATIO:
+        return True
+
+    # Rule B — moderate + was_price also low (product identity likely wrong)
+    if (
+        price_cents < median * _SUSPECT_PRICE_RATIO
+        and was_price_cents is not None
+        and was_price_cents < median * _SUSPECT_WAS_RATIO
+    ):
+        return True
+
+    return False
 
 
 @dataclass
@@ -311,8 +381,11 @@ def ingest_catalog_product(
 
     # Record the observed shelf price.
     was = cp.was_price_cents
-    is_on_sale = bool(was and cp.price_cents < was)
-    sale_pct_off = ((was - cp.price_cents) / was * 100) if is_on_sale else None
+    if cp.is_on_sale is not None:
+        is_on_sale = cp.is_on_sale
+    else:
+        is_on_sale = bool(was and cp.price_cents < was)
+    sale_pct_off = ((was - cp.price_cents) / was * 100) if (is_on_sale and was) else None
     valid_from = cp.valid_from or date.today()
     valid_from_dt = datetime.combine(valid_from, datetime.min.time()).replace(tzinfo=timezone.utc)
     valid_to_dt = (
@@ -320,6 +393,47 @@ def ingest_catalog_product(
         if cp.valid_to
         else None
     )
+
+    is_suspect = _is_suspect_price(session, product, chain, cp.price_cents, was)
+    if is_suspect:
+        logger.warning(
+            "SUSPECT price flagged: %d¢ (was %s¢) for %r [chain=%s, product_id=%s] — "
+            "price deviates strongly from cross-chain baseline; stored but excluded from results",
+            cp.price_cents,
+            was,
+            product.name,
+            chain,
+            product.id,
+        )
+
+    # Change-log pattern: only insert a new row when the price data actually changed.
+    # If the most-recent observation for this (product, store) is identical in every
+    # price field, just advance its created_at so it remains "current" — this prevents
+    # the table from accumulating duplicate rows every crawl and keeps historical
+    # queries meaningful (a new row genuinely means the price changed).
+    existing_pr = (
+        session.execute(
+            select(PriceReport)
+            .where(
+                PriceReport.product_id == product.id,
+                PriceReport.store_id == store.id,
+            )
+            .order_by(desc(PriceReport.created_at))
+            .limit(1)
+        )
+        .scalars()
+        .first()
+    )
+    if (
+        existing_pr is not None
+        and existing_pr.price_cents == cp.price_cents
+        and existing_pr.was_price_cents == was
+        and bool(existing_pr.is_on_sale) == is_on_sale
+        and bool(existing_pr.is_flagged) == is_suspect
+    ):
+        existing_pr.created_at = now
+        session.flush()
+        return created, updated
 
     price_report = PriceReport(
         product_id=product.id,
@@ -331,7 +445,8 @@ def ingest_catalog_product(
         sale_pct_off=sale_pct_off,
         valid_from=valid_from_dt,
         valid_to=valid_to_dt,
-        confidence=1.0,
+        confidence=0.1 if is_suspect else 1.0,
+        is_flagged=is_suspect,
         created_at=now,
     )
     session.add(price_report)

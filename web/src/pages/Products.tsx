@@ -4,6 +4,8 @@ import { apiClient } from '../api/client'
 import { Product } from '../types'
 import { useGeolocation } from '../hooks/useGeolocation'
 import { SaveToListButton } from '../components/SaveToListButton'
+import { formatPackageSize } from '../lib/format'
+import { ChainBadgeList } from '../components/ChainBadge'
 
 const PAGE_SIZE = 48
 
@@ -350,6 +352,7 @@ export const Products: React.FC = () => {
 function ProductTile({ product, viewMode }: { product: Product; viewMode: ViewMode }) {
   const [imgError, setImgError] = useState(false)
   const hasPrice = product.lowest_price_aud != null
+  const packSize = formatPackageSize(product.package_size)
 
   if (viewMode === 'list') {
     return (
@@ -376,10 +379,22 @@ function ProductTile({ product, viewMode }: { product: Product; viewMode: ViewMo
           <p className="text-sm font-medium text-gray-900 group-hover:text-[#176f50] transition-colors line-clamp-1">
             {product.name}
           </p>
-          <div className="flex items-center gap-2 mt-0.5">
+          {packSize && (
+            <div className="mt-0.5">
+              <span className="text-xs font-semibold text-gray-700 bg-gray-100 border border-gray-200 px-2 py-0.5 rounded">
+                {packSize}
+              </span>
+            </div>
+          )}
+          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
             {product.brand && <span className="text-xs text-gray-400">{product.brand}</span>}
             {product.category && <span className="text-xs bg-emerald-50 text-[#176f50] rounded px-1.5 py-0.5">{product.category}</span>}
           </div>
+          {product.unit_price != null && (
+            <p className="text-xs text-gray-400 mt-0.5">
+              ${product.unit_price.toFixed(2)} / {product.unit_price_label ?? 'unit'}
+            </p>
+          )}
         </div>
         <div className="flex-shrink-0 flex flex-col items-end gap-1">
           {hasPrice && (
@@ -390,6 +405,9 @@ function ProductTile({ product, viewMode }: { product: Product; viewMode: ViewMo
               {product.was_price_aud != null && (
                 <div className="text-xs text-gray-400 line-through">${product.was_price_aud.toFixed(2)}</div>
               )}
+              <div className="flex justify-end">
+                <ChainBadgeList chains={product.available_chains} size="xs" />
+              </div>
             </div>
           )}
           <div className="flex items-center gap-1.5 mt-0.5">
@@ -449,17 +467,27 @@ function ProductTile({ product, viewMode }: { product: Product; viewMode: ViewMo
         {product.brand && (
           <p className="text-xs text-gray-400 mt-0.5 truncate">{product.brand}</p>
         )}
+        {packSize && (
+          <div className="mt-1">
+            <span className={`font-semibold text-gray-700 bg-gray-100 border border-gray-200 px-2 py-0.5 rounded ${viewMode === 'comfortable' ? 'text-xs' : 'text-[10px]'}`}>
+              {packSize}
+            </span>
+          </div>
+        )}
 
         {hasPrice ? (
-          <div className="mt-1.5 flex items-baseline gap-1.5 flex-wrap">
-            <span className={`font-bold ${product.is_on_sale ? 'text-red-600' : 'text-gray-900'} ${viewMode === 'comfortable' ? 'text-base' : 'text-sm'}`}>
-              ${product.lowest_price_aud!.toFixed(2)}
-            </span>
-            {product.was_price_aud != null && (
-              <span className="text-xs text-gray-400 line-through">
-                ${product.was_price_aud.toFixed(2)}
+          <div className="mt-1.5">
+            <div className="flex items-baseline gap-1.5 flex-wrap">
+              <span className={`font-bold ${product.is_on_sale ? 'text-red-600' : 'text-gray-900'} ${viewMode === 'comfortable' ? 'text-base' : 'text-sm'}`}>
+                ${product.lowest_price_aud!.toFixed(2)}
               </span>
-            )}
+              {product.was_price_aud != null && (
+                <span className="text-xs text-gray-400 line-through">
+                  ${product.was_price_aud.toFixed(2)}
+                </span>
+              )}
+            </div>
+            <ChainBadgeList chains={product.available_chains} size="xs" />
           </div>
         ) : (
           product.category && (

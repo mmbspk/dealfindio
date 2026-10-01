@@ -11,6 +11,8 @@ export interface Product {
   in_stock?: boolean
   external_source?: string | null
   lowest_price_aud?: number | null
+  cheapest_chain?: string | null
+  available_chains?: string[] | null
   was_price_aud?: number | null
   discount_pct?: number | null
   is_on_sale?: boolean

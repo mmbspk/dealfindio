@@ -320,27 +320,6 @@ class TestValidateCommunityReportFullPath:
         assert result["status"] in ("validated", "flagged", "pending_review")
 
 
-class TestRunFlyerScrape:
-    """app.workers.scraper_tasks.run_flyer_scrape"""
-
-    def _fn(self):
-        from app.workers.scraper_tasks import run_flyer_scrape
-
-        return run_flyer_scrape
-
-    @pytest.mark.integration
-    def test_invalid_chain_raises(self, test_db_session):
-        from app.workers import scraper_tasks
-
-        with patch.object(
-            scraper_tasks, "get_db_session", return_value=test_db_session
-        ), patch.object(scraper_tasks, "get_redis", return_value=MagicMock()):
-            # Invalid chain -> ValueError -> task triggers a retry/raise
-            # (no broker in tests, so it surfaces as an exception, not a result).
-            with pytest.raises(Exception):
-                self._fn().run("not_a_real_chain")
-
-
 class TestNotifyPredictionDrops:
     """app.workers.notification_tasks.notify_prediction_drops"""
 

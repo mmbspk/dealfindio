@@ -16,7 +16,7 @@ from sqlalchemy import select as sa_select
 from sqlalchemy.orm import Session
 
 from app.deps import get_db, get_redis, require_admin, require_admin_sse
-from app.models import FlyScrapeRun, PriceReport, Product
+from app.models import PriceReport, Product
 
 router = APIRouter()
 
@@ -26,210 +26,22 @@ VALID_CHAINS = {"coles", "woolworths", "aldi", "iga", "drakes"}
 # ── Schemas ────────────────────────────────────────────────────────────────────
 
 
-class ScrapeRunResponse(BaseModel):
-    id: str
-    chain: str
-    status: str
-    products_found: int
-    products_new: int
-    run_started_at: datetime
-    run_finished_at: datetime | None
-    errors_json: dict | None
-
-    class Config:
-        from_attributes = True
-
-
-class TriggerResponse(BaseModel):
-    task_id: str
-    chain: str
-    message: str
-
-
 class StatsResponse(BaseModel):
     total_products: int
     total_price_reports: int
     products_by_chain: dict[str, int]
-    last_scrape_by_chain: dict[str, datetime | None]
 
 
-class ProgressResponse(BaseModel):
-    task_id: str
-    pct: int
-    stage: str
-    message: str
 
 
-ACTIVE_TASK_TTL = 7200  # 2 hours — safety expiry if task crashes without cleanup
 
 
-class ActiveTasksResponse(BaseModel):
-    active: dict[str, str]  # chain -> task_id
 
 
-# ── Endpoints ──────────────────────────────────────────────────────────────────
 
 
-@router.post("/scrape/all", response_model=list[TriggerResponse])
-def trigger_all_scrapers(
-    redis=Depends(get_redis), _admin=Depends(require_admin)
-) -> list[TriggerResponse]:
-    """Trigger all 4 scrapers in parallel immediately via Celery."""
-    from app.workers.scraper_tasks import run_flyer_scrape
-
-    results = []
-    for chain in sorted(VALID_CHAINS):
-        task = run_flyer_scrape.apply_async(args=[chain], queue="catalog")
-        redis.setex(f"scrape_active:{chain}", ACTIVE_TASK_TTL, task.id)
-        results.append(
-            TriggerResponse(
-                task_id=task.id,
-                chain=chain,
-                message=f"Scraper for '{chain}' queued. Task ID: {task.id}",
-            )
-        )
-    return results
 
 
-@router.post("/scrape/{chain}", response_model=TriggerResponse)
-def trigger_scrape(
-    chain: str,
-    db: Session = Depends(get_db),
-    redis=Depends(get_redis),
-    _admin=Depends(require_admin),
-) -> TriggerResponse:
-    """Trigger a scraper for a single chain immediately via Celery."""
-    if chain not in VALID_CHAINS:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Invalid chain '{chain}'. Must be one of: {sorted(VALID_CHAINS)}",
-        )
-
-    from app.workers.scraper_tasks import run_flyer_scrape
-
-    task = run_flyer_scrape.apply_async(args=[chain], queue="scraper")
-    redis.setex(f"scrape_active:{chain}", ACTIVE_TASK_TTL, task.id)
-
-    return TriggerResponse(
-        task_id=task.id,
-        chain=chain,
-        message=f"Scraper for '{chain}' queued. Task ID: {task.id}",
-    )
-
-
-@router.get("/scrape/active", response_model=ActiveTasksResponse)
-def get_active_tasks(
-    redis=Depends(get_redis), _admin=Depends(require_admin)
-) -> ActiveTasksResponse:
-    """Return task IDs for chains currently running a scrape.
-
-    Auto-clears stale keys where the progress entry no longer exists
-    (e.g. after a worker crash before the key was deleted).
-    """
-    active = {}
-    for chain in VALID_CHAINS:
-        val = redis.get(f"scrape_active:{chain}")
-        if not val:
-            continue
-        task_id = val.decode() if isinstance(val, bytes) else val
-        # Only report as active if the task has a progress entry AND isn't done/failed
-        progress_raw = redis.get(f"scrape_progress:{task_id}")
-        if progress_raw:
-            progress = json.loads(progress_raw)
-            if progress.get("stage") not in ("done", "failed"):
-                active[chain] = task_id
-                continue
-        # Stale key — clean it up
-        redis.delete(f"scrape_active:{chain}")
-    return ActiveTasksResponse(active=active)
-
-
-@router.get("/scrape/runs", response_model=list[ScrapeRunResponse])
-def list_scrape_runs(
-    limit: int = 50,
-    chain: str | None = None,
-    db: Session = Depends(get_db),
-    _admin=Depends(require_admin),
-) -> list[ScrapeRunResponse]:
-    """Return recent scrape run history, newest first."""
-    q = db.query(FlyScrapeRun).order_by(FlyScrapeRun.run_started_at.desc())
-    if chain:
-        if chain not in VALID_CHAINS:
-            raise HTTPException(status_code=422, detail=f"Invalid chain '{chain}'")
-        q = q.filter(FlyScrapeRun.chain == chain)
-    runs = q.limit(max(1, min(limit, 200))).all()
-    return [
-        ScrapeRunResponse(
-            id=str(r.id),
-            chain=r.chain,
-            status=r.status,
-            products_found=r.products_found or 0,
-            products_new=r.products_new or 0,
-            run_started_at=r.run_started_at,
-            run_finished_at=r.run_finished_at,
-            errors_json=r.errors_json,
-        )
-        for r in runs
-    ]
-
-
-@router.get("/scrape/progress/{task_id}", response_model=ProgressResponse)
-def get_scrape_progress(
-    task_id: str,
-    redis=Depends(get_redis),
-    _admin=Depends(require_admin),
-) -> ProgressResponse:
-    """Return the latest progress snapshot for a running (or recently finished) scrape task."""
-    raw = redis.get(f"scrape_progress:{task_id}")
-    if not raw:
-        raise HTTPException(status_code=404, detail="No progress data for this task ID")
-    data = json.loads(raw)
-    return ProgressResponse(
-        task_id=task_id,
-        pct=data.get("pct", 0),
-        stage=data.get("stage", "unknown"),
-        message=data.get("message", ""),
-    )
-
-
-@router.delete("/scrape/{chain}", status_code=200)
-def cancel_scrape(
-    chain: str,
-    db: Session = Depends(get_db),
-    redis=Depends(get_redis),
-    _admin=Depends(require_admin),
-) -> dict:
-    """Cancel an in-progress flyer scrape for a chain.
-
-    Sets a Redis flag checked by the worker, revokes the Celery task if still
-    queued, and marks the run record as cancelled.
-    """
-    if chain not in VALID_CHAINS:
-        raise HTTPException(status_code=422, detail=f"Unknown chain '{chain}'")
-
-    from app.models import FlyScrapeRun as FSR
-    from app.workers.celery_app import celery_app
-
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=2)
-    run = (
-        db.query(FSR)
-        .filter(FSR.chain == chain, FSR.status == "running", FSR.run_started_at >= cutoff)
-        .order_by(FSR.run_started_at.desc())
-        .first()
-    )
-    if not run:
-        raise HTTPException(status_code=404, detail=f"No active scrape found for '{chain}'.")
-
-    if run.celery_task_id:
-        redis.setex(f"scrape_cancel:{run.celery_task_id}", 3600, "1")
-        celery_app.control.revoke(run.celery_task_id, terminate=False)
-
-    run.status = "cancelled"
-    run.run_finished_at = datetime.now(timezone.utc)
-    redis.delete(f"scrape_active:{chain}")
-    db.commit()
-
-    return {"chain": chain, "status": "cancelled", "task_id": run.celery_task_id}
 
 
 @router.get("/stats", response_model=StatsResponse)
@@ -244,50 +56,13 @@ def get_stats(db: Session = Depends(get_db), _admin=Depends(require_admin)) -> S
     )
     products_by_chain = {row[0]: row[1] for row in chain_counts}
 
-    # Last run per chain (any terminal status — used for "Last run: X ago" on cards)
-    last_scrapes: dict[str, datetime | None] = {}
-    for chain in VALID_CHAINS:
-        last = (
-            db.query(FlyScrapeRun.run_finished_at)
-            .filter(
-                FlyScrapeRun.chain == chain,
-                FlyScrapeRun.status.in_(
-                    ["completed", "completed_with_errors", "cancelled", "failed"]
-                ),
-            )
-            .order_by(FlyScrapeRun.run_finished_at.desc())
-            .first()
-        )
-        last_scrapes[chain] = last[0] if last else None
-
     return StatsResponse(
         total_products=total_products,
         total_price_reports=total_price_reports,
         products_by_chain=products_by_chain,
-        last_scrape_by_chain=last_scrapes,
     )
 
 
-@router.get("/scrape/weekly-counts")
-def get_scrape_weekly_counts(
-    db: Session = Depends(get_db),
-    _admin=Depends(require_admin),
-) -> dict[str, int]:
-    """Return products_found from the latest run per chain (any terminal status)."""
-    from sqlalchemy import text as sa_text
-
-    rows = db.execute(
-        sa_text(
-            """
-            SELECT DISTINCT ON (chain)
-                chain, products_found
-            FROM flyer_scrape_runs
-            WHERE status IN ('completed', 'completed_with_errors', 'cancelled', 'failed')
-            ORDER BY chain, run_started_at DESC
-        """
-        )
-    ).fetchall()
-    return {chain: products_found for chain, products_found in rows}
 
 
 class SpecialsFreshnessItem(BaseModel):

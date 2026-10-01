@@ -20,7 +20,6 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.deps import _engine, _redis_pool, get_db, get_redis
-from app.models import FlyScrapeRun
 
 logger = logging.getLogger(__name__)
 
@@ -113,49 +112,6 @@ async def liveness_check() -> Dict[str, Any]:
         "status": "alive",
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
-
-
-@router.get("/health/scraper", status_code=status.HTTP_200_OK)
-async def scraper_status(db: Session = Depends(get_db)) -> Dict[str, Any]:
-    """
-    Get status of recent scraper runs.
-
-    Queries the database for the last 4 scraper runs across all chains
-    and returns their status, timing, and product ingestion statistics.
-
-    Returns:
-        Dict with scraper status and run history
-    """
-    try:
-        # Query last 4 scraper runs
-        last_runs = await db.execute(desc(FlyScrapeRun.run_started_at)).scalars().all()
-
-        # Convert to list with limit
-        runs_list = last_runs[:4] if last_runs else []
-
-        return {
-            "status": "ok",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "last_runs": [
-                {
-                    "chain": r.chain,
-                    "status": r.status,
-                    "started_at": r.run_started_at.isoformat() if r.run_started_at else None,
-                    "finished_at": r.run_finished_at.isoformat() if r.run_finished_at else None,
-                    "products_found": r.products_found,
-                    "products_new": r.products_new,
-                    "products_updated": r.products_updated,
-                }
-                for r in runs_list
-            ],
-        }
-    except Exception as e:
-        logger.error(f"Scraper status check failed: {e}")
-        return {
-            "status": "error",
-            "error": str(e),
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
 
 
 @router.get("/health/database", status_code=status.HTTP_200_OK)
@@ -350,19 +306,6 @@ async def metrics_summary(db: Session = Depends(get_db)) -> Dict[str, Any]:
         # User count
         result = await db.execute(text("SELECT COUNT(*) FROM user_profile"))
         metrics["counts"]["users"] = result.scalar() or 0
-
-        # Last scrape run
-        try:
-            result = await db.execute(
-                text(
-                    "SELECT run_started_at FROM fly_scrape_run ORDER BY run_started_at DESC LIMIT 1"
-                )
-            )
-            last_scrape = result.scalar()
-            if last_scrape:
-                metrics["last_scrape_run"] = last_scrape.isoformat()
-        except Exception:
-            pass
 
         return metrics
     except Exception as e:

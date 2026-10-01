@@ -2,7 +2,7 @@
 Canonical category normalisation for dealfindio.
 
 Raw category strings from Woolworths (e.g. "Fruit & Veg > FRUIT AND VEG") and Coles
-(e.g. "Fruit & Vegetables > Fresh Vegetables") are mapped to a consistent set of ~16
+(e.g. "Fruit & Vegetables > Fresh Vegetables") are mapped to a consistent set of ~17
 human-readable flat names used across the whole app.
 
 Usage:
@@ -14,7 +14,8 @@ from __future__ import annotations
 
 # Every known raw category string → canonical name.
 # Keys include both the full "root > DEPT" form and bare root forms.
-CATEGORY_MAP: dict[str, str] = {
+# A value of None means "not a real product category — store as NULL".
+CATEGORY_MAP: dict[str, str | None] = {
     # ── Baby ─────────────────────────────────────────────────────────────────
     "Baby": "Baby",
     "Baby > GROCERIES": "Baby",
@@ -70,10 +71,10 @@ CATEGORY_MAP: dict[str, str] = {
     "Drinks": "Drinks",
     "Drinks > GROCERIES": "Drinks",
     "Drinks > FRESH CONVENIENCE": "Drinks",
-    # ── Electronics ──────────────────────────────────────────────────────────
-    "Electronics": "Electronics",
-    "Electronics > FRONT OF STORE": "Electronics",
-    "Electronics > GENERAL MERCHANDISE": "Electronics",
+    # ── Electronics → Home & Garden ──────────────────────────────────────────
+    "Electronics": "Home & Garden",
+    "Electronics > FRONT OF STORE": "Home & Garden",
+    "Electronics > GENERAL MERCHANDISE": "Home & Garden",
     # ── Frozen ───────────────────────────────────────────────────────────────
     "Frozen": "Frozen",
     "Freezer": "Frozen",
@@ -104,14 +105,14 @@ CATEGORY_MAP: dict[str, str] = {
     "Home & Lifestyle > GENERAL MERCHANDISE": "Home & Garden",
     "Home & Lifestyle > GROCERIES": "Home & Garden",
     "Home & Lifestyle > FRONT OF STORE": "Home & Garden",
-    # ── Lunchbox ─────────────────────────────────────────────────────────────
-    "Lunchbox": "Lunchbox",
-    "Lunch Box": "Lunchbox",
-    "Lunch Box > GROCERIES": "Lunchbox",
-    "Lunch Box > FRESH CONVENIENCE": "Lunchbox",
-    "Lunch Box > FRUIT AND VEG": "Lunchbox",
-    "Lunch Box > GENERAL MERCHANDISE": "Lunchbox",
-    "Lunch Box > PROPRIETARY BAKERY": "Lunchbox",
+    # ── Lunchbox → Pantry ────────────────────────────────────────────────────
+    "Lunchbox": "Pantry",
+    "Lunch Box": "Pantry",
+    "Lunch Box > GROCERIES": "Pantry",
+    "Lunch Box > FRESH CONVENIENCE": "Pantry",
+    "Lunch Box > FRUIT AND VEG": "Pantry",
+    "Lunch Box > GENERAL MERCHANDISE": "Pantry",
+    "Lunch Box > PROPRIETARY BAKERY": "Pantry",
     # ── Meat & Seafood ───────────────────────────────────────────────────────
     "Meat & Seafood": "Meat & Seafood",
     "Meat, Seafood and Deli": "Meat & Seafood",
@@ -122,13 +123,13 @@ CATEGORY_MAP: dict[str, str] = {
     "Poultry, Meat & Seafood": "Meat & Seafood",
     # Drakes
     "Meat": "Meat & Seafood",
-    # ── Meals & Dinner ───────────────────────────────────────────────────────
-    "Dinner": "Meals & Dinner",
-    "Dinner > FRESH CONVENIENCE": "Meals & Dinner",
-    "Dinner > FRUIT AND VEG": "Meals & Dinner",
-    "Dinner > GROCERIES": "Meals & Dinner",
-    "Dinner > DELI SERVICE": "Meals & Dinner",
-    "Dinner > SEAFOOD SERVICE": "Meals & Dinner",
+    # ── Ready Meals ──────────────────────────────────────────────────────────
+    "Dinner": "Ready Meals",
+    "Dinner > FRESH CONVENIENCE": "Ready Meals",
+    "Dinner > FRUIT AND VEG": "Ready Meals",
+    "Dinner > GROCERIES": "Ready Meals",
+    "Dinner > DELI SERVICE": "Ready Meals",
+    "Dinner > SEAFOOD SERVICE": "Ready Meals",
     # ── Pantry ───────────────────────────────────────────────────────────────
     "Pantry": "Pantry",
     "Pantry > GROCERIES": "Pantry",
@@ -138,6 +139,8 @@ CATEGORY_MAP: dict[str, str] = {
     "Snacks & Confectionery": "Pantry",
     "Food & Snacks": "Pantry",
     "Limited Time Only": "Pantry",
+    "Super Savers": "Pantry",
+    "Lower Prices": "Pantry",
     "Snacks & Confectionery > GROCERIES": "Pantry",
     "Snacks & Confectionery > FRESH CONVENIENCE": "Pantry",
     "Snacks & Confectionery > FRUIT AND VEG": "Pantry",
@@ -155,8 +158,17 @@ CATEGORY_MAP: dict[str, str] = {
     "Pet > FRESH CONVENIENCE": "Pet",
     # Drakes
     "Petcare": "Pet",
-    # ── Other ────────────────────────────────────────────────────────────────
-    "Other": "Other",
+    # ── Vitamins & Supplements ───────────────────────────────────────────────
+    "Vitamins & Supplements": "Vitamins & Supplements",
+    # ── Promotional/layout labels — not real product categories ───────────────
+    # These appear as fallback category names in specials crawls or store layouts.
+    # Explicit None so normalise_category returns None rather than storing the label.
+    "Specials": None,
+    "Other": None,
+    "Front of Store": None,
+    "Container Bonus Credits": None,
+    "Christmas": None,
+    "General Merchandise": None,
 }
 
 
@@ -167,15 +179,19 @@ def normalise_category(raw: str | None) -> str | None:
     Tries exact match first, then falls back to stripping the " > SUFFIX" portion
     and matching the root. Unknown categories are returned as their root (no suffix),
     so new scraper categories degrade gracefully rather than silently disappearing.
+    Returns None for empty/null input or explicitly non-category labels.
     """
     if not raw:
         return None
     raw = raw.strip()
+    if not raw:
+        return None
 
-    canonical = CATEGORY_MAP.get(raw)
-    if canonical:
-        return canonical
+    if raw in CATEGORY_MAP:
+        return CATEGORY_MAP[raw]
 
     # Try root only (strip everything after " > ")
     root = raw.split(" > ")[0].strip()
-    return CATEGORY_MAP.get(root, root)
+    if root in CATEGORY_MAP:
+        return CATEGORY_MAP[root]
+    return root

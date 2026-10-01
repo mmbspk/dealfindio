@@ -236,7 +236,7 @@ class IGACatalogScraper(CatalogScraper):
         seen_ids: set[str] = set()
 
         for item in raw.get("items") or []:
-            product = _parse_item(item, "Specials", today)
+            product = _parse_item(item, None, today)
             if product is None or product.external_id in seen_ids:
                 continue
             seen_ids.add(product.external_id or "")
@@ -300,7 +300,7 @@ def _flatten_category_tree(data: Any) -> list[CategoryNode]:
 # ── Product helpers ───────────────────────────────────────────────────────────
 
 
-def _parse_item(item: dict, cat_name: str, today: date) -> Optional[CatalogProduct]:
+def _parse_item(item: dict, cat_name: str | None, today: date) -> Optional[CatalogProduct]:
     product_id = str(item.get("productId") or item.get("sku") or "").strip()
     if not product_id:
         return None
@@ -347,8 +347,27 @@ def _parse_item(item: dict, cat_name: str, today: date) -> Optional[CatalogProdu
     size_val = uos.get("size")
     size_type = uos.get("type") or uos.get("abbreviation") or ""
     package_size: Optional[str] = None
-    if size_val and size_type and size_type.lower() not in ("each", ""):
-        package_size = f"{size_val}{size_type}"
+    # Map verbose IGA unit names to clean abbreviations
+    _IGA_UNIT_ABBREV = {
+        "millilitre": "mL", "milliliter": "mL", "ml": "mL",
+        "litre": "L", "liter": "L",
+        "gram": "g", "grams": "g",
+        "kilogram": "kg", "kilograms": "kg",
+        "ounce": "oz", "ounces": "oz",
+    }
+    if size_val is not None and size_type:
+        type_lower = size_type.lower()
+        if type_lower in ("each", "ea", "pk", "pack"):
+            # Count-based packs: only meaningful when > 1 (e.g. "44 each" → "44 Pack")
+            try:
+                count = int(float(size_val))
+                if count > 1:
+                    package_size = f"{count} Pack"
+            except (ValueError, TypeError):
+                pass
+        elif type_lower:
+            abbrev = _IGA_UNIT_ABBREV.get(type_lower)
+            package_size = f"{size_val} {abbrev}" if abbrev else f"{size_val}{size_type}"
 
     brand = (item.get("brand") or "").strip() or None
     canonical = _normalise_category(cat_name) or cat_name

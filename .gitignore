@@ -130,3 +130,6 @@ GoogleService-Info.plist
 *.tmp
 *.temp
 .prettierignore
+
+# ── Backups ──────────────────────────────────────────────────────────────────
+backups/

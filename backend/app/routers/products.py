@@ -3,6 +3,7 @@ Products router with search, detail, price history, and per-product store endpoi
 """
 
 import logging
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, Literal
 from uuid import UUID
@@ -62,52 +63,66 @@ router = APIRouter(tags=["Products"])
 
 
 def _attach_prices(db: Session, products: list[Product]) -> list[ProductResponse]:
-    """Attach cheapest current price to each product in one batch query."""
+    """Attach cheapest current price and all available chains to each product in one batch query."""
     if not products:
         return []
 
     product_ids = [p.id for p in products]
 
-    # Latest price report per product: pick the lowest price_cents row per product_id
-    latest_subq = (
+    # Step 1: latest observation per (product, store) — change-log semantics.
+    latest_per_store_subq = (
         select(
             PriceReport.product_id,
-            func.min(PriceReport.price_cents).label("min_price_cents"),
+            PriceReport.store_id,
+            func.max(PriceReport.created_at).label("latest_at"),
         )
-        .where(PriceReport.product_id.in_(product_ids))
-        .group_by(PriceReport.product_id)
+        .where(
+            PriceReport.product_id.in_(product_ids),
+            PriceReport.is_flagged == False,  # noqa: E712
+        )
+        .group_by(PriceReport.product_id, PriceReport.store_id)
         .subquery()
     )
 
-    # Join back to get was_price / discount / on_sale for the cheapest row
-    price_rows = db.execute(
+    # Step 2: all current rows (one per store per product), cheapest-first within each product.
+    # Ordering by price_cents means grouped[product_id][0] is always the cheapest row.
+    current_rows = db.execute(
         select(
             PriceReport.product_id,
             PriceReport.price_cents,
             PriceReport.was_price_cents,
             PriceReport.sale_pct_off,
             PriceReport.is_on_sale,
+            Store.chain,
         )
+        .join(Store, PriceReport.store_id == Store.id)
         .join(
-            latest_subq,
+            latest_per_store_subq,
             and_(
-                PriceReport.product_id == latest_subq.c.product_id,
-                PriceReport.price_cents == latest_subq.c.min_price_cents,
+                PriceReport.product_id == latest_per_store_subq.c.product_id,
+                PriceReport.store_id == latest_per_store_subq.c.store_id,
+                PriceReport.created_at == latest_per_store_subq.c.latest_at,
             ),
         )
-        .distinct(PriceReport.product_id)
-        .order_by(PriceReport.product_id, desc(PriceReport.created_at))
+        .order_by(PriceReport.product_id, PriceReport.price_cents)
     ).fetchall()
 
-    price_map: dict = {
-        row.product_id: {
-            "lowest_price_aud": row.price_cents / 100,
-            "was_price_aud": row.was_price_cents / 100 if row.was_price_cents else None,
-            "discount_pct": float(row.sale_pct_off) if row.sale_pct_off else None,
-            "is_on_sale": bool(row.is_on_sale),
+    # Group rows by product; first row per group is cheapest (SQL order guarantees this).
+    grouped: dict = defaultdict(list)
+    for row in current_rows:
+        grouped[row.product_id].append(row)
+
+    price_map: dict = {}
+    for pid, rows in grouped.items():
+        cheapest = rows[0]
+        price_map[pid] = {
+            "lowest_price_aud": cheapest.price_cents / 100,
+            "cheapest_chain": cheapest.chain,
+            "was_price_aud": cheapest.was_price_cents / 100 if cheapest.was_price_cents else None,
+            "discount_pct": float(cheapest.sale_pct_off) if cheapest.sale_pct_off else None,
+            "is_on_sale": bool(cheapest.is_on_sale),
+            "available_chains": sorted({r.chain for r in rows if r.chain}),
         }
-        for row in price_rows
-    }
 
     results = []
     for p in products:
@@ -115,9 +130,11 @@ def _attach_prices(db: Session, products: list[Product]) -> list[ProductResponse
         price = price_map.get(p.id)
         if price:
             data.lowest_price_aud = price["lowest_price_aud"]
+            data.cheapest_chain = price["cheapest_chain"]
             data.was_price_aud = price["was_price_aud"]
             data.discount_pct = price["discount_pct"]
             data.is_on_sale = price["is_on_sale"]
+            data.available_chains = price["available_chains"]
         results.append(data)
     return results
 
@@ -203,12 +220,33 @@ async def search_products(
             elif sort == "newest":
                 stmt = stmt.order_by(desc(Product.created_at))
             elif sort in ("price_asc", "price_desc", "discount"):
-                # For browse (no query), price sort requires a join to PriceReport
+                # For browse (no query), price sort requires a join to PriceReport.
+                # Two-step: (1) latest observation per (product, store), (2) min price
+                # across those current rows. Mirrors _attach_prices() so sort order
+                # is consistent with displayed prices.
+                _browse_latest_subq = (
+                    select(
+                        PriceReport.product_id,
+                        PriceReport.store_id,
+                        func.max(PriceReport.created_at).label("latest_at"),
+                    )
+                    .where(PriceReport.is_flagged == False)  # noqa: E712
+                    .group_by(PriceReport.product_id, PriceReport.store_id)
+                    .subquery()
+                )
                 best_price_subq = (
                     select(
                         PriceReport.product_id,
                         func.min(PriceReport.price_cents).label("min_price"),
                         func.max(PriceReport.sale_pct_off).label("max_disc"),
+                    )
+                    .join(
+                        _browse_latest_subq,
+                        and_(
+                            PriceReport.product_id == _browse_latest_subq.c.product_id,
+                            PriceReport.store_id == _browse_latest_subq.c.store_id,
+                            PriceReport.created_at == _browse_latest_subq.c.latest_at,
+                        ),
                     )
                     .group_by(PriceReport.product_id)
                     .subquery()
@@ -288,6 +326,7 @@ async def get_product(
                 and_(
                     PriceReport.product_id == product_id,
                     PriceReport.created_at >= datetime.now(timezone.utc) - timedelta(days=90),
+                    PriceReport.is_flagged == False,  # noqa: E712
                 )
             )
             .group_by(PriceReport.store_id)
@@ -310,6 +349,7 @@ async def get_product(
         # Group by chain and calculate stats
         chain_stats = {}
         last_updated = None
+        best_price_row: PriceReport | None = None
 
         for price_report, store in price_reports:
             if store.chain not in chain_stats:
@@ -323,6 +363,9 @@ async def get_product(
 
             if not last_updated or price_report.created_at > last_updated:
                 last_updated = price_report.created_at
+
+            if best_price_row is None or price_report.price_cents < best_price_row.price_cents:
+                best_price_row = price_report
 
         # Build price by chain responses
         latest_prices = []
@@ -339,18 +382,19 @@ async def get_product(
                 )
             )
 
-        return ProductDetailResponse(
-            id=product.id,
-            gtin=product.gtin,
-            name=product.name,
-            brand=product.brand,
-            category=product.category,
-            unit_type=product.unit_type,
-            unit_size=product.unit_size,
-            image_url=product.image_url,
-            latest_prices=latest_prices,
-            last_updated=last_updated,
-        )
+        response = ProductDetailResponse.model_validate(product)
+        response.latest_prices = latest_prices
+        response.last_updated = last_updated
+        if best_price_row is not None:
+            response.lowest_price_aud = best_price_row.price_cents / 100
+            response.was_price_aud = (
+                best_price_row.was_price_cents / 100 if best_price_row.was_price_cents else None
+            )
+            response.discount_pct = (
+                float(best_price_row.sale_pct_off) if best_price_row.sale_pct_off else None
+            )
+            response.is_on_sale = any(pr.is_on_sale for pr, _ in price_reports)
+        return response
 
     except HTTPException:
         raise
@@ -404,6 +448,7 @@ async def get_price_history(
                 and_(
                     PriceReport.product_id == product_id,
                     PriceReport.created_at >= cutoff,
+                    PriceReport.is_flagged == False,  # noqa: E712
                 )
             )
         )
@@ -495,6 +540,7 @@ async def get_product_stores(
                 and_(
                     PriceReport.product_id == product_id,
                     PriceReport.created_at >= cutoff,
+                    PriceReport.is_flagged == False,  # noqa: E712
                 )
             )
             .group_by(PriceReport.store_id)
@@ -531,6 +577,8 @@ async def get_product_stores(
                 if distance_km > radius_km:
                     continue
 
+            store_source = f"catalog_{store.chain}"
+            store_external_id = product.external_id if product.external_source == store_source else None
             stores.append(
                 {
                     "id": str(store.id),
@@ -546,15 +594,12 @@ async def get_product_stores(
                     "is_on_sale": price_report.is_on_sale,
                     "discount_pct": price_report.sale_pct_off,
                     "distance_km": round(distance_km, 2) if distance_km is not None else None,
-                    "store_url": _build_store_url(product.external_source, product.external_id, product.name),
+                    "store_url": _build_store_url(store_source, store_external_id, product.name),
                 }
             )
 
-        # Sort by distance if provided (stores without coords go last), else by price
-        if lat is not None and lon is not None:
-            stores.sort(key=lambda s: s["distance_km"] if s["distance_km"] is not None else 9999)
-        else:
-            stores.sort(key=lambda s: s["price_aud"])
+        # Always sort by price (lowest first); distance is surfaced per-row as secondary info.
+        stores.sort(key=lambda s: s["price_aud"])
 
         return {"product_id": str(product_id), "count": len(stores), "stores": stores}
 

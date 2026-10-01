@@ -151,6 +151,8 @@ class CatalogProduct(ScrapedProduct):
     package_size: Optional[str] = None  # raw size string e.g. "2L", "375mL 24 Pack"
     unit_price: Optional[float] = None  # comparable unit price e.g. 1.50 (per 100g/100ml/ea)
     unit_price_label: Optional[str] = None  # unit label for unit_price e.g. "100g", "100ml", "ea"
+    # When set by the scraper (e.g. specials crawl), overrides the was_price_cents heuristic.
+    is_on_sale: Optional[bool] = None
 
 
 @dataclass
@@ -338,7 +340,7 @@ class CatalogScraper(ABC):
         node. Override when the specials endpoint returns a different shape than
         the per-category endpoint.
         """
-        specials_cat = CategoryNode(id="specials", name="Specials")
+        specials_cat = CategoryNode(id="specials", name="")
         return await self.parse_products(raw, specials_cat)
 
     # ── Auth persistence (Redis-backed) ──────────────────────────────────────
@@ -515,7 +517,7 @@ class CatalogScraper(ABC):
                     raise ScraperError(f"Specials parse failed: {exc}") from exc
 
                 products_found = len(products)
-                specials_cat = CategoryNode(id="specials", name="Specials")
+                specials_cat = CategoryNode(id="specials", name="")
 
                 if product_sink is not None and products:
                     try:

@@ -10,7 +10,6 @@ Models:
 - UserWatchlist: User product watchlist items belonging to a list
 - Notification: User alerts and notification log
 - PricePrediction: ML-powered price forecasts
-- FlyScrapeRun: Metadata for automated scraper runs
 - ProductMatchCandidate: Cross-chain dedup review queue
 """
 
@@ -22,7 +21,6 @@ from .prediction import PricePrediction
 from .price_report import PriceReport
 from .product import Product
 from .product_match import ProductMatchCandidate
-from .scraper import FlyScrapeRun
 from .store import Store
 from .user import User, UserProfile
 from .watchlist import UserWatchlist
@@ -42,6 +40,6 @@ __all__ = [
     "UserWatchlist",
     "Notification",
     "PricePrediction",
-    "FlyScrapeRun",
     "CatalogCrawlRun",
 ]
+

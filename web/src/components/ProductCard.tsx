@@ -1,6 +1,8 @@
 import React, { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Product } from '../types'
+import { formatPackageSize } from '../lib/format'
+import { ChainBadgeList } from './ChainBadge'
 
 interface ProductCardProps {
   product: Product
@@ -8,6 +10,7 @@ interface ProductCardProps {
 
 export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
   const [imgError, setImgError] = useState(false)
+  const packSize = formatPackageSize(product.package_size)
 
   return (
     <Link to={`/product/${product.id}`}>
@@ -36,9 +39,11 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
           <p className="text-sm text-gray-600 mt-1 truncate">{product.brand}</p>
         )}
 
-        {product.package_size && (
-          <p className="text-xs text-gray-500 mt-0.5 truncate">{product.package_size}</p>
+        {packSize && (
+          <p className="text-xs font-semibold text-gray-700 bg-gray-100 border border-gray-200 px-2 py-0.5 rounded mt-1 inline-block">{packSize}</p>
         )}
+
+        <ChainBadgeList chains={product.available_chains} size="xs" />
 
         {product.unit_price != null && (
           <p className="text-xs text-gray-400 mt-0.5">

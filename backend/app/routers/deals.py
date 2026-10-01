@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import and_, desc, func, select
+from sqlalchemy import and_, desc, func, select, case
 from sqlalchemy.orm import Session
 
 from app.deps import get_db
@@ -37,11 +37,13 @@ def _fetch_deals(
 ) -> list[dict]:
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 
-    # Best (highest discount) on-sale price per product — one row per product_id
+    # Best (highest discount) on-sale price per product — one row per product_id.
+    # COALESCE(sale_pct_off, 0) so items with no was_price (e.g. ALDI specials)
+    # still match — NULL = NULL is false in SQL, which silently drops them.
     best_subq_base = (
         select(
             PriceReport.product_id,
-            func.max(PriceReport.sale_pct_off).label("max_pct_off"),
+            func.max(func.coalesce(PriceReport.sale_pct_off, 0)).label("max_pct_off"),
         )
         .join(Product, PriceReport.product_id == Product.id)
         .join(Store, PriceReport.store_id == Store.id)
@@ -66,7 +68,7 @@ def _fetch_deals(
             best_per_product_subq,
             and_(
                 PriceReport.product_id == best_per_product_subq.c.product_id,
-                PriceReport.sale_pct_off == best_per_product_subq.c.max_pct_off,
+                func.coalesce(PriceReport.sale_pct_off, 0) == best_per_product_subq.c.max_pct_off,
             ),
         )
         .where(Store.is_active == True)
