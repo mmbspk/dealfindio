@@ -30,6 +30,7 @@ from app.services.object_store import (
 from app.services.oft_image_enricher import (
     OFTImageEnricher,
     OFTRateLimiter,
+    _best_image_url,
     _parse_retry_after,
 )
 
@@ -169,6 +170,43 @@ class TestOFTRateLimiter:
         assert _parse_retry_after("30") == 30.0
         assert _parse_retry_after(None) == 60.0
         assert _parse_retry_after("garbage") == 60.0
+
+
+# ── _best_image_url ───────────────────────────────────────────────────────────
+
+
+class TestBestImageUrl:
+    @pytest.mark.unit
+    def test_selected_images_front_display_preferred(self):
+        product = {
+            "image_url": "https://example.com/raw.jpg",
+            "image_front_url": "https://example.com/front.jpg",
+            "selected_images": {"front": {"display": {"en": "https://example.com/curated.jpg"}}},
+        }
+        assert _best_image_url(product) == "https://example.com/curated.jpg"
+
+    @pytest.mark.unit
+    def test_falls_back_to_non_english_display_lang(self):
+        product = {
+            "selected_images": {"front": {"display": {"fr": "https://example.com/fr.jpg"}}},
+        }
+        assert _best_image_url(product) == "https://example.com/fr.jpg"
+
+    @pytest.mark.unit
+    def test_falls_back_to_image_front_url(self):
+        product = {"image_front_url": "https://example.com/front.jpg", "image_url": "https://example.com/any.jpg"}
+        assert _best_image_url(product) == "https://example.com/front.jpg"
+
+    @pytest.mark.unit
+    def test_falls_back_to_image_url(self):
+        product = {"image_url": "https://example.com/any.jpg"}
+        assert _best_image_url(product) == "https://example.com/any.jpg"
+
+    @pytest.mark.unit
+    def test_returns_none_when_no_image(self):
+        assert _best_image_url({}) is None
+        assert _best_image_url({"selected_images": {}}) is None
+        assert _best_image_url({"selected_images": {"front": {"display": {}}}}) is None
 
 
 # ── OFTImageEnricher ─────────────────────────────────────────────────────────
@@ -342,6 +380,71 @@ class TestOFTImageEnricher:
 
         assert result is not None
         assert result.match_score >= 60.0
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_selected_images_url_used_over_image_front_url(self):
+        """selected_images.front.display.en is preferred over image_front_url."""
+        curated_url = "https://static.openfoodfacts.org/images/products/front_en.400.jpg"
+        raw_url = "https://static.openfoodfacts.org/images/products/front.jpg"
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "api/v2/search" in str(request.url):
+                return httpx.Response(
+                    200,
+                    json={
+                        "products": [
+                            {
+                                "code": "9300617006552",
+                                "product_name": "Full Cream Milk 2L",
+                                "image_front_url": raw_url,
+                                "selected_images": {"front": {"display": {"en": curated_url}}},
+                            }
+                        ]
+                    },
+                )
+            if str(request.url) == curated_url:
+                return httpx.Response(200, content=b"\xff\xd8", headers={"Content-Type": "image/jpeg"})
+            return httpx.Response(404)
+
+        transport = httpx.MockTransport(handler)
+        async with httpx.AsyncClient(transport=transport) as client:
+            result = await _enricher().enrich("Full Cream Milk 2L", client)
+
+        assert result is not None
+        assert result.source_url == curated_url
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_best_scoring_match_returned_not_first(self):
+        """When multiple products pass threshold, the highest-scoring one wins."""
+        good_url = "https://static.openfoodfacts.org/good.jpg"
+        better_url = "https://static.openfoodfacts.org/better.jpg"
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "api/v2/search" in str(request.url):
+                return httpx.Response(
+                    200,
+                    json={
+                        "products": [
+                            # Listed first but less specific name
+                            {"code": "111", "product_name": "Whole Milk 2L", "image_front_url": good_url},
+                            # Listed second but exact match — should win
+                            {"code": "222", "product_name": "Full Cream Milk 2L", "image_front_url": better_url},
+                        ]
+                    },
+                )
+            if str(request.url) in (good_url, better_url):
+                return httpx.Response(200, content=b"\xff\xd8", headers={"Content-Type": "image/jpeg"})
+            return httpx.Response(404)
+
+        transport = httpx.MockTransport(handler)
+        async with httpx.AsyncClient(transport=transport) as client:
+            result = await _enricher().enrich("Full Cream Milk 2L", client)
+
+        assert result is not None
+        assert result.source_url == better_url
+        assert result.off_code == "222"
 
 
 # ── image_tasks ──────────────────────────────────────────────────────────────

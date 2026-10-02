@@ -35,7 +35,9 @@ logger = logging.getLogger(__name__)
 # OFF search API. v2 returns structured JSON and lets us request only the
 # fields we need, keeping responses small.
 _OFF_SEARCH_URL = "https://world.openfoodfacts.org/api/v2/search"
-_OFF_SEARCH_FIELDS = "code,product_name,brands,image_url,image_front_url"
+# selected_images contains OFF's curated best image per product/language,
+# preferred over the raw image_front_url (which may be an uncurated upload).
+_OFF_SEARCH_FIELDS = "code,product_name,brands,image_url,image_front_url,selected_images"
 
 # Accept only real raster images we know how to store.
 _ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/jpg", "image/png", "image/webp"}
@@ -119,7 +121,7 @@ class OFTImageEnricher:
             return None
         match, score = result
 
-        image_url = match.get("image_front_url") or match.get("image_url")
+        image_url = _best_image_url(match)
         if not image_url:
             logger.debug("OFF match for %r has no image", product_name)
             return None
@@ -140,16 +142,19 @@ class OFTImageEnricher:
     async def _search(
         self, name: str, client: httpx.AsyncClient
     ) -> Optional[tuple[dict, float]]:
-        """Return the first OFF product for ``name`` that has an image and
+        """Return the best OFF product for ``name`` that has an image and
         clears the name-similarity threshold.
 
-        Returns ``(product_dict, score)`` or ``None``.
+        Scores all candidates and returns the highest-scoring one (not just
+        the first) so that a well-named product ranked below a generic brand
+        in OFF's sort order still wins. Returns ``(product_dict, score)``
+        or ``None``.
         """
         await self._rate_limiter.wait()
         params = {
             "search_terms": name,
             "fields": _OFF_SEARCH_FIELDS,
-            "page_size": 5,
+            "page_size": 10,
             "sort_by": "unique_scans_n",  # prefer well-known products
         }
         try:
@@ -170,8 +175,9 @@ class OFTImageEnricher:
             logger.warning("OFF search failed for %r: %s", name, exc)
             return None
 
+        best: Optional[tuple[dict, float]] = None
         for product in products:
-            if not (product.get("image_front_url") or product.get("image_url")):
+            if not _best_image_url(product):
                 continue
             off_name = product.get("product_name") or ""
             score = fuzz.token_sort_ratio(name.lower(), off_name.lower())
@@ -184,8 +190,9 @@ class OFTImageEnricher:
                     off_name,
                 )
                 continue
-            return product, score
-        return None
+            if best is None or score > best[1]:
+                best = (product, score)
+        return best
 
     async def _download_image(
         self, url: str, client: httpx.AsyncClient
@@ -231,3 +238,24 @@ def _parse_retry_after(value: Optional[str]) -> float:
         return float(value)
     except (TypeError, ValueError):
         return 60.0
+
+
+def _best_image_url(product: dict) -> Optional[str]:
+    """Extract the highest-quality available image URL from an OFF product dict.
+
+    Preference order:
+    1. selected_images.front.display — OFF's curated, moderated front image
+    2. image_front_url — raw front-camera upload (may be lower quality)
+    3. image_url — any image on the product
+    """
+    selected = product.get("selected_images") or {}
+    front = selected.get("front") or {}
+    display = front.get("display") or {}
+    if display:
+        # Prefer English; fall back to whatever language key exists first.
+        url = display.get("en") or next(iter(display.values()), None)
+        if url:
+            return url
+    if product.get("image_front_url"):
+        return product["image_front_url"]
+    return product.get("image_url")

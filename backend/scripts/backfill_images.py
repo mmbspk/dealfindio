@@ -38,14 +38,13 @@ def _run_enrichment(chain: str | None, limit: int, dry_run: bool) -> dict:
     from app.services.object_store import get_object_store, product_image_key
     from app.config import get_settings
     from app.models import Product
-    from app.deps import _SessionLocal
     from datetime import datetime, timezone
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
 
     settings = get_settings()
-    if not _SessionLocal:
-        raise RuntimeError("Database not initialized — check DATABASE_URL")
-
-    session = _SessionLocal()
+    engine = create_engine(settings.DATABASE_URL, echo=False)
+    session = Session(engine)
     try:
         products = _find_products_missing_images(session, chain, limit)
         candidates = len(products)
