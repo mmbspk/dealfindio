@@ -56,7 +56,7 @@ def _run_enrichment(chain: str | None, limit: int, dry_run: bool) -> dict:
             log.info("[dry-run] Would process %d products for chain=%s", candidates, chain or "all")
             return {"chain": chain, "candidates": candidates, "enriched": 0, "skipped": 0, "dry_run": True}
 
-        targets = [(p.id, p.name) for p in products]
+        targets = [(p.id, p.name, p.gtin) for p in products]
         results = asyncio.run(_enrich_all(targets))
 
         store = get_object_store()

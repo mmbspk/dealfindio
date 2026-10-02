@@ -31,6 +31,7 @@ from app.services.oft_image_enricher import (
     OFTImageEnricher,
     OFTRateLimiter,
     _best_image_url,
+    _clean_search_name,
     _parse_retry_after,
 )
 
@@ -207,6 +208,37 @@ class TestBestImageUrl:
         assert _best_image_url({}) is None
         assert _best_image_url({"selected_images": {}}) is None
         assert _best_image_url({"selected_images": {"front": {"display": {}}}}) is None
+
+
+# ── _clean_search_name ───────────────────────────────────────────────────────
+
+
+class TestCleanSearchName:
+    @pytest.mark.unit
+    def test_strips_woolworths_prefix(self):
+        assert _clean_search_name("Woolworths Full Cream Milk 2L") == "Full Cream Milk 2L"
+
+    @pytest.mark.unit
+    def test_strips_coles_prefix(self):
+        assert _clean_search_name("Coles Chicken Breast 500g") == "Chicken Breast 500g"
+
+    @pytest.mark.unit
+    def test_strips_aldi_prefix(self):
+        assert _clean_search_name("ALDI Butter Cake 600g") == "Butter Cake 600g"
+
+    @pytest.mark.unit
+    def test_case_insensitive(self):
+        assert _clean_search_name("WOOLWORTHS Milk") == "Milk"
+        assert _clean_search_name("coles bread") == "bread"
+
+    @pytest.mark.unit
+    def test_non_store_name_unchanged(self):
+        assert _clean_search_name("Anchor Full Cream Milk 2L") == "Anchor Full Cream Milk 2L"
+        assert _clean_search_name("Weet-Bix 750g") == "Weet-Bix 750g"
+
+    @pytest.mark.unit
+    def test_empty_string_unchanged(self):
+        assert _clean_search_name("") == ""
 
 
 # ── OFTImageEnricher ─────────────────────────────────────────────────────────
@@ -446,6 +478,94 @@ class TestOFTImageEnricher:
         assert result.source_url == better_url
         assert result.off_code == "222"
 
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_gtin_lookup_used_when_provided(self):
+        """GTIN path hits /api/v2/product/{gtin} and returns score=100."""
+        gtin = "9310055002840"
+        img_url = "https://static.openfoodfacts.org/images/products/front.jpg"
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if f"/api/v2/product/{gtin}" in str(request.url):
+                return httpx.Response(
+                    200,
+                    json={"product": {"code": gtin, "product_name": "Weet-Bix 750g", "image_front_url": img_url}},
+                )
+            if str(request.url) == img_url:
+                return httpx.Response(200, content=b"\xff\xd8", headers={"Content-Type": "image/jpeg"})
+            return httpx.Response(404)
+
+        transport = httpx.MockTransport(handler)
+        async with httpx.AsyncClient(transport=transport) as client:
+            result = await _enricher().enrich("Weet-Bix 750g", client, gtin=gtin)
+
+        assert result is not None
+        assert result.match_score == 100.0
+        assert result.off_code == gtin
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_gtin_404_falls_back_to_text_search(self):
+        """404 on barcode lookup transparently falls back to text search."""
+        gtin = "0000000000000"
+        img_url = "https://static.openfoodfacts.org/images/products/front.jpg"
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if f"/api/v2/product/{gtin}" in str(request.url):
+                return httpx.Response(404)
+            if "api/v2/search" in str(request.url):
+                return httpx.Response(
+                    200,
+                    json={"products": [{"code": "111", "product_name": "Milk 2L", "image_front_url": img_url}]},
+                )
+            if str(request.url) == img_url:
+                return httpx.Response(200, content=b"\xff\xd8", headers={"Content-Type": "image/jpeg"})
+            return httpx.Response(404)
+
+        transport = httpx.MockTransport(handler)
+        async with httpx.AsyncClient(transport=transport) as client:
+            result = await _enricher().enrich("Milk 2L", client, gtin=gtin)
+
+        assert result is not None  # fell back to search successfully
+        assert result.off_code == "111"  # code from search mock, not the GTIN we passed
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_country_filter_sent_in_search_params(self):
+        """Text search always includes countries_tags=en:australia."""
+        captured: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured.append(request)
+            return httpx.Response(200, json={"products": []})
+
+        transport = httpx.MockTransport(handler)
+        async with httpx.AsyncClient(transport=transport) as client:
+            await _enricher().enrich("Milk 2L", client)
+
+        search_req = next((r for r in captured if "api/v2/search" in str(r.url)), None)
+        assert search_req is not None
+        assert "en%3Aaustralia" in str(search_req.url) or "en:australia" in str(search_req.url)
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_store_prefix_stripped_before_search(self):
+        """'Woolworths Milk 2L' is searched as 'Milk 2L', improving similarity."""
+        captured_terms: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "api/v2/search" in str(request.url):
+                captured_terms.append(str(request.url))
+            return httpx.Response(200, json={"products": []})
+
+        transport = httpx.MockTransport(handler)
+        async with httpx.AsyncClient(transport=transport) as client:
+            await _enricher().enrich("Woolworths Full Cream Milk 2L", client)
+
+        assert captured_terms, "Expected a search request to be made"
+        assert "Woolworths" not in captured_terms[0]
+        assert "Full+Cream+Milk" in captured_terms[0] or "Full%20Cream%20Milk" in captured_terms[0]
+
 
 # ── image_tasks ──────────────────────────────────────────────────────────────
 
@@ -543,7 +663,7 @@ class TestEnrichProductImagesTask:
         fake_store.put_object.return_value = "https://images.dealfindio.com.au/products/xx/abc.jpg"
 
         async def fake_enrich_all(targets):
-            return [(pid, fake_image) for pid, _name in targets]
+            return [(pid, fake_image) for pid, _name, _gtin in targets]
 
         with patch.object(
             image_tasks, "get_db_session", return_value=test_db_session
@@ -578,7 +698,7 @@ class TestEnrichProductImagesTask:
         test_db_session.commit()
 
         async def fake_enrich_all(targets):
-            return [(pid, None) for pid, _name in targets]
+            return [(pid, None) for pid, _name, _gtin in targets]
 
         fake_store = MagicMock()
         with patch.object(

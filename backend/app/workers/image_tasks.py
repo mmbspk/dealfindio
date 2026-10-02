@@ -112,9 +112,9 @@ def enrich_product_images(
         if not candidates:
             return EnrichResult(chain=chain, candidates=0, enriched=0, skipped=0, status="success")
 
-        # Snapshot the plain (id, name) tuples so the async loop doesn't hold
+        # Snapshot (id, name, gtin) tuples so the async loop doesn't hold
         # ORM instances across await points / session state changes.
-        targets = [(p.id, p.name) for p in products]
+        targets = [(p.id, p.name, p.gtin) for p in products]
 
         results = asyncio.run(_enrich_all(targets))
 
@@ -172,9 +172,9 @@ def enrich_product_images(
 
 
 async def _enrich_all(
-    targets: list[tuple[UUID, str]],
+    targets: list[tuple[UUID, str, Optional[str]]],
 ) -> list[tuple[UUID, object]]:
-    """Look up + download images for each (product_id, name). Best-effort.
+    """Look up + download images for each (product_id, name, gtin). Best-effort.
 
     Returns a list of (product_id, EnrichedImage|None), one per input, in order.
     A single shared httpx client is reused so connections are pooled.
@@ -182,9 +182,9 @@ async def _enrich_all(
     enricher = OFTImageEnricher(settings)
     out: list[tuple[UUID, object]] = []
     async with httpx.AsyncClient() as client:
-        for product_id, name in targets:
+        for product_id, name, gtin in targets:
             try:
-                result = await enricher.enrich(name, client)
+                result = await enricher.enrich(name, client, gtin=gtin)
             except Exception as exc:  # never let one product kill the batch
                 logger.warning("Enrich error for %s (%s): %s", product_id, name, exc)
                 result = None
