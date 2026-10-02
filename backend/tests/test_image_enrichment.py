@@ -205,7 +205,8 @@ class TestOFTImageEnricher:
                         "products": [
                             {
                                 "code": "9300617006552",
-                                "product_name": "Full Cream Milk 2L",
+                                # Name closely matches the search term "Milk 2L"
+                                "product_name": "Milk 2L",
                                 "image_front_url": img_url,
                             }
                         ]
@@ -228,6 +229,7 @@ class TestOFTImageEnricher:
         assert result.content_type == "image/jpeg"
         assert result.source_url == img_url
         assert result.off_code == "9300617006552"
+        assert result.match_score >= 0.0
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -283,6 +285,64 @@ class TestOFTImageEnricher:
         async with httpx.AsyncClient(transport=transport) as client:
             assert await _enricher().enrich("thing", client) is None
 
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_low_similarity_match_rejected(self):
+        """A result with mismatched name is rejected even if it has an image."""
+        img_url = "https://static.openfoodfacts.org/images/products/front.jpg"
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "api/v2/search" in str(request.url):
+                return httpx.Response(
+                    200,
+                    json={
+                        "products": [
+                            {
+                                "code": "12345",
+                                # Completely different product name — similarity will be ~0
+                                "product_name": "Tomato Sauce 500g",
+                                "image_front_url": img_url,
+                            }
+                        ]
+                    },
+                )
+            return httpx.Response(200, content=b"\xff\xd8", headers={"Content-Type": "image/jpeg"})
+
+        transport = httpx.MockTransport(handler)
+        async with httpx.AsyncClient(transport=transport) as client:
+            result = await _enricher().enrich("Full Cream Milk 2L", client)
+
+        assert result is None, "Low-similarity match should be rejected"
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_high_similarity_match_accepted_with_score(self):
+        """A result with sufficiently similar name is accepted and carries match_score."""
+        img_url = "https://static.openfoodfacts.org/images/products/front.jpg"
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "api/v2/search" in str(request.url):
+                return httpx.Response(
+                    200,
+                    json={
+                        "products": [
+                            {
+                                "code": "9300617006552",
+                                "product_name": "Full Cream Milk 2L",
+                                "image_front_url": img_url,
+                            }
+                        ]
+                    },
+                )
+            return httpx.Response(200, content=b"\xff\xd8", headers={"Content-Type": "image/jpeg"})
+
+        transport = httpx.MockTransport(handler)
+        async with httpx.AsyncClient(transport=transport) as client:
+            result = await _enricher().enrich("Full Cream Milk 2L", client)
+
+        assert result is not None
+        assert result.match_score >= 60.0
+
 
 # ── image_tasks ──────────────────────────────────────────────────────────────
 
@@ -299,7 +359,7 @@ class TestFindProductsMissingImages:
         p3 = Product(id=uuid4(), name="Woolies Eggs", gtin=None)
         test_db_session.add_all([p1, p2, p3])
         test_db_session.flush()
-        for prod, source in [(p1, "flyer_coles"), (p2, "flyer_coles"), (p3, "flyer_woolworths")]:
+        for prod, source in [(p1, "catalog_coles"), (p2, "catalog_coles"), (p3, "catalog_woolworths")]:
             test_db_session.add(
                 PriceReport(
                     product_id=prod.id,
@@ -362,7 +422,7 @@ class TestEnrichProductImagesTask:
                 product_id=product.id,
                 store_id=sample_store.id,
                 price_cents=350,
-                source="flyer_coles",
+                source="catalog_coles",
                 valid_from=date.today(),
             )
         )
@@ -374,6 +434,7 @@ class TestEnrichProductImagesTask:
             content_type="image/jpeg",
             source_url="https://static.oft/x.jpg",
             off_code="1",
+            match_score=85.0,
         )
         fake_store = MagicMock()
         fake_store.put_object.return_value = "https://images.dealfindio.com.au/products/xx/abc.jpg"
@@ -407,7 +468,7 @@ class TestEnrichProductImagesTask:
                 product_id=product.id,
                 store_id=sample_store.id,
                 price_cents=999,
-                source="flyer_coles",
+                source="catalog_coles",
                 valid_from=date.today(),
             )
         )

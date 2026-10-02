@@ -85,7 +85,7 @@ def _enrich_item(item: UserWatchlist, db: Session) -> WatchlistItemResponse:
         list_id=item.list_id,
         product_id=item.product_id,
         product_name=product.name if product else None,
-        product_image_url=product.image_url if product else None,
+        product_image_url=(product.image_url or product.external_image_url) if product else None,
         product_brand=product.brand if product else None,
         product_category=product.category if product else None,
         current_price_aud=current_price,

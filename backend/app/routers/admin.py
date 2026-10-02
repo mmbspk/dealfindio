@@ -631,7 +631,7 @@ def get_catalog_coverage(
             external_source,
             COUNT(*)                                             AS total,
             ROUND(COUNT(brand)       * 100.0 / COUNT(*), 1)     AS brand_pct,
-            ROUND(COUNT(image_url)   * 100.0 / COUNT(*), 1)     AS image_pct,
+            ROUND(COUNT(COALESCE(image_url, external_image_url))   * 100.0 / COUNT(*), 1)     AS image_pct,
             ROUND(COUNT(package_size)* 100.0 / COUNT(*), 1)     AS pkg_pct,
             ROUND(COUNT(unit_price)  * 100.0 / COUNT(*), 1)     AS unit_price_pct,
             ROUND(COUNT(unit_price_label)* 100.0 / COUNT(*), 1) AS unit_label_pct,
@@ -901,7 +901,7 @@ def _product_to_detail(p: "Product", price_aud: float | None) -> MatchProductDet
         name=p.name,
         brand=p.brand,
         category=p.category,
-        image_url=p.image_url,
+        image_url=p.image_url or p.external_image_url,
         chain=chain,
         price_aud=price_aud,
         store_url=_build_store_url(chain, p.external_id, p.name),
@@ -1181,7 +1181,7 @@ def search_products_for_dedup(
             name=p.name,
             brand=p.brand,
             category=p.category,
-            image_url=p.image_url,
+            image_url=p.image_url or p.external_image_url,
             chain=(p.external_source or "").replace("catalog_", "") or None,
             price_aud=price_map.get(str(p.id)),
         )
@@ -1548,4 +1548,61 @@ def run_ai_dedup_sse(
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
         },
+    )
+
+
+# ── Image enrichment status ───────────────────────────────────────────────────
+
+
+class ImageEnrichmentStatus(BaseModel):
+    total_products: int
+    with_self_hosted_image: int
+    with_any_image: int
+    coverage_pct: float
+    by_chain: dict[str, float]
+
+
+@router.get("/image-enrichment/status", response_model=ImageEnrichmentStatus)
+def get_image_enrichment_status(
+    db: Session = Depends(get_db),
+    _admin=Depends(require_admin),
+) -> ImageEnrichmentStatus:
+    """Image enrichment coverage: total products, self-hosted %, by-chain breakdown."""
+    row = db.execute(
+        text(
+            "SELECT COUNT(*) AS total, "
+            "COUNT(image_url) AS with_self_hosted, "
+            "COUNT(COALESCE(image_url, external_image_url)) AS with_any "
+            "FROM products"
+        )
+    ).one()
+    total = row.total or 0
+    with_self_hosted = row.with_self_hosted or 0
+    with_any = row.with_any or 0
+    coverage = round(with_self_hosted * 100.0 / total, 1) if total else 0.0
+
+    chain_rows = db.execute(
+        text(
+            "SELECT "
+            "  REPLACE(pr.source, 'catalog_', '') AS chain, "
+            "  COUNT(DISTINCT p.id)               AS total_in_chain, "
+            "  COUNT(DISTINCT p.id) FILTER (WHERE p.image_url IS NOT NULL) AS enriched "
+            "FROM products p "
+            "JOIN price_reports pr ON pr.product_id = p.id "
+            "WHERE pr.source LIKE 'catalog_%' "
+            "GROUP BY 1"
+        )
+    ).fetchall()
+
+    by_chain: dict[str, float] = {}
+    for r in chain_rows:
+        pct = round(r.enriched * 100.0 / r.total_in_chain, 1) if r.total_in_chain else 0.0
+        by_chain[r.chain] = pct
+
+    return ImageEnrichmentStatus(
+        total_products=total,
+        with_self_hosted_image=with_self_hosted,
+        with_any_image=with_any,
+        coverage_pct=coverage,
+        by_chain=by_chain,
     )

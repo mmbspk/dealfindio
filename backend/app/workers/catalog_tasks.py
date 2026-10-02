@@ -303,6 +303,18 @@ def run_catalog_crawl(self, chain: str, mode: str = "full") -> CatalogResult:
         if summary["errors"]:
             for err in summary["errors"][:5]:
                 _push_log(redis, task_id, "error", f"Error: {err}")
+
+        # Enqueue image enrichment for any newly-ingested products missing a
+        # self-hosted image.  Fire-and-forget: never block or fail the crawl.
+        if run.status in ("completed", "completed_with_errors") and totals["new"] > 0:
+            try:
+                from app.workers.image_tasks import enrich_product_images
+
+                enrich_product_images.apply_async(kwargs={"chain": chain})
+                logger.info("Enqueued image enrichment for chain=%s", chain)
+            except Exception as exc:
+                logger.warning("Failed to enqueue image enrichment for %s: %s", chain, exc)
+
         return CatalogResult(
             chain=chain,
             mode=mode,

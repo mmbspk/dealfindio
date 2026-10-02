@@ -336,8 +336,10 @@ class TestCatalogIngest:
         assert counts.created == 1
         assert counts.price_reports == 1
         product = test_db_session.query(Product).filter_by(name="Fresh Catalog Milk 2L").one()
-        assert product.image_url == "http://img/m.jpg"
-        assert product.image_source == "catalog_coles"
+        # Scraped CDN URL lands in external_image_url; image_url stays NULL for enricher.
+        assert product.external_image_url == "http://img/m.jpg"
+        assert product.image_url is None
+        assert product.image_source is None
         assert product.catalog_last_seen_at is not None
         report = test_db_session.query(PriceReport).filter_by(product_id=product.id).one()
         assert report.source == "catalog_coles"
@@ -369,8 +371,9 @@ class TestCatalogIngest:
         assert counts.created == 0
         assert counts.updated == 1
         refreshed = test_db_session.get(Product, existing.id)
-        # Existing OFF image must NOT be overwritten by the catalog image.
+        # Existing OFF image_url must NOT be overwritten; catalog URL goes to external_image_url.
         assert refreshed.image_url == "http://existing/keep.jpg"
+        assert refreshed.external_image_url == "http://catalog/new.jpg"
         assert refreshed.catalog_last_seen_at is not None
 
     @pytest.mark.integration

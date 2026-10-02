@@ -334,9 +334,7 @@ def ingest_catalog_product(
             name=cp.product_name,
             brand=cp.brand,
             category=normalise_category(cp.category),
-            image_url=cp.image_url,
-            image_source=f"catalog_{chain}" if cp.image_url else None,
-            image_enriched_at=now if cp.image_url else None,
+            external_image_url=cp.image_url,
             catalog_last_seen_at=now,
             in_stock=cp.in_stock,
             external_id=str(cp.external_id) if cp.external_id else None,
@@ -352,10 +350,8 @@ def ingest_catalog_product(
         created = True
     else:
         # Fill only missing metadata — never clobber an existing image/brand.
-        if cp.image_url and not product.image_url:
-            product.image_url = cp.image_url
-            product.image_source = f"catalog_{chain}"
-            product.image_enriched_at = now
+        if cp.image_url and not product.external_image_url:
+            product.external_image_url = cp.image_url
             updated = True
         if cp.brand and not product.brand:
             product.brand = cp.brand

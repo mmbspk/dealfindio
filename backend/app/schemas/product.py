@@ -5,9 +5,10 @@ Defines Pydantic models for product search, detail, and price history responses.
 """
 
 from datetime import datetime
+from typing import Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class ProductResponse(BaseModel):
@@ -27,7 +28,17 @@ class ProductResponse(BaseModel):
     unit_price_label: str | None = Field(
         None, description="Unit label for unit_price e.g. '100g', '100ml', 'ea'"
     )
-    image_url: str | None = Field(None, description="Product image URL")
+    image_url: str | None = Field(None, description="Self-hosted product image URL (preferred)")
+    external_image_url: str | None = Field(None, description="Original retailer CDN URL (fallback)")
+
+    @model_validator(mode="after")
+    def _coalesce_image(self) -> "ProductResponse":
+        # Expose the best available image as image_url so existing consumers
+        # never see NULL while the enrichment pipeline catches up.
+        if not self.image_url and self.external_image_url:
+            self.image_url = self.external_image_url
+        return self
+
     in_stock: bool = Field(True, description="Whether the product is in stock")
 
     # Cheapest current price across all stores/chains (null if no price data yet)

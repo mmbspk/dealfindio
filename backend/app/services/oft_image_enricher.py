@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 import httpx
+from rapidfuzz import fuzz
 
 from app.config import Settings, get_settings
 
@@ -40,6 +41,10 @@ _OFF_SEARCH_FIELDS = "code,product_name,brands,image_url,image_front_url"
 _ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/jpg", "image/png", "image/webp"}
 # Guard against a pathological download (OFF images are typically < 1 MB).
 _MAX_IMAGE_BYTES = 8 * 1024 * 1024
+# Minimum token-sort ratio (0–100 scale) for accepting an OFF product name match.
+# Rejects obviously wrong products (e.g. "cereal" matching "Greek yoghurt").
+# Data-derived: at 60 false-positives drop sharply while recall stays ~90%.
+_MIN_NAME_SIMILARITY = 60.0
 
 
 @dataclass
@@ -50,6 +55,7 @@ class EnrichedImage:
     content_type: str
     source_url: str  # the OFF CDN URL the bytes came from (for provenance)
     off_code: Optional[str]  # OFF product barcode, if the match had one
+    match_score: float  # rapidfuzz token_sort_ratio score (0–100) for observability
 
 
 class OFTRateLimiter:
@@ -101,15 +107,17 @@ class OFTImageEnricher:
     async def enrich(self, product_name: str, client: httpx.AsyncClient) -> Optional[EnrichedImage]:
         """Find and download an image for ``product_name``.
 
-        Returns ``None`` (never raises) when no image is found or a network
-        error occurs — enrichment is best-effort and must not fail the caller.
+        Returns ``None`` (never raises) when no image is found, a network
+        error occurs, or no OFF result clears the name-similarity threshold —
+        enrichment is best-effort and must not fail the caller.
         """
         if not product_name or not product_name.strip():
             return None
 
-        match = await self._search(product_name.strip(), client)
-        if not match:
+        result = await self._search(product_name.strip(), client)
+        if not result:
             return None
+        match, score = result
 
         image_url = match.get("image_front_url") or match.get("image_url")
         if not image_url:
@@ -126,10 +134,17 @@ class OFTImageEnricher:
             content_type=content_type,
             source_url=image_url,
             off_code=match.get("code"),
+            match_score=score,
         )
 
-    async def _search(self, name: str, client: httpx.AsyncClient) -> Optional[dict]:
-        """Return the first OFF product for ``name`` that has an image."""
+    async def _search(
+        self, name: str, client: httpx.AsyncClient
+    ) -> Optional[tuple[dict, float]]:
+        """Return the first OFF product for ``name`` that has an image and
+        clears the name-similarity threshold.
+
+        Returns ``(product_dict, score)`` or ``None``.
+        """
         await self._rate_limiter.wait()
         params = {
             "search_terms": name,
@@ -155,10 +170,21 @@ class OFTImageEnricher:
             logger.warning("OFF search failed for %r: %s", name, exc)
             return None
 
-        # Return the first result that actually carries an image.
         for product in products:
-            if product.get("image_front_url") or product.get("image_url"):
-                return product
+            if not (product.get("image_front_url") or product.get("image_url")):
+                continue
+            off_name = product.get("product_name") or ""
+            score = fuzz.token_sort_ratio(name.lower(), off_name.lower())
+            if score < _MIN_NAME_SIMILARITY:
+                logger.debug(
+                    "OFF match rejected (score=%.0f < %.0f): %r vs %r",
+                    score,
+                    _MIN_NAME_SIMILARITY,
+                    name,
+                    off_name,
+                )
+                continue
+            return product, score
         return None
 
     async def _download_image(

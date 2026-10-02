@@ -59,14 +59,14 @@ def _find_products_missing_images(
     """Return up to ``limit`` products with no image_url.
 
     When ``chain`` is given, restrict to products seen in that chain's scrape
-    (via ``PriceReport.source == f"flyer_{chain}"``). Otherwise sweep all
+    (via ``PriceReport.source == f"catalog_{chain}"``). Otherwise sweep all
     chains — used by the weekly backstop.
     """
     stmt = select(Product).where(Product.image_url.is_(None))
     if chain:
         stmt = (
             stmt.join(PriceReport, PriceReport.product_id == Product.id)
-            .where(PriceReport.source == f"flyer_{chain}")
+            .where(PriceReport.source == f"catalog_{chain}")
             .distinct()
         )
     stmt = stmt.limit(limit)
@@ -141,6 +141,12 @@ def enrich_product_images(
             product.image_url = public_url
             product.image_source = "open_food_facts"
             product.image_enriched_at = now
+            logger.debug(
+                "Enriched image for %s (score=%.0f, source=%s)",
+                product_id,
+                enriched_image.match_score,
+                enriched_image.source_url,
+            )
             enriched += 1
 
         session.commit()

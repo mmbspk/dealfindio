@@ -29,8 +29,9 @@ class Product(Base):
         category: Product category (e.g., 'dairy', 'bakery', 'produce')
         unit_type: Unit of measurement ('ea', 'kg', 'L', 'g', 'ml')
         unit_size: Quantity per unit (e.g., 2.0 for 2L bottles)
-        image_url: Product image URL (may point at our own CDN after enrichment)
-        image_source: Provenance of image_url ('open_food_facts', 'catalog_coles', …)
+        image_url: Self-hosted image URL written by the OFF enrichment pipeline (NULL until enriched)
+        external_image_url: Original retailer CDN URL scraped by catalog crawlers (provenance only)
+        image_source: Provenance of image_url ('open_food_facts')
         image_enriched_at: When the image was last (re)sourced by the enricher
         price_reports: Relationship to price reports for this product
         watchlist_items: Relationship to user watchlist entries
@@ -49,6 +50,7 @@ class Product(Base):
     unit_price: Mapped[float | None]  # comparable price per standard unit (e.g. per 100g)
     unit_price_label: Mapped[str | None] = mapped_column(String(50))  # e.g. "100g", "100ml", "ea"
     image_url: Mapped[str | None] = mapped_column(String(500))
+    external_image_url: Mapped[str | None] = mapped_column(String(500))
     image_source: Mapped[str | None] = mapped_column(String(50))
     image_enriched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # Set by the full-catalog crawler: when this product was last seen in a
