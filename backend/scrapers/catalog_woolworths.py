@@ -37,6 +37,7 @@ from __future__ import annotations
 import html as _html
 import json
 import re
+import secrets
 from datetime import date
 from typing import Any, Optional
 
@@ -123,6 +124,13 @@ class WoolworthsCatalogScraper(CatalogScraper):
 
     TIMEOUT_S = 30.0
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Pinned DataImpulse session ID — set after each successful bootstrap so
+        # every category request uses the same exit IP as the bootstrap.
+        # Regenerated on each re-bootstrap to rotate to a fresh IP after a block.
+        self._proxy_session_id: Optional[str] = None
+
     # ── CatalogScraper ABC ────────────────────────────────────────────────────
 
     async def authenticate(self) -> dict:
@@ -137,29 +145,44 @@ class WoolworthsCatalogScraper(CatalogScraper):
             raise ScraperError(f"Woolworths bootstrap failed after retries: {exc}") from exc
 
     @retry(
-        retry=retry_if_exception_type(httpx.TransportError),
-        stop=stop_after_attempt(4),
-        wait=wait_exponential(multiplier=5, min=5, max=60),
+        retry=retry_if_exception_type((httpx.TransportError, ScraperError)),
+        stop=stop_after_attempt(6),
+        wait=wait_exponential(multiplier=15, min=30, max=300),
         reraise=True,
     )
     async def _bootstrap(self) -> dict:
-        """Fetch the homepage (HTML headers) to seed session cookies."""
+        """Fetch the homepage to seed Akamai session cookies.
+
+        Uses a fresh DataImpulse session ID on every attempt so each retry
+        gets a different exit IP — rotating away from any IP Akamai has blocked.
+        Stores the winning session ID in self._proxy_session_id so all
+        subsequent browse/category requests share the same exit IP.
+        """
+        attempt_session_id = secrets.token_hex(8)
         async with httpx.AsyncClient(
             headers=_HTML_HEADERS,
             follow_redirects=True,
             timeout=self.TIMEOUT_S,
-            proxies=_get_proxy(),
+            proxies=_get_proxy(attempt_session_id),
         ) as client:
             try:
                 resp = await client.get(_HOME_URL)
+                if resp.status_code in (403, 429):
+                    raise ScraperError(
+                        f"Woolworths homepage fetch failed: {resp.status_code} — bot-blocked, rotating IP"
+                    )
                 resp.raise_for_status()
             except httpx.TransportError:
                 raise  # retried by tenacity
+            except ScraperError:
+                raise  # already formatted, retried by tenacity
             except httpx.HTTPError as exc:
                 raise ScraperError(f"Woolworths homepage fetch failed: {exc}") from exc
 
             cookies = {c.name: c.value for c in client.cookies.jar}
 
+        # Bootstrap succeeded — pin this DataImpulse session for all data requests.
+        self._proxy_session_id = attempt_session_id
         return {"cookies": cookies}
 
     async def discover_categories(self) -> list[CategoryNode]:
@@ -174,7 +197,7 @@ class WoolworthsCatalogScraper(CatalogScraper):
             cookies=auth.get("cookies", {}),
             follow_redirects=True,
             timeout=self.TIMEOUT_S,
-            proxies=_get_proxy(),
+            proxies=_get_proxy(self._proxy_session_id),
         ) as client:
             await self.rate_limiter.wait()
             try:
@@ -221,7 +244,7 @@ class WoolworthsCatalogScraper(CatalogScraper):
             cookies=auth.get("cookies", {}),
             follow_redirects=True,
             timeout=self.TIMEOUT_S,
-            proxies=_get_proxy(),
+            proxies=_get_proxy(self._proxy_session_id),
         ) as client:
             for page in range(1, self.config.max_pages_per_category + 1):
                 if page < start_page:
@@ -319,7 +342,7 @@ class WoolworthsCatalogScraper(CatalogScraper):
             cookies=cookies,
             follow_redirects=True,
             timeout=self.TIMEOUT_S,
-            proxies=_get_proxy(),
+            proxies=_get_proxy(self._proxy_session_id),
         ) as client:
             # Re-warm session cookies — bootstrap may be stale.
             try:
@@ -327,7 +350,7 @@ class WoolworthsCatalogScraper(CatalogScraper):
                     headers=_HTML_HEADERS,
                     follow_redirects=True,
                     timeout=self.TIMEOUT_S,
-                    proxies=_get_proxy(),
+                    proxies=_get_proxy(self._proxy_session_id),
                 ) as warm_client:
                     await warm_client.get("https://www.woolworths.com.au/")
                     for c in warm_client.cookies.jar:
