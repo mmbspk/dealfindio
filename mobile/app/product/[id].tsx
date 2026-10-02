@@ -19,6 +19,8 @@ interface ProductDetail {
   brand: string | null
   category: string | null
   image_url: string | null
+  external_image_url?: string | null
+  image_source?: string | null
   gtin: string | null
 }
 
@@ -125,17 +127,22 @@ export default function ProductDetailScreen() {
       <Stack.Screen options={{ title: product.name }} />
 
       {/* Product image */}
-      {product.image_url ? (
-        <Image
-          source={{ uri: product.image_url }}
-          style={styles.image}
-          resizeMode="contain"
-        />
-      ) : (
-        <View style={[styles.image, styles.imagePlaceholder]}>
-          <Text style={styles.imagePlaceholderText}>No image</Text>
-        </View>
-      )}
+      <View style={styles.imageWrap}>
+        {(product.external_image_url || product.image_url) ? (
+          <Image
+            source={{ uri: product.external_image_url || product.image_url! }}
+            style={styles.image}
+            resizeMode="contain"
+          />
+        ) : (
+          <View style={[styles.image, styles.imagePlaceholder]}>
+            <Text style={styles.imagePlaceholderText}>No image</Text>
+          </View>
+        )}
+        {!product.external_image_url && product.image_source === 'open_food_facts' && (
+          <View style={styles.offBadge}><Text style={styles.offBadgeText}>OFF</Text></View>
+        )}
+      </View>
 
       {/* Product header */}
       <View style={styles.header}>
@@ -211,6 +218,9 @@ const styles = StyleSheet.create({
     height: 220,
     backgroundColor: '#fff',
   },
+  imageWrap: { position: 'relative', width: '100%', height: 220 },
+  offBadge: { position: 'absolute', bottom: 6, right: 6, backgroundColor: 'rgba(22,101,52,0.8)', borderRadius: 3, paddingHorizontal: 4, paddingVertical: 2 },
+  offBadgeText: { color: '#fff', fontSize: 9, fontWeight: '700' },
   imagePlaceholder: {
     justifyContent: 'center',
     alignItems: 'center',

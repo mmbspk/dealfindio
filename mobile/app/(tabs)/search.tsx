@@ -30,6 +30,8 @@ interface ProductWithPrice extends Product {
   store_name?: string
   is_on_sale?: boolean
   image_url?: string | null
+  external_image_url?: string | null
+  image_source?: string | null
 }
 
 function PriceTag({ price, pctOff }: { price: number; pctOff?: number }) {
@@ -133,8 +135,8 @@ export default function ProductsScreen() {
       >
         {/* Image */}
         <View style={styles.imageContainer}>
-          {item.image_url ? (
-            <Image source={{ uri: item.image_url }} style={styles.image} resizeMode="contain" />
+          {(item.external_image_url || item.image_url) ? (
+            <Image source={{ uri: item.external_image_url || item.image_url! }} style={styles.image} resizeMode="contain" />
           ) : (
             <View style={[styles.image, styles.imagePlaceholder]}>
               <Text style={styles.imagePlaceholderText}>🛒</Text>
@@ -145,6 +147,9 @@ export default function ProductsScreen() {
               <Text style={styles.salePillText}>-{Math.round(item.sale_pct_off)}%</Text>
             </View>
           ) : null}
+          {!item.external_image_url && item.image_source === 'open_food_facts' && (
+            <View style={styles.offBadge}><Text style={styles.offBadgeText}>OFF</Text></View>
+          )}
         </View>
 
         {/* Info */}
@@ -308,6 +313,8 @@ const styles = StyleSheet.create({
   image: { width: '100%', height: '100%' },
   imagePlaceholder: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#edf2e9' },
   imagePlaceholderText: { fontSize: 32 },
+  offBadge: { position: 'absolute', bottom: 4, right: 4, backgroundColor: 'rgba(22,101,52,0.8)', borderRadius: 3, paddingHorizontal: 3, paddingVertical: 1 },
+  offBadgeText: { color: '#fff', fontSize: 8, fontWeight: '700' },
   salePill: {
     position: 'absolute', top: 6, left: 6,
     backgroundColor: '#ef4444', borderRadius: 14,

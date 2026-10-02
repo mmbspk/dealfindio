@@ -21,6 +21,8 @@ interface Deal {
   id: string
   product_id: string
   image_url?: string | null
+  external_image_url?: string | null
+  image_source?: string | null
   product_name: string
   brand: string | null
   category: string | null
@@ -89,7 +91,14 @@ export default function DealsScreen() {
     return (
       <Pressable style={styles.card} onPress={() => router.push(`/product/${item.product_id}`)} accessibilityRole="button" accessibilityLabel={`Compare prices for ${item.product_name}`}>
         <View style={styles.cardMain}>
-          {item.image_url ? <Image source={{ uri: item.image_url }} style={styles.dealImage} resizeMode="contain" /> : null}
+          <View style={styles.imageWrap}>
+            {(item.external_image_url || item.image_url) ? (
+              <Image source={{ uri: item.external_image_url || item.image_url! }} style={styles.dealImage} resizeMode="contain" />
+            ) : null}
+            {!item.external_image_url && item.image_source === 'open_food_facts' && (
+              <View style={styles.offBadge}><Text style={styles.offBadgeText}>OFF</Text></View>
+            )}
+          </View>
           <View style={styles.cardCopy}>
         <Text style={styles.name}>{item.product_name}</Text>
         {item.brand ? <Text style={styles.brand}>{item.brand}</Text> : null}
@@ -141,6 +150,9 @@ const styles = StyleSheet.create({
   cardMain: { flexDirection: 'row', alignItems: 'center', gap: 14 },
   cardCopy: { flex: 1 },
   dealImage: { width: 76, height: 82, borderRadius: 12, backgroundColor: '#f5f7f2' },
+  imageWrap: { position: 'relative', width: 76, height: 82 },
+  offBadge: { position: 'absolute', bottom: 2, right: 2, backgroundColor: 'rgba(22,101,52,0.8)', borderRadius: 3, paddingHorizontal: 3, paddingVertical: 1 },
+  offBadgeText: { color: '#fff', fontSize: 8, fontWeight: '700' },
   container: { flex: 1, backgroundColor: '#f5f7f2' },
   spinner: { flex: 1, backgroundColor: '#f5f7f2' },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },

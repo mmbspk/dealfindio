@@ -104,6 +104,8 @@ def _fetch_deals(
                 "brand": product.brand,
                 "category": product.category,
                 "image_url": product.image_url or product.external_image_url,
+                "external_image_url": product.external_image_url,
+                "image_source": product.image_source,
                 "store_id": str(store.id),
                 "store_name": store.name,
                 "chain": store.chain,
