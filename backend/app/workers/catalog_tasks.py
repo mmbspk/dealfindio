@@ -23,7 +23,7 @@ from celery.exceptions import SoftTimeLimitExceeded
 
 from app.config import get_settings
 from app.models import CatalogCrawlRun
-from app.services.catalog_ingest import ingest_catalog_products
+from app.services.catalog_ingest import IngestCounts, ingest_catalog_products
 from app.workers.celery_app import celery_app
 from app.workers.tasks_base import CallbackTask
 
@@ -132,35 +132,47 @@ def run_catalog_crawl(self, chain: str, mode: str = "full") -> CatalogResult:
     try:
         scraper = get_catalog_scraper(chain, db_session=session, redis_client=redis)
 
-        async def sink(products, category):
+        async def sink(products, category, *, mark_category_done: bool = True):
             # Check if a cancel has been requested via Redis flag.
             cancel_key = f"catalog_cancel:{self.request.id}"
             if redis.exists(cancel_key):
                 raise CancelledError(f"Crawl cancelled by user request (chain={chain})")
 
-            # Sync DB work inside the async crawl. Fine at our scale; keeps the
-            # crawl memory-flat by ingesting per category instead of buffering.
-            counts = ingest_catalog_products(products, chain, session)
-            totals["new"] += counts.created
-            totals["updated"] += counts.updated
-            totals["since_commit"] += counts.price_reports
+            counts = IngestCounts()
+            if products:
+                # Sync DB work inside the async crawl. Fine at our scale; keeps the
+                # crawl memory-flat by ingesting per page instead of buffering.
+                counts = ingest_catalog_products(products, chain, session)
+                totals["new"] += counts.created
+                totals["updated"] += counts.updated
+                totals["since_commit"] += counts.price_reports
 
-            # Update the run row after every category so the admin UI shows
-            # live progress rather than 0 until the whole crawl finishes.
-            run.products_found = (run.products_found or 0) + len(products)
-            run.products_new = totals["new"]
-            run.products_updated = totals["updated"]
-            run.categories_crawled = (run.categories_crawled or 0) + 1
+                run.products_found = (run.products_found or 0) + len(products)
+                run.products_new = totals["new"]
+                run.products_updated = totals["updated"]
+
+            if mark_category_done:
+                run.categories_crawled = (run.categories_crawled or 0) + 1
 
             cat_name = getattr(category, "name", None) or str(category)
-            _push_log(
-                redis,
-                task_id,
-                "info",
-                f"Category '{cat_name}': {len(products)} products "
-                f"(+{counts.created} new, {counts.updated} updated) — "
-                f"total {totals['new']} new",
-            )
+            if products:
+                if mark_category_done:
+                    _push_log(
+                        redis,
+                        task_id,
+                        "info",
+                        f"Category '{cat_name}': {len(products)} products "
+                        f"(+{counts.created} new, {counts.updated} updated) — "
+                        f"total {totals['new']} new",
+                    )
+                else:
+                    _push_log(
+                        redis,
+                        task_id,
+                        "info",
+                        f"  → {cat_name}: +{counts.created} new, {counts.updated} updated "
+                        f"({len(products)} flushed)",
+                    )
 
             if totals["since_commit"] >= _COMMIT_EVERY:
                 session.commit()
@@ -187,6 +199,14 @@ def run_catalog_crawl(self, chain: str, mode: str = "full") -> CatalogResult:
             session.commit()
             logger.info("Catalog %s: discovered %d categories", chain, count)
             _push_log(redis, task_id, "info", f"Discovered {count} categories to crawl")
+
+        def on_category_start(category):
+            cat_name = getattr(category, "name", None) or str(category)
+            _push_log(redis, task_id, "info", f"Crawling category '{cat_name}'...")
+            try:
+                redis.setex(f"catalog_curcat:{task_id}", 3600, cat_name)
+            except Exception:
+                pass
 
         if mode == "specials":
             runner = scraper.run_specials
@@ -227,12 +247,20 @@ def run_catalog_crawl(self, chain: str, mode: str = "full") -> CatalogResult:
         elif mode == "full":
             runner = scraper.run_full
             summary = asyncio.run(
-                runner(product_sink=sink, on_categories_discovered=on_categories_discovered)
+                runner(
+                    product_sink=sink,
+                    on_categories_discovered=on_categories_discovered,
+                    on_category_start=on_category_start,
+                )
             )
         else:
             runner = scraper.run_delta
             summary = asyncio.run(
-                runner(product_sink=sink, on_categories_discovered=on_categories_discovered)
+                runner(
+                    product_sink=sink,
+                    on_categories_discovered=on_categories_discovered,
+                    on_category_start=on_category_start,
+                )
             )
         session.commit()  # flush any remaining un-committed products
 

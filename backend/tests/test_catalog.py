@@ -123,7 +123,7 @@ class _FakeScraper(CatalogScraper):
             CategoryNode(id="bakery", name="Bakery"),
         ]
 
-    async def crawl_category(self, category, auth):
+    async def crawl_category(self, category, auth, *, page_sink=None, start_page: int = 1):
         self.crawl_calls += 1
         if self._fail_first_401 and self.crawl_calls == 1:
             raise AuthExpiredError("401")

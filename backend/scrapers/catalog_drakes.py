@@ -282,7 +282,7 @@ class DrakesCatalogScraper(CatalogScraper):
         logger.info("Drakes: discovered %d categories: %s", len(nodes), [n.name for n in nodes])
         return nodes or _hardcoded_categories()
 
-    async def crawl_category(self, category: CategoryNode, auth: dict) -> Any:
+    async def crawl_category(self, category: CategoryNode, auth: dict, *, page_sink=None, start_page: int = 1) -> Any:
         """Fetch all pages for one category, parse products inline, discard HTML immediately."""
         client = self._client
         if client is None:
@@ -291,7 +291,8 @@ class DrakesCatalogScraper(CatalogScraper):
         today = date.today()
         products: list[CatalogProduct] = []
         seen: set[str] = set()
-        page = 1
+        # Start directly at start_page so resumed runs don't re-fetch old pages.
+        page = start_page
         while page <= self.config.max_pages_per_category:
             await self.rate_limiter.wait()
             html = await self._fetch_page(client, category.id, page)
@@ -301,16 +302,26 @@ class DrakesCatalogScraper(CatalogScraper):
             # Parse and discard the HTML immediately — don't buffer large strings.
             soup = BeautifulSoup(html, "html.parser")
             del html  # release before next iteration
+            page_products: list[CatalogProduct] = []
             for card in soup.find_all(id=re.compile(r"^line_")):
                 product = _parse_card(card, category.id, today)
                 if product is None or product.external_id in seen:
                     continue
                 seen.add(product.external_id)
-                products.append(product)
+                page_products.append(product)
             del soup
+
+            if page_sink is not None:
+                await page_sink(page_products, page)
+            else:
+                products.extend(page_products)
+
             if not has_next:
                 break
             page += 1
+
+        if page_sink is not None:
+            return {"_streamed": True}
 
         # Return products directly; parse_products just passes them through.
         return {"products": products}

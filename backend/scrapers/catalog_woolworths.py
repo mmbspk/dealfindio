@@ -202,10 +202,19 @@ class WoolworthsCatalogScraper(CatalogScraper):
             )
         return nodes
 
-    async def crawl_category(self, category: CategoryNode, auth: dict) -> Any:
-        """Paginate one top-level department. Returns all raw product dicts."""
+    async def crawl_category(self, category: CategoryNode, auth: dict, *, page_sink=None, start_page: int = 1) -> Any:
+        """Paginate one top-level department.
+
+        When ``page_sink`` is provided, products are parsed and flushed per page
+        instead of buffered — returns ``{"_streamed": True}`` in that case.
+        Pages before ``start_page`` are skipped (page checkpoint resume).
+        """
         url_name = category.url or category.id
         all_products: list[dict] = []
+        # On resume, pre-count the skipped pages so TotalRecordCount termination fires correctly.
+        # Woolworths uses a fixed page size of 36.
+        total_seen = (start_page - 1) * 36
+        today = date.today()
 
         async with httpx.AsyncClient(
             headers=_JSON_HEADERS,
@@ -215,20 +224,35 @@ class WoolworthsCatalogScraper(CatalogScraper):
             proxies=_get_proxy(),
         ) as client:
             for page in range(1, self.config.max_pages_per_category + 1):
+                if page < start_page:
+                    continue  # skip already-checkpointed pages
                 await self.rate_limiter.wait()
                 data = await self._fetch_page(client, url_name, category, page)
                 page_products = _extract_products(data)
                 if not page_products:
                     break
-                all_products.extend(page_products)
+
+                total_seen += len(page_products)
+
+                if page_sink is not None:
+                    parsed = [
+                        p for item in page_products
+                        if (p := _parse_item(item, category, today)) is not None
+                    ]
+                    await page_sink(parsed, page)
+                else:
+                    all_products.extend(page_products)
 
                 # Stop when we have consumed the reported total (capped at 10000).
                 total = data.get("TotalRecordCount") or 0
-                if total > 0 and len(all_products) >= total:
+                if total > 0 and total_seen >= total:
                     break
                 # Short-page heuristic: Woolworths always returns 36 per page.
                 if len(page_products) < 36:
                     break
+
+        if page_sink is not None:
+            return {"_streamed": True}
 
         return {
             "category_id": category.id,

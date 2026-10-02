@@ -480,7 +480,8 @@ def ingest_catalog_products(
     now = datetime.now(timezone.utc)
     for cp in products:
         try:
-            created, updated = ingest_catalog_product(cp, chain, session, store, now)
+            with session.begin_nested():
+                created, updated = ingest_catalog_product(cp, chain, session, store, now)
         except Exception as exc:
             logger.warning("Catalog ingest failed for %r: %s", cp.product_name, exc)
             continue

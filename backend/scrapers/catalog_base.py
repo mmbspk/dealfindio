@@ -274,6 +274,8 @@ class CatalogScraper(ABC):
     HASH_KEY_PREFIX = "catalog_cathash"
     #: Redis key prefix for per-category 24h crawl-recency stamps.
     CRAWLED_KEY_PREFIX = "catalog_catcrawled"
+    #: Redis key prefix for per-page flush checkpoints (same TTL as recency stamp).
+    CRAWLED_PAGE_KEY_PREFIX = "catalog_catpagechk"
     #: How long the recency stamp lives (25h — slightly longer than the skip window).
     CRAWLED_TTL_S: int = 90000  # 25h
 
@@ -311,8 +313,14 @@ class CatalogScraper(ABC):
         """Return the flat list of leaf categories to crawl."""
 
     @abstractmethod
-    async def crawl_category(self, category: CategoryNode, auth: dict) -> Any:
-        """Fetch all raw pages for one category. Return raw response data."""
+    async def crawl_category(self, category: CategoryNode, auth: dict, *, page_sink=None, start_page: int = 1) -> Any:
+        """Fetch all raw pages for one category. Return raw response data.
+
+        When ``page_sink`` is provided, call it after each page as
+        ``await page_sink(page_products, page_num)`` and return
+        ``{"_streamed": True}`` instead of buffering pages. When
+        ``start_page > 1``, skip pages already recorded in the checkpoint.
+        """
 
     @abstractmethod
     async def parse_products(self, raw: Any, category: CategoryNode) -> list[CatalogProduct]:
@@ -450,15 +458,52 @@ class CatalogScraper(ABC):
         except Exception as exc:
             self.logger.warning("Failed to mark category %s crawled: %s", category_id, exc)
 
+    # ── Page-level flush checkpoints ─────────────────────────────────────────
+
+    def _page_checkpoint_key(self, category_id: str) -> str:
+        from datetime import date
+        return f"{self.CRAWLED_PAGE_KEY_PREFIX}:{self.chain}:{category_id}:{date.today().isoformat()}"
+
+    def _get_page_checkpoint(self, category_id: str) -> int:
+        """Return the last successfully flushed page number (0 if none)."""
+        if self.redis_client is None:
+            return 0
+        try:
+            val = self.redis_client.get(self._page_checkpoint_key(category_id))
+            return int(val) if val else 0
+        except Exception:
+            return 0
+
+    def _set_page_checkpoint(self, category_id: str, page: int) -> None:
+        if self.redis_client is None:
+            return
+        try:
+            self.redis_client.setex(
+                self._page_checkpoint_key(category_id), self.CRAWLED_TTL_S, str(page)
+            )
+        except Exception as exc:
+            self.logger.warning("Failed to set page checkpoint %s p%d: %s", category_id, page, exc)
+
+    def _clear_page_checkpoint(self, category_id: str) -> None:
+        if self.redis_client is None:
+            return
+        try:
+            self.redis_client.delete(self._page_checkpoint_key(category_id))
+        except Exception:
+            pass
+
     # ── Crawl lifecycle ──────────────────────────────────────────────────────
 
-    async def run_full(self, product_sink=None, on_categories_discovered=None) -> dict:
+    async def run_full(self, product_sink=None, on_categories_discovered=None, on_category_start=None) -> dict:
         """Crawl every category. ``mode='full'``.
 
         Args:
             product_sink: optional async callable ``(list[CatalogProduct],
-                CategoryNode) -> None`` invoked per category so the caller can
-                ingest incrementally instead of buffering the whole catalog.
+                CategoryNode, *, mark_category_done=True) -> None`` invoked per
+                page (with ``mark_category_done=False``) and once on category
+                completion so the caller can ingest incrementally.
+            on_category_start: optional sync callable ``(CategoryNode) -> None``
+                called before the between-category delay, so the UI stays live.
 
         Returns a summary dict with category/product counts and any errors.
         """
@@ -466,14 +511,16 @@ class CatalogScraper(ABC):
             mode="full",
             product_sink=product_sink,
             on_categories_discovered=on_categories_discovered,
+            on_category_start=on_category_start,
         )
 
-    async def run_delta(self, product_sink=None, on_categories_discovered=None) -> dict:
+    async def run_delta(self, product_sink=None, on_categories_discovered=None, on_category_start=None) -> dict:
         """Crawl only categories whose response changed since last time."""
         return await self._run(
             mode="delta",
             product_sink=product_sink,
             on_categories_discovered=on_categories_discovered,
+            on_category_start=on_category_start,
         )
 
     async def run_specials(self, product_sink=None, resume_page: int = 1) -> dict:
@@ -487,7 +534,7 @@ class CatalogScraper(ABC):
         """
         return await self._run(mode="specials", product_sink=product_sink, resume_page=resume_page)
 
-    async def _run(self, mode: str, product_sink=None, on_categories_discovered=None, resume_page: int = 1) -> dict:
+    async def _run(self, mode: str, product_sink=None, on_categories_discovered=None, resume_page: int = 1, on_category_start=None) -> dict:
         errors: list[str] = []
         categories_found = 0
         categories_crawled = 0
@@ -576,42 +623,83 @@ class CatalogScraper(ABC):
                 categories_skipped += 1
                 continue
 
+            # Notify caller before the between-category sleep so the UI stays live.
+            if on_category_start is not None:
+                try:
+                    on_category_start(category)
+                except Exception:
+                    pass
+
+            # Resume from last successfully flushed page (0 = start from beginning).
+            start_page = self._get_page_checkpoint(category.id) + 1
+            if start_page > 1:
+                self.logger.info(
+                    "Resuming %r from page %d (checkpoint)", category.name, start_page
+                )
+
+            # Per-page sink: flushes products after each page, writes checkpoint.
+            _cur_cat = category
+
+            async def _page_flush(page_products, page_num, _c=_cur_cat):
+                nonlocal products_found
+                products_found += len(page_products)
+                if product_sink is not None and page_products:
+                    await product_sink(page_products, _c, mark_category_done=False)
+                self._set_page_checkpoint(_c.id, page_num)
+
             try:
-                raw = await self._crawl_with_reauth(category, auth)
+                raw = await self._crawl_with_reauth(
+                    category, auth, page_sink=_page_flush, start_page=start_page
+                )
             except Exception as exc:
                 msg = f"Category {category.name!r} failed: {exc}"
                 self.logger.warning(msg)
                 errors.append(msg)
                 continue
 
-            if mode == "delta" and self._category_unchanged(category.id, raw):
-                categories_skipped += 1
-                continue
-            if mode == "full":
-                # Refresh the fingerprint on full crawls too, so a later delta
-                # has a baseline to compare against.
-                self._category_unchanged(category.id, raw)
+            streamed = isinstance(raw, dict) and raw.get("_streamed")
 
-            try:
-                products = await self.parse_products(raw, category)
-            except Exception as exc:
-                msg = f"Parse failed for {category.name!r}: {exc}"
-                self.logger.warning(msg)
-                errors.append(msg)
-                continue
+            if mode == "delta" and not streamed:
+                if self._category_unchanged(category.id, raw):
+                    categories_skipped += 1
+                    continue
+            if not streamed:
+                if mode == "full":
+                    # Refresh fingerprint so a later delta has a baseline.
+                    self._category_unchanged(category.id, raw)
 
-            products_found += len(products)
-            categories_crawled += 1
-
-            if product_sink is not None and products:
                 try:
-                    await product_sink(products, category)
+                    products = await self.parse_products(raw, category)
                 except Exception as exc:
-                    msg = f"Ingest failed for {category.name!r}: {exc}"
+                    msg = f"Parse failed for {category.name!r}: {exc}"
                     self.logger.warning(msg)
                     errors.append(msg)
-                    continue  # don't mark crawled if ingest failed
+                    continue
 
+                products_found += len(products)
+                categories_crawled += 1
+
+                if product_sink is not None and products:
+                    try:
+                        await product_sink(products, category)
+                    except Exception as exc:
+                        msg = f"Ingest failed for {category.name!r}: {exc}"
+                        self.logger.warning(msg)
+                        errors.append(msg)
+                        continue  # don't mark crawled if ingest failed
+            else:
+                # Products flushed per page; signal category completion for counters.
+                categories_crawled += 1
+                if product_sink is not None:
+                    try:
+                        await product_sink([], category)
+                    except Exception as exc:
+                        msg = f"Category-done signal failed for {category.name!r}: {exc}"
+                        self.logger.warning(msg)
+                        errors.append(msg)
+                        continue
+
+            self._clear_page_checkpoint(category.id)
             # Mark the category as successfully crawled so reruns within 24h skip it.
             self._mark_category_crawled(category.id)
 
@@ -626,15 +714,18 @@ class CatalogScraper(ABC):
             "status": "success" if not errors else "partial",
         }
 
-    async def _crawl_with_reauth(self, category: CategoryNode, auth: dict) -> Any:
+    async def _crawl_with_reauth(self, category: CategoryNode, auth: dict, *, page_sink=None, start_page: int = 1) -> Any:
         """Crawl a category, re-authenticating once on an auth failure (401)."""
         try:
-            return await self.crawl_category(category, auth)
+            return await self.crawl_category(category, auth, page_sink=page_sink, start_page=start_page)
         except AuthExpiredError:
             self.logger.info("Auth expired for %s; re-authenticating", self.chain)
             await self._invalidate_auth()
             auth = await self._get_or_refresh_auth()
-            return await self.crawl_category(category, auth)
+            # Re-read the checkpoint: if page_sink flushed some pages before the
+            # auth error, start from where we left off rather than re-flushing.
+            retry_start = self._get_page_checkpoint(category.id) + 1
+            return await self.crawl_category(category, auth, page_sink=page_sink, start_page=retry_start)
 
     async def _specials_with_reauth(self, auth: dict, product_sink=None, resume_page: int = 1) -> Any:
         """Call crawl_specials, re-authenticating once on an auth failure.

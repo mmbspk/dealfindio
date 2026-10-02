@@ -349,6 +349,7 @@ class CatalogProgressResponse(BaseModel):
     task_id: str
     state: str
     result: dict | None = None
+    current_category: str | None = None
 
 
 def _catalog_chains() -> list[str]:
@@ -552,7 +553,11 @@ def get_catalog_product_counts(
 
 
 @router.get("/catalog/progress/{task_id}", response_model=CatalogProgressResponse)
-def get_catalog_progress(task_id: str, _admin=Depends(require_admin)) -> CatalogProgressResponse:
+def get_catalog_progress(
+    task_id: str,
+    redis=Depends(get_redis),
+    _admin=Depends(require_admin),
+) -> CatalogProgressResponse:
     """Return Celery task state (and result when finished) for a catalog crawl."""
     from app.workers.celery_app import celery_app
 
@@ -560,7 +565,14 @@ def get_catalog_progress(task_id: str, _admin=Depends(require_admin)) -> Catalog
     result = None
     if async_result.successful() and isinstance(async_result.result, dict):
         result = async_result.result
-    return CatalogProgressResponse(task_id=task_id, state=async_result.state, result=result)
+    cur_cat_bytes = redis.get(f"catalog_curcat:{task_id}") if redis else None
+    current_category = cur_cat_bytes.decode() if cur_cat_bytes else None
+    return CatalogProgressResponse(
+        task_id=task_id,
+        state=async_result.state,
+        result=result,
+        current_category=current_category,
+    )
 
 
 class CatalogLogEntry(BaseModel):

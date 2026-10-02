@@ -258,21 +258,29 @@ class ColesCatalogScraper(CatalogScraper):
             )
         return departments
 
-    async def crawl_category(self, category: CategoryNode, auth: dict) -> Any:
+    async def crawl_category(self, category: CategoryNode, auth: dict, *, page_sink=None, start_page: int = 1) -> Any:
         """Page through one department. Returns the accumulated pages + L2 map.
 
-        The ``children`` list on ``category`` (populated by ``discover_categories``)
-        is serialised into the return dict so ``parse_products`` can use it to
-        label products with the full ``L1 > L2`` path.
+        When ``page_sink`` is provided, products are parsed and flushed per page
+        instead of buffered — returns ``{"_streamed": True}`` in that case.
+        Pages before ``start_page`` are skipped (page checkpoint resume).
         """
+        build_id = auth["build_id"]
+        seo = category.url or category.id
+        l2_map = {c.id: c.name for c in (category.children or [])}
+        today = date.today()
+
         # Between-category pause: keep the sustained request rate low enough
         # that Imperva doesn't flag the session after the first few categories.
+        # Log before the sleep so the UI shows which category is next rather
+        # than going dark for up to 90s.
+        self.logger.info(
+            "Crawling category '%s' (start_page=%d)", category.name, start_page
+        )
         await asyncio.sleep(
             random.uniform(self._BETWEEN_CATEGORY_MIN_S, self._BETWEEN_CATEGORY_MAX_S)
         )
-        build_id = auth["build_id"]
-        seo = category.url or category.id
-        pages: list[dict] = []
+
         # Reuse the bootstrapped client so Imperva's TLS-bound session cookie stays valid.
         client = self._client
         if client is None:
@@ -286,21 +294,38 @@ class ColesCatalogScraper(CatalogScraper):
         else:
             # Switch to JSON accept header for data-route requests.
             client.headers.update(_JSON_HEADERS)
+
+        pages: list[dict] = []
         for page in range(1, self.config.max_pages_per_category + 1):
+            if page < start_page:
+                continue  # skip already-checkpointed pages
             await self.rate_limiter.wait()
             data = await self._fetch_page(client, build_id, seo, page)
             results = _extract_results(data)
             if not results:
                 break  # past the last page
-            pages.append(data)
+
+            if page_sink is not None:
+                # Streaming mode: parse this page immediately and flush
+                page_products = [
+                    p for item in results
+                    if (p := _parse_item(item, category, today, l2_map)) is not None
+                ]
+                await page_sink(page_products, page)
+            else:
+                pages.append(data)
+
             total = _total_results(data)
             if total is not None:
                 if page * self.config.page_size >= total:
                     break
             elif len(results) < self.config.page_size:
                 break
+
+        if page_sink is not None:
+            return {"_streamed": True, "category": category.id, "l2_map": l2_map}
+
         # Carry L2 children as a seoToken→name dict for parse_products.
-        l2_map = {c.id: c.name for c in (category.children or [])}
         return {"category": category.id, "pages": pages, "l2_map": l2_map}
 
     async def parse_products(self, raw: Any, category: CategoryNode) -> list[CatalogProduct]:
@@ -450,7 +475,7 @@ class ColesCatalogScraper(CatalogScraper):
         """Products are already parsed and sunk inline in crawl_specials."""
         return []
 
-    async def _crawl_with_reauth(self, category: CategoryNode, auth: dict) -> Any:
+    async def _crawl_with_reauth(self, category: CategoryNode, auth: dict, *, page_sink=None, start_page: int = 1) -> Any:
         """Coles override: re-auth with Imperva cool-down before retrying.
 
         On a bot-protection block (AuthExpiredError from non-JSON body), waits
@@ -458,7 +483,7 @@ class ColesCatalogScraper(CatalogScraper):
         Consecutive blocks get 5 / 15 / 30 min waits. Resets on a clean crawl.
         """
         try:
-            result = await self.crawl_category(category, auth)
+            result = await self.crawl_category(category, auth, page_sink=page_sink, start_page=start_page)
             self._consecutive_bot_blocks = 0  # clean run — reset counter
             return result
         except AuthExpiredError:
@@ -474,8 +499,10 @@ class ColesCatalogScraper(CatalogScraper):
             await asyncio.sleep(wait_s)
             await self._invalidate_auth()
             auth = await self._get_or_refresh_auth()
-            # One retry after cool-down — if blocked again, raise so _run() records the error
-            result = await self.crawl_category(category, auth)
+            # One retry after cool-down. Re-read checkpoint in case page_sink
+            # flushed some pages before the block — don't re-flush them.
+            retry_start = self._get_page_checkpoint(category.id) + 1
+            result = await self.crawl_category(category, auth, page_sink=page_sink, start_page=retry_start)
             self._consecutive_bot_blocks = 0
             return result
 

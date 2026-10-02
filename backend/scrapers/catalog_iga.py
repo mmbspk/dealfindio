@@ -118,25 +118,46 @@ class IGACatalogScraper(CatalogScraper):
 
     # ── Category crawling ─────────────────────────────────────────────────────
 
-    async def crawl_category(self, category: CategoryNode, auth: dict) -> Any:
+    async def crawl_category(self, category: CategoryNode, auth: dict, *, page_sink=None, start_page: int = 1) -> Any:
         store_id = auth.get("store_id", self.store_id)
         pages: list[dict] = []
-        skip = 0
+        # Compute skip directly so resume doesn't waste requests re-fetching old pages.
+        skip = (start_page - 1) * self.config.page_size
+        page_num = start_page - 1
+        today = date.today()
+        # seen_ids spans all pages so cross-page duplicates are caught even in streaming mode.
+        seen_ids: set[str] = set()
 
         async with httpx.AsyncClient(
             headers=_headers(), follow_redirects=True, timeout=self.TIMEOUT_S
         ) as client:
-            while len(pages) < self.config.max_pages_per_category:
+            while page_num < self.config.max_pages_per_category:
+                page_num += 1
                 await self.rate_limiter.wait()
                 data = await self._fetch_page(client, store_id, category.id, skip)
                 items = data.get("items") or []
                 if not items:
                     break
-                pages.append(data)
+
+                if page_sink is not None:
+                    page_products = []
+                    for item in items:
+                        product = _parse_item(item, category.name, today)
+                        if product is None or product.external_id in seen_ids:
+                            continue
+                        seen_ids.add(product.external_id or "")
+                        page_products.append(product)
+                    await page_sink(page_products, page_num)
+                else:
+                    pages.append(data)
+
                 total = data.get("total") or 0
                 skip += self.config.page_size
                 if skip >= total or len(items) < self.config.page_size:
                     break
+
+        if page_sink is not None:
+            return {"_streamed": True}
 
         return {"category_name": category.name, "pages": pages}
 

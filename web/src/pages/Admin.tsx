@@ -16,9 +16,9 @@ interface Stats {  total_products: number; total_price_reports: number
 interface EnrichResult { chain: string | null; candidates: number; enriched: number; skipped: number; status: string }
 interface EnrichTask { taskId: string; state: string; result: EnrichResult | null; error: string | null }
 interface CatalogResult { chain: string; mode: string; status: string; categories_found: number; categories_crawled: number; categories_skipped: number; products_found: number; products_new: number; products_updated: number }
-interface CatalogTask { taskId: string; mode: string; state: string; result: CatalogResult | null; error: string | null; alreadyRan?: { lastRunAt: string } }
+interface CatalogTask { taskId: string; mode: string; state: string; result: CatalogResult | null; error: string | null; alreadyRan?: { lastRunAt: string }; currentCategory?: string | null }
 interface CatalogConfig { available_chains: string[]; enabled_chains: string[]; schedules: Record<string, string> }
-interface CatalogRun { id: string; chain: string; mode: string; status: string; celery_task_id: string | null; categories_found: number; categories_crawled: number; categories_skipped: number; products_found: number; products_new: number; products_updated: number; run_started_at: string; run_finished_at: string | null }
+interface CatalogRun { id: string; chain: string; mode: string; status: string; celery_task_id: string | null; categories_found: number; categories_crawled: number; categories_skipped: number; products_found: number; products_new: number; products_updated: number; run_started_at: string; run_finished_at: string | null; errors_json?: { errors: string[] } | null }
 interface ConfigEntry { key: string; label: string; description: string; group: string; is_secret: boolean; is_set: boolean; value: string | null; updated_at: string | null; type?: string; options?: string[] | null; min_value?: number | null; max_value?: number | null; default?: string | null }
 interface DedupOverlapRow { chains: string[]; product_count: number }
 interface DedupSampleProduct { product_id: string; name: string; chains: string[]; prices: Record<string, number> }
@@ -297,11 +297,13 @@ function durationSeconds(run: CatalogRun): number {
 function CatalogRunHistory({ runs }: { runs: CatalogRun[] }) {
   const [chainF, setChainF] = useState('')
   const [statusF, setStatusF] = useState('')
+  const [modeF, setModeF] = useState('')
   const [sortKey, setSortKey] = useState<CatalogSortKey>('started')
   const [sortDir, setSortDir] = useState<CatalogSortDir>('desc')
 
   const chains = Array.from(new Set(runs.map(r => r.chain))).sort()
   const statuses = Array.from(new Set(runs.map(r => r.status))).sort()
+  const modes = Array.from(new Set(runs.map(r => r.mode))).sort()
 
   function toggleSort(key: CatalogSortKey) {
     if (sortKey === key) setSortDir(d => d === 'desc' ? 'asc' : 'desc')
@@ -309,7 +311,7 @@ function CatalogRunHistory({ runs }: { runs: CatalogRun[] }) {
   }
 
   const filtered = runs
-    .filter(r => (!chainF || r.chain === chainF) && (!statusF || r.status === statusF))
+    .filter(r => (!chainF || r.chain === chainF) && (!statusF || r.status === statusF) && (!modeF || r.mode === modeF))
     .sort((a, b) => {
       let diff = 0
       if (sortKey === 'started') diff = new Date(a.run_started_at).getTime() - new Date(b.run_started_at).getTime()
@@ -338,6 +340,11 @@ function CatalogRunHistory({ runs }: { runs: CatalogRun[] }) {
           <option value="">All chains</option>
           {chains.map(c => <option key={c} value={c}>{CHAIN_LOGO[c] ?? '🛒'} {c}</option>)}
         </select>
+        <select value={modeF} onChange={e => setModeF(e.target.value)}
+          className="text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 bg-white text-gray-700 focus:outline-none focus:ring-1 focus:ring-emerald-500">
+          <option value="">All modes</option>
+          {modes.map(m => <option key={m} value={m}>{m}</option>)}
+        </select>
         <select value={statusF} onChange={e => setStatusF(e.target.value)}
           className="text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 bg-white text-gray-700 focus:outline-none focus:ring-1 focus:ring-emerald-500">
           <option value="">All statuses</option>
@@ -349,8 +356,8 @@ function CatalogRunHistory({ runs }: { runs: CatalogRun[] }) {
           <SortBtn k="duration" label="Duration" />
           <SortBtn k="new" label="New" />
         </div>
-        {(chainF || statusF) && (
-          <button onClick={() => { setChainF(''); setStatusF('') }}
+        {(chainF || statusF || modeF) && (
+          <button onClick={() => { setChainF(''); setStatusF(''); setModeF('') }}
             className="text-xs text-gray-400 hover:text-gray-600 underline decoration-dotted">
             Clear
           </button>
@@ -361,7 +368,21 @@ function CatalogRunHistory({ runs }: { runs: CatalogRun[] }) {
         rows={filtered.map(run => [
           <span key="c">{CHAIN_LOGO[run.chain] ?? '🛒'} {run.chain}</span>,
           <Pill key="m" tone="blue">{run.mode}</Pill>,
-          <StatusBadge key="s" status={run.status} />,
+          <div key="s" className="whitespace-normal">
+            <StatusBadge status={run.status} />
+            {run.errors_json?.errors?.length ? (
+              <details className="mt-0.5">
+                <summary className="text-[10px] text-amber-600 cursor-pointer select-none">
+                  ⚠ {run.errors_json.errors.length} error{run.errors_json.errors.length !== 1 ? 's' : ''}
+                </summary>
+                <ul className="mt-1 max-w-xs space-y-1">
+                  {run.errors_json.errors.map((e, i) => (
+                    <li key={i} className="text-[10px] text-red-600 break-words">{e}</li>
+                  ))}
+                </ul>
+              </details>
+            ) : null}
+          </div>,
           <span key="t">{fmtDate(run.run_started_at)}</span>,
           <span key="d">{duration(run.run_started_at, run.run_finished_at)}</span>,
           <span key="f">{run.products_found.toLocaleString()}</span>,
@@ -548,8 +569,8 @@ function CatalogTab() {
     if (pollRefs.current[chain]) clearInterval(pollRefs.current[chain])
     const poll = async () => {
       try {
-        const r = await apiClient.get<{ state: string; result: CatalogResult | null }>(`/api/v1/admin/catalog/progress/${taskId}`)
-        setTasks(p => ({ ...p, [chain]: { ...p[chain], taskId, state: r.data.state, result: r.data.result, error: null } }))
+        const r = await apiClient.get<{ state: string; result: CatalogResult | null; current_category?: string | null }>(`/api/v1/admin/catalog/progress/${taskId}`)
+        setTasks(p => ({ ...p, [chain]: { ...p[chain], taskId, state: r.data.state, result: r.data.result, currentCategory: r.data.current_category, error: null } }))
         if (r.data.state === 'SUCCESS' || r.data.state === 'FAILURE') {
           clearInterval(pollRefs.current[chain]); delete pollRefs.current[chain]
           setTimeout(() => { void loadRuns(); void loadProductCounts() }, 1500)
@@ -630,9 +651,10 @@ function CatalogTab() {
                   : (() => {
                       const liveRun = runs.find(r => r.chain === chain && r.status === 'running')
                       const isSpecials = task.mode === 'specials'
+                      const curCat = (!isSpecials && task.currentCategory) ? task.currentCategory : null
                       const cats = (!isSpecials && liveRun) ? `${liveRun.categories_crawled}${liveRun.categories_found ? `/${liveRun.categories_found}` : ''} cats` : null
                       const prods = liveRun?.products_found ? `${liveRun.products_found.toLocaleString()} products` : null
-                      const detail = [cats, prods].filter(Boolean).join(' · ')
+                      const detail = [curCat, cats, prods].filter(Boolean).join(' · ')
                       return <div className="text-[11px] text-gray-500">⏳ {task.mode} crawl {task.state === 'PENDING' ? 'queued…' : `running… ${detail}`}</div>
                     })()}</ProgressPanel>
               )}

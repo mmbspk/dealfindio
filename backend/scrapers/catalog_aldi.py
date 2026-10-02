@@ -268,10 +268,15 @@ class ALDICatalogScraper(CatalogScraper):
             )
         return resp.json()
 
-    async def crawl_category(self, category: CategoryNode, auth: dict) -> Any:
+    async def crawl_category(self, category: CategoryNode, auth: dict, *, page_sink=None, start_page: int = 1) -> Any:
         """Fetch all pages for a category and return raw API responses."""
         pages: list[dict] = []
-        offset = 0
+        # Resume: compute starting offset directly from checkpoint so we don't
+        # re-fetch already-flushed pages.
+        offset = (start_page - 1) * _PAGE_SIZE
+        page_num = start_page - 1
+        cat_name = category.name
+        seen_skus: set[str] = set()
 
         async with httpx.AsyncClient(
             headers=_HEADERS,
@@ -279,19 +284,34 @@ class ALDICatalogScraper(CatalogScraper):
             timeout=self.TIMEOUT_S,
         ) as client:
             while True:
+                page_num += 1
                 data = await self._fetch_page(client, category.id, offset)
-                pages.append(data)
 
                 pagination = data.get("meta", {}).get("pagination", {})
                 total = pagination.get("totalCount", 0)
                 fetched_so_far = offset + _PAGE_SIZE
 
+                if page_sink is not None:
+                    page_products = []
+                    for item in data.get("data", []):
+                        product = _product_from_api(item, cat_name)
+                        if product is None or product.external_id in seen_skus:
+                            continue
+                        seen_skus.add(product.external_id)
+                        page_products.append(product)
+                    await page_sink(page_products, page_num)
+                else:
+                    pages.append(data)
+
                 if fetched_so_far >= total:
                     break
-                if len(pages) >= self.config.max_pages_per_category:
+                if page_num >= self.config.max_pages_per_category:
                     break
 
                 offset = fetched_so_far
+
+        if page_sink is not None:
+            return {"_streamed": True}
 
         return {"category_name": category.name, "pages": pages}
 
