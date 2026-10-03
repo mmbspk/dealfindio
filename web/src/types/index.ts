@@ -8,6 +8,8 @@ export interface Product {
   unit_price?: number | null
   unit_price_label?: string | null
   image_url?: string | null
+  external_image_url?: string | null
+  image_source?: string | null
   in_stock?: boolean
   external_source?: string | null
   lowest_price_aud?: number | null
@@ -24,6 +26,8 @@ export interface Deal {
   product_name: string
   brand: string | null
   image_url?: string | null
+  external_image_url?: string | null
+  image_source?: string | null
   category?: string | null
   store_name: string
   chain: string

@@ -25,6 +25,8 @@ export const DealCard: React.FC<Props> = ({ deal, viewMode = 'list' }) => {
   const chainLabel = deal.chain
     ? deal.chain.charAt(0).toUpperCase() + deal.chain.slice(1)
     : deal.store_name
+  const displayImage = deal.external_image_url || deal.image_url
+  const isOffImage = !deal.external_image_url && deal.image_source === 'open_food_facts'
 
   // ── Compact: small square tile ──────────────────────────────────────────
   if (viewMode === 'compact') {
@@ -35,14 +37,19 @@ export const DealCard: React.FC<Props> = ({ deal, viewMode = 'list' }) => {
           className="block bg-white border border-gray-100 rounded-2xl p-3 hover:shadow-md hover:border-[#a8cdb1] transition flex flex-col"
         >
           <div className="aspect-square bg-gray-50 rounded-lg mb-2 overflow-hidden flex items-center justify-center relative">
-            {deal.image_url ? (
-              <img src={deal.image_url} alt={deal.product_name} className="w-full h-full object-contain group-hover:scale-105 transition-transform" loading="lazy" />
+            {displayImage ? (
+              <img src={displayImage} alt={deal.product_name} className="w-full h-full object-contain group-hover:scale-105 transition-transform" loading="lazy" />
             ) : (
               <PlaceholderIcon className="w-8 h-8 text-gray-200" />
             )}
             {pctOff && pctOff > 0 && (
               <span className="absolute top-1.5 left-1.5 bg-red-500 text-white text-xs font-bold px-1.5 py-0.5 rounded">
                 -{pctOff}%
+              </span>
+            )}
+            {isOffImage && (
+              <span className="absolute bottom-1 right-1 bg-green-600/80 text-white text-[9px] font-bold px-1 py-0.5 rounded leading-none pointer-events-none">
+                OFF
               </span>
             )}
           </div>
@@ -74,14 +81,19 @@ export const DealCard: React.FC<Props> = ({ deal, viewMode = 'list' }) => {
           className="block bg-white border border-gray-100 rounded-2xl p-4 hover:shadow-md hover:border-[#a8cdb1] transition flex flex-col h-full"
         >
           <div className="aspect-square bg-gray-50 rounded-lg mb-3 overflow-hidden flex items-center justify-center relative">
-            {deal.image_url ? (
-              <img src={deal.image_url} alt={deal.product_name} className="w-full h-full object-contain group-hover:scale-105 transition-transform" loading="lazy" />
+            {displayImage ? (
+              <img src={displayImage} alt={deal.product_name} className="w-full h-full object-contain group-hover:scale-105 transition-transform" loading="lazy" />
             ) : (
               <PlaceholderIcon className="w-12 h-12 text-gray-200" />
             )}
             {pctOff && pctOff > 0 && (
               <span className="absolute top-2 left-2 bg-red-500 text-white text-xs font-bold px-2 py-0.5 rounded">
                 -{pctOff}%
+              </span>
+            )}
+            {isOffImage && (
+              <span className="absolute bottom-1 right-1 bg-green-600/80 text-white text-[9px] font-bold px-1 py-0.5 rounded leading-none pointer-events-none">
+                OFF
               </span>
             )}
           </div>
@@ -112,11 +124,16 @@ export const DealCard: React.FC<Props> = ({ deal, viewMode = 'list' }) => {
       to={`/product/${deal.product_id}`}
       className="flex gap-4 items-center bg-white border border-gray-200 rounded-2xl p-4 hover:border-[#a8cdb1] hover:shadow-md transition group"
     >
-      <div className="w-16 h-16 flex-shrink-0 bg-gray-50 rounded-lg overflow-hidden flex items-center justify-center border border-gray-100">
-        {deal.image_url ? (
-          <img src={deal.image_url} alt={deal.product_name} className="w-full h-full object-contain" loading="lazy" />
+      <div className="w-16 h-16 flex-shrink-0 bg-gray-50 rounded-lg overflow-hidden flex items-center justify-center border border-gray-100 relative">
+        {displayImage ? (
+          <img src={displayImage} alt={deal.product_name} className="w-full h-full object-contain" loading="lazy" />
         ) : (
           <PlaceholderIcon className="w-7 h-7 text-gray-200" />
+        )}
+        {isOffImage && (
+          <span className="absolute bottom-0.5 right-0.5 bg-green-600/80 text-white text-[8px] font-bold px-0.5 py-px rounded leading-none pointer-events-none">
+            OFF
+          </span>
         )}
       </div>
 
