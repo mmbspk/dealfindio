@@ -11,14 +11,16 @@ interface ProductCardProps {
 export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
   const [imgError, setImgError] = useState(false)
   const packSize = formatPackageSize(product.package_size)
+  const displayImage = product.external_image_url || product.image_url
+  const isOffImage = !product.external_image_url && product.image_source === 'open_food_facts'
 
   return (
     <Link to={`/product/${product.id}`}>
       <div className="bg-white rounded-lg shadow-md hover:shadow-xl transition cursor-pointer h-full p-6 hover:scale-105 transform duration-200">
-        <div className="aspect-square bg-gradient-to-br from-gray-100 to-gray-200 rounded-lg mb-4 flex items-center justify-center overflow-hidden">
-          {product.image_url && !imgError ? (
+        <div className="aspect-square bg-gradient-to-br from-gray-100 to-gray-200 rounded-lg mb-4 flex items-center justify-center overflow-hidden relative">
+          {displayImage && !imgError ? (
             <img
-              src={product.image_url}
+              src={displayImage}
               alt={product.name}
               className="w-full h-full object-contain"
               onError={() => setImgError(true)}
@@ -28,6 +30,11 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
             <svg className="w-16 h-16 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
             </svg>
+          )}
+          {isOffImage && (
+            <span className="absolute bottom-1 right-1 bg-green-600/80 text-white text-[9px] font-bold px-1 py-0.5 rounded leading-none pointer-events-none">
+              OFF
+            </span>
           )}
         </div>
 

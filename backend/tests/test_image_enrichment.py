@@ -505,6 +505,8 @@ class TestOFTImageEnricher:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
+    @pytest.mark.unit
+    @pytest.mark.asyncio
     async def test_gtin_name_mismatch_falls_back_to_text_search(self):
         """GTIN hit whose OFF name doesn't match our product name falls back to search.
 

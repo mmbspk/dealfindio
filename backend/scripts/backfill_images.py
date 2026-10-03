@@ -34,6 +34,12 @@ _DEFAULT_LIMIT = 500
 
 def _run_enrichment(chain: str | None, limit: int, dry_run: bool) -> dict:
     """Run the OFF enrichment pipeline synchronously for one chain (or all)."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+
+    from app.config import get_settings
+    from app.models import Product
+    from app.services.object_store import get_object_store, product_image_key
     from app.workers.image_tasks import _enrich_all, _find_products_missing_images
 
     settings = get_settings()
