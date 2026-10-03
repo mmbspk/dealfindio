@@ -13,12 +13,11 @@ the scraper or notification queues.
 
 import asyncio
 import logging
-from datetime import datetime, timezone
 from typing import Optional, TypedDict
 from uuid import UUID
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -56,13 +55,19 @@ def get_db_session() -> Session:
 def _find_products_missing_images(
     session: Session, chain: Optional[str], limit: int
 ) -> list[Product]:
-    """Return up to ``limit`` products with no image_url.
+    """Return up to ``limit`` products that need OFF enrichment.
 
-    When ``chain`` is given, restrict to products seen in that chain's scrape
-    (via ``PriceReport.source == f"catalog_{chain}"``). Otherwise sweep all
-    chains — used by the weekly backstop.
+    Excludes products that already have a live image_url OR a pending/approved
+    OFF candidate (off_image_status IN ('pending', 'approved')) — don't
+    overwrite an existing candidate that hasn't been reviewed yet.
     """
-    stmt = select(Product).where(Product.image_url.is_(None))
+    stmt = select(Product).where(
+        Product.image_url.is_(None),
+        or_(
+            Product.off_image_status.is_(None),
+            Product.off_image_status.notin_(["pending", "approved"]),
+        ),
+    )
     if chain:
         stmt = (
             stmt.join(PriceReport, PriceReport.product_id == Product.id)
@@ -119,7 +124,6 @@ def enrich_product_images(
         results = asyncio.run(_enrich_all(targets))
 
         store = get_object_store()
-        now = datetime.now(timezone.utc)
         for product_id, enriched_image in results:
             if enriched_image is None:
                 skipped += 1
@@ -138,14 +142,18 @@ def enrich_product_images(
             if product is None:
                 skipped += 1
                 continue
-            product.image_url = public_url
-            product.image_source = "open_food_facts"
-            product.image_enriched_at = now
-            logger.debug(
-                "Enriched image for %s (score=%.0f, source=%s)",
-                product_id,
+            # Write to the review queue, not directly to image_url.
+            # Admins (or the AI agent) approve candidates → only then does
+            # image_url get populated.
+            product.off_image_url = public_url
+            product.off_image_score = enriched_image.match_score
+            product.off_image_off_code = enriched_image.off_code
+            product.off_image_off_name = enriched_image.off_product_name
+            product.off_image_status = "pending"
+            logger.info(
+                "  ⏳ %s (score=%.0f) → pending review",
+                product.name,
                 enriched_image.match_score,
-                enriched_image.source_url,
             )
             enriched += 1
 

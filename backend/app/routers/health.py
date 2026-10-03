@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, status
-from sqlalchemy import desc, text
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.config import get_settings

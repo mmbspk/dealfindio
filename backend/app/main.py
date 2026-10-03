@@ -439,18 +439,23 @@ def create_app() -> FastAPI:
     if settings.OBJECT_STORAGE_BACKEND.lower() == "local":
         try:
             import os
+            from urllib.parse import urlparse
 
             from fastapi.staticfiles import StaticFiles
 
             os.makedirs(settings.OBJECT_STORAGE_LOCAL_ROOT, exist_ok=True)
+            # base_url may be an absolute URL (http://host/media) or a bare path (/media).
+            # FastAPI mount() needs just the path component either way.
+            parsed = urlparse(settings.OBJECT_STORAGE_LOCAL_BASE_URL)
+            mount_path = parsed.path.rstrip("/") or "/media"
             app.mount(
-                settings.OBJECT_STORAGE_LOCAL_BASE_URL,
+                mount_path,
                 StaticFiles(directory=settings.OBJECT_STORAGE_LOCAL_ROOT),
                 name="media",
             )
             logger.info(
                 "Mounted local media at %s -> %s",
-                settings.OBJECT_STORAGE_LOCAL_BASE_URL,
+                mount_path,
                 settings.OBJECT_STORAGE_LOCAL_ROOT,
             )
         except Exception as e:

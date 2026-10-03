@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import and_, desc, func, select, case
+from sqlalchemy import and_, desc, func, select
 from sqlalchemy.orm import Session
 
 from app.deps import get_db

@@ -53,6 +53,17 @@ class Product(Base):
     external_image_url: Mapped[str | None] = mapped_column(String(500))
     image_source: Mapped[str | None] = mapped_column(String(50))
     image_enriched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    # OFF image review queue — new enrichment results land here as 'pending'
+    # and only graduate to image_url once approved (manually or by AI agent).
+    off_image_url: Mapped[str | None] = mapped_column(String(500))
+    off_image_score: Mapped[float | None]
+    off_image_off_code: Mapped[str | None] = mapped_column(String(50))
+    off_image_off_name: Mapped[str | None] = mapped_column(String(300))
+    off_image_status: Mapped[str | None] = mapped_column(String(20))  # pending|approved|rejected
+    off_image_ai_verdict: Mapped[str | None] = mapped_column(String(20))  # approved|rejected|skipped
+    off_image_ai_reason: Mapped[str | None] = mapped_column(String(300))
+    off_image_ai_reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # Set by the full-catalog crawler: when this product was last seen in a
     # catalog crawl, and whether it was in stock at that time.
     catalog_last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -85,6 +96,7 @@ class Product(Base):
     __table_args__ = (
         Index("idx_products_gtin", "gtin"),
         Index("idx_products_name", "name"),
+        Index("idx_products_off_image_status", "off_image_status"),
     )
 
     def __repr__(self) -> str:

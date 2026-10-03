@@ -1606,3 +1606,357 @@ def get_image_enrichment_status(
         coverage_pct=coverage,
         by_chain=by_chain,
     )
+
+
+# ─── Image Review: schemas ─────────────────────────────────────────────────────
+
+
+class ImageCandidateItem(BaseModel):
+    product_id: str
+    name: str
+    brand: str | None = None
+    chain: str | None = None
+    retailer_image_url: str | None = None
+    off_image_url: str | None = None
+    off_image_score: float | None = None
+    off_image_off_code: str | None = None
+    off_image_off_name: str | None = None
+    off_image_status: str | None = None
+    off_image_ai_verdict: str | None = None
+    off_image_ai_reason: str | None = None
+
+
+class ImageCandidatePage(BaseModel):
+    items: list[ImageCandidateItem]
+    total: int
+
+
+class ImageDecideRequest(BaseModel):
+    decision: Literal["approved", "rejected"]
+
+
+# ─── Image Review: list candidates ────────────────────────────────────────────
+
+
+@router.get("/image-review/candidates", response_model=ImageCandidatePage)
+def list_image_candidates(
+    status: str = "pending",
+    chain: str | None = None,
+    min_score: float = Query(0.0, ge=0.0, le=100.0),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+    _admin=Depends(require_admin),
+) -> ImageCandidatePage:
+    """Paginated list of OFF image candidates for review."""
+    stmt = sa_select(Product).where(Product.off_image_status == status)
+    if min_score > 0:
+        stmt = stmt.where(Product.off_image_score >= min_score)
+    if chain:
+        stmt = (
+            stmt.join(PriceReport, PriceReport.product_id == Product.id)
+            .where(PriceReport.source == f"catalog_{chain}")
+            .distinct()
+        )
+
+    total_stmt = sa_select(func.count()).select_from(stmt.subquery())
+    total = db.execute(total_stmt).scalar() or 0
+
+    products = (
+        db.execute(
+            stmt.order_by(Product.off_image_score.desc().nullslast())
+            .offset(offset)
+            .limit(limit)
+        )
+        .scalars()
+        .all()
+    )
+
+    items: list[ImageCandidateItem] = []
+    for p in products:
+        chain_row = db.execute(
+            text(
+                "SELECT REPLACE(source, 'catalog_', '') AS chain "
+                "FROM price_reports WHERE product_id = :pid AND source LIKE 'catalog_%' LIMIT 1"
+            ),
+            {"pid": str(p.id)},
+        ).fetchone()
+        items.append(
+            ImageCandidateItem(
+                product_id=str(p.id),
+                name=p.name,
+                brand=p.brand,
+                chain=chain_row.chain if chain_row else None,
+                retailer_image_url=p.external_image_url,
+                off_image_url=p.off_image_url,
+                off_image_score=p.off_image_score,
+                off_image_off_code=p.off_image_off_code,
+                off_image_off_name=p.off_image_off_name,
+                off_image_status=p.off_image_status,
+                off_image_ai_verdict=p.off_image_ai_verdict,
+                off_image_ai_reason=p.off_image_ai_reason,
+            )
+        )
+    return ImageCandidatePage(items=items, total=total)
+
+
+# ─── Image Review: approve / reject ────────────────────────────────────────────
+
+
+@router.post("/image-review/{product_id}/decide")
+def decide_image_candidate(
+    product_id: str,
+    body: ImageDecideRequest,
+    db: Session = Depends(get_db),
+    _admin=Depends(require_admin),
+) -> dict:
+    """Approve or reject an OFF image candidate.
+
+    Approved: copies off_image_url → image_url (goes live).
+    Rejected: clears the pending candidate (product keeps retailer CDN image).
+    """
+    from uuid import UUID
+
+    try:
+        pk = UUID(product_id)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid product_id")
+    product = db.get(Product, pk)
+    if product is None:
+        raise HTTPException(status_code=404, detail="Product not found")
+    if not product.off_image_url:
+        raise HTTPException(status_code=400, detail="No pending OFF image candidate for this product")
+
+    if body.decision == "approved":
+        product.image_url = product.off_image_url
+        product.image_source = "open_food_facts"
+        product.image_enriched_at = datetime.now(timezone.utc)
+        product.off_image_status = "approved"
+    else:
+        product.off_image_status = "rejected"
+        product.off_image_url = None
+        product.off_image_score = None
+        product.off_image_off_code = None
+        product.off_image_off_name = None
+
+    db.commit()
+    return {"status": "ok", "decision": body.decision, "product_id": product_id}
+
+
+# ─── Image Review: AI vision run (SSE) ────────────────────────────────────────
+
+
+def _run_image_ai_review_stream(
+    db: Session,
+    limit: int,
+    min_score: float,
+    auto_approve: bool,
+    min_confidence: float,
+    dry_run: bool,
+) -> Iterator[str]:
+    """Generator that runs the AI vision image review loop and yields SSE frames.
+
+    Downloads both the retailer CDN image and the OFF candidate image server-side
+    (base64-encodes them), then asks Claude vision whether the OFF image is a
+    correct substitute for the product. Works on localhost — no public CDN needed.
+    """
+    import base64
+
+    import httpx
+
+    from app.config import get_settings as _get_settings
+    from app.services.config_store import get_runtime_value
+
+    _settings = _get_settings()
+    api_key = get_runtime_value("ANTHROPIC_API_KEY", db) or _settings.ANTHROPIC_API_KEY
+    base_url = get_runtime_value("ANTHROPIC_BASE_URL", db) or _settings.ANTHROPIC_BASE_URL
+
+    if not api_key:
+        yield _sse("error", {"message": "ANTHROPIC_API_KEY is not set — add it in Admin → Configs → AI."})
+        return
+
+    try:
+        from anthropic import Anthropic
+
+        client_kwargs: dict = {"api_key": api_key}
+        if base_url:
+            client_kwargs["base_url"] = base_url
+        client = Anthropic(**client_kwargs)
+    except Exception as exc:
+        yield _sse("error", {"message": f"Failed to initialise Anthropic client: {exc}"})
+        return
+
+    stmt = sa_select(Product).where(Product.off_image_status == "pending")
+    if min_score > 0:
+        stmt = stmt.where(Product.off_image_score >= min_score)
+    candidates = db.execute(stmt.order_by(Product.off_image_score.desc().nullslast()).limit(limit)).scalars().all()
+
+    yield _sse("config", {
+        "limit": limit,
+        "min_score": min_score,
+        "auto_approve": auto_approve,
+        "min_confidence": min_confidence,
+        "dry_run": dry_run,
+        "candidates": len(candidates),
+    })
+    yield _sse("status", {"message": f"Loaded {len(candidates)} pending candidates"})
+
+    approved = rejected = skipped = 0
+
+    def _fetch_image(url: str | None) -> tuple[bytes, str] | None:
+        if not url:
+            return None
+        try:
+            r = httpx.get(url, timeout=15, follow_redirects=True, headers={"User-Agent": "dealfindio-admin/1.0"})
+            r.raise_for_status()
+            ct = (r.headers.get("Content-Type") or "image/jpeg").split(";")[0].strip()
+            return r.content, ct
+        except Exception:
+            return None
+
+    system_prompt = (
+        "You are an image quality-control agent for a grocery price-comparison app. "
+        "You will be shown two product images: the LEFT image is from the retailer's website, "
+        "the RIGHT image is a candidate from Open Food Facts. "
+        "Decide whether the RIGHT image is an acceptable substitute for displaying on the product page. "
+        "Criteria: same product identity (not just similar category), presentable quality, no obvious mismatch. "
+        'Reply with JSON only — no markdown, no explanation outside the JSON: {"approved": true|false, "confidence": 0.0–1.0, "reason": "≤100 chars"}'
+    )
+
+    for product in candidates:
+        retailer_data = _fetch_image(product.external_image_url)
+        off_data = _fetch_image(product.off_image_url)
+
+        if not retailer_data or not off_data:
+            skipped += 1
+            yield _sse("item", {
+                "product_id": str(product.id),
+                "name": product.name,
+                "verdict": "skipped",
+                "reason": "could not fetch one or both images",
+                "confidence": None,
+            })
+            if not dry_run:
+                product.off_image_ai_verdict = "skipped"
+                product.off_image_ai_reason = "image fetch failed"
+                product.off_image_ai_reviewed_at = datetime.now(timezone.utc)
+            continue
+
+        retailer_bytes, retailer_ct = retailer_data
+        off_bytes, off_ct = off_data
+        user_content = [
+            {
+                "type": "text",
+                "text": (
+                    f"Product name: {product.name}\n"
+                    f"Brand: {product.brand or 'unknown'}\n"
+                    f"Match score: {product.off_image_score:.0f}/100\n"
+                    f"OFF product name: {product.off_image_off_name or 'unknown'}\n\n"
+                    "LEFT image = retailer (currently live). RIGHT image = OFF candidate."
+                ),
+            },
+            {"type": "image", "source": {"type": "base64", "media_type": retailer_ct, "data": base64.b64encode(retailer_bytes).decode()}},
+            {"type": "image", "source": {"type": "base64", "media_type": off_ct, "data": base64.b64encode(off_bytes).decode()}},
+        ]
+
+        try:
+            response = client.messages.create(
+                model=_settings.AI_DEDUP_MODEL if hasattr(_settings, "AI_DEDUP_MODEL") else "claude-sonnet-4-6",
+                max_tokens=256,
+                system=system_prompt,
+                messages=[{"role": "user", "content": user_content}],
+            )
+            raw = response.content[0].text.strip()
+            # Strip JSON fences if present
+            if raw.startswith("```"):
+                raw = raw.split("```")[1]
+                if raw.startswith("json"):
+                    raw = raw[4:]
+            import json as _json
+            verdict_data = _json.loads(raw)
+            ai_approved: bool = bool(verdict_data.get("approved", False))
+            confidence: float = float(verdict_data.get("confidence", 0.5))
+            reason: str = str(verdict_data.get("reason", ""))[:300]
+        except Exception as exc:
+            skipped += 1
+            yield _sse("item", {
+                "product_id": str(product.id),
+                "name": product.name,
+                "verdict": "skipped",
+                "reason": f"AI error: {exc}",
+                "confidence": None,
+            })
+            continue
+
+        verdict_str = "approved" if ai_approved else "rejected"
+        high_confidence = confidence >= min_confidence
+
+        if not dry_run:
+            product.off_image_ai_verdict = verdict_str
+            product.off_image_ai_reason = reason
+            product.off_image_ai_reviewed_at = datetime.now(timezone.utc)
+
+            if auto_approve and high_confidence:
+                if ai_approved:
+                    product.image_url = product.off_image_url
+                    product.image_source = "open_food_facts"
+                    product.image_enriched_at = datetime.now(timezone.utc)
+                    product.off_image_status = "approved"
+                    approved += 1
+                else:
+                    product.off_image_status = "rejected"
+                    product.off_image_url = None
+                    product.off_image_score = None
+                    product.off_image_off_code = None
+                    product.off_image_off_name = None
+                    rejected += 1
+            else:
+                if ai_approved:
+                    approved += 1
+                else:
+                    rejected += 1
+        else:
+            if ai_approved:
+                approved += 1
+            else:
+                rejected += 1
+
+        yield _sse("item", {
+            "product_id": str(product.id),
+            "name": product.name,
+            "off_name": product.off_image_off_name,
+            "score": product.off_image_score,
+            "verdict": verdict_str,
+            "confidence": confidence,
+            "reason": reason,
+            "auto_actioned": auto_approve and high_confidence and not dry_run,
+        })
+
+    if not dry_run:
+        db.commit()
+
+    yield _sse("done", {
+        "total": len(candidates),
+        "approved": approved,
+        "rejected": rejected,
+        "skipped": skipped,
+        "dry_run": dry_run,
+    })
+
+
+@router.get("/image-review/run")
+def run_image_ai_review(
+    limit: int = Query(20, ge=1, le=500),
+    min_score: float = Query(0.0, ge=0.0, le=100.0),
+    auto_approve: bool = False,
+    min_confidence: float = Query(0.8, ge=0.0, le=1.0),
+    dry_run: bool = True,
+    db: Session = Depends(get_db),
+    _admin=Depends(require_admin_sse),
+) -> StreamingResponse:
+    """SSE stream: run AI vision review over pending OFF image candidates."""
+    return StreamingResponse(
+        _run_image_ai_review_stream(db, limit, min_score, auto_approve, min_confidence, dry_run),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )

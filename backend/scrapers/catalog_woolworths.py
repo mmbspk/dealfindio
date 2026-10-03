@@ -308,6 +308,7 @@ class WoolworthsCatalogScraper(CatalogScraper):
         """
         import json as _json
         from datetime import date as _date
+
         from scrapers.catalog_base import HumanLikeRateLimiter
 
         PAGE_SIZE = 36

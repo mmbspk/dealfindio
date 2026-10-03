@@ -34,13 +34,13 @@ _DEFAULT_LIMIT = 500
 
 def _run_enrichment(chain: str | None, limit: int, dry_run: bool) -> dict:
     """Run the OFF enrichment pipeline synchronously for one chain (or all)."""
-    from app.workers.image_tasks import _find_products_missing_images, _enrich_all
-    from app.services.object_store import get_object_store, product_image_key
-    from app.config import get_settings
-    from app.models import Product
-    from datetime import datetime, timezone
     from sqlalchemy import create_engine
     from sqlalchemy.orm import Session
+
+    from app.config import get_settings
+    from app.models import Product
+    from app.services.object_store import get_object_store, product_image_key
+    from app.workers.image_tasks import _enrich_all, _find_products_missing_images
 
     settings = get_settings()
     engine = create_engine(settings.DATABASE_URL, echo=False)
@@ -60,7 +60,6 @@ def _run_enrichment(chain: str | None, limit: int, dry_run: bool) -> dict:
         results = asyncio.run(_enrich_all(targets))
 
         store = get_object_store()
-        now = datetime.now(timezone.utc)
         enriched = skipped = 0
         for product_id, enriched_image in results:
             if enriched_image is None:
@@ -77,10 +76,13 @@ def _run_enrichment(chain: str | None, limit: int, dry_run: bool) -> dict:
             if product is None:
                 skipped += 1
                 continue
-            product.image_url = public_url
-            product.image_source = "open_food_facts"
-            product.image_enriched_at = now
-            log.info("  ✓ %s (score=%.0f)", product.name, enriched_image.match_score)
+            # Write to pending review queue — not directly to image_url.
+            product.off_image_url = public_url
+            product.off_image_score = enriched_image.match_score
+            product.off_image_off_code = enriched_image.off_code
+            product.off_image_off_name = enriched_image.off_product_name
+            product.off_image_status = "pending"
+            log.info("  ⏳ %s (score=%.0f) → pending review", product.name, enriched_image.match_score)
             enriched += 1
 
         session.commit()
