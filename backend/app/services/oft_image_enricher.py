@@ -3,9 +3,18 @@ Open Food Facts (OFF) image enrichment.
 
 Products created via fuzzy name-match (Coles, ALDI, IGA scrapers) have no GTIN
 and therefore no image — the GTIN-only enrichment path in ``product_dedup`` never
-fires for them. This module fills that gap: given a product name, it searches
-OFF's product database, downloads the best matching image, and hands the bytes
-back to the caller (the Celery task) to re-host on our own object store.
+fires for them. This module fills that gap: given a product name (and optional
+GTIN), it searches OFF's product database, downloads the best matching image, and
+hands the bytes back to the caller (the Celery task) to re-host on our own object
+store.
+
+Lookup strategy (two tiers):
+  1. GTIN barcode lookup — ``GET /api/v2/product/{gtin}`` — exact match, score 100.
+     Used for Woolworths products (our only chain that exposes real GTINs).
+  2. Text search — ``GET /api/v2/search`` — filtered to ``en:australia`` to avoid
+     European products drowning out Australian matches. Store-brand name prefixes
+     ("Woolworths ", "Coles ") are stripped before searching because they tank the
+     name-similarity score. Returns the highest-scoring candidate above threshold.
 
 We deliberately **download and re-host** rather than hotlink OFF's CDN so that:
   - product images never break if OFF's CDN changes URLs or rate-limits us,
@@ -22,6 +31,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+import re
 from dataclasses import dataclass
 from typing import Optional
 
@@ -35,7 +45,11 @@ logger = logging.getLogger(__name__)
 # OFF search API. v2 returns structured JSON and lets us request only the
 # fields we need, keeping responses small.
 _OFF_SEARCH_URL = "https://world.openfoodfacts.org/api/v2/search"
-_OFF_SEARCH_FIELDS = "code,product_name,brands,image_url,image_front_url"
+# Barcode lookup: single exact-match endpoint, no pagination or scoring needed.
+_OFF_PRODUCT_URL = "https://world.openfoodfacts.org/api/v2/product/{}"
+# selected_images contains OFF's curated best image per product/language,
+# preferred over the raw image_front_url (which may be an uncurated upload).
+_OFF_SEARCH_FIELDS = "code,product_name,brands,image_url,image_front_url,selected_images"
 
 # Accept only real raster images we know how to store.
 _ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/jpg", "image/png", "image/webp"}
@@ -46,6 +60,14 @@ _MAX_IMAGE_BYTES = 8 * 1024 * 1024
 # Data-derived: at 60 false-positives drop sharply while recall stays ~90%.
 _MIN_NAME_SIMILARITY = 60.0
 
+# Strip chain own-brand prefixes before text search. "Woolworths Full Cream Milk 2L"
+# → "Full Cream Milk 2L". Without this, the chain name eats into similarity budget
+# and causes good matches to fall below _MIN_NAME_SIMILARITY.
+_STORE_PREFIX_RE = re.compile(
+    r"^(?:woolworths|coles|aldi|iga|drakes|spar)\s+",
+    re.IGNORECASE,
+)
+
 
 @dataclass
 class EnrichedImage:
@@ -55,7 +77,7 @@ class EnrichedImage:
     content_type: str
     source_url: str  # the OFF CDN URL the bytes came from (for provenance)
     off_code: Optional[str]  # OFF product barcode, if the match had one
-    match_score: float  # rapidfuzz token_sort_ratio score (0–100) for observability
+    match_score: float  # 100.0 for GTIN hits; rapidfuzz score for text matches
 
 
 class OFTRateLimiter:
@@ -93,7 +115,11 @@ class OFTRateLimiter:
 
 
 class OFTImageEnricher:
-    """Searches OFF by product name and downloads the best image match."""
+    """Looks up and downloads product images from Open Food Facts.
+
+    Tries a GTIN barcode lookup first (exact, no fuzzy matching), then falls
+    back to a text search restricted to Australian products.
+    """
 
     def __init__(self, settings: Optional[Settings] = None) -> None:
         self._settings = settings or get_settings()
@@ -104,53 +130,91 @@ class OFTImageEnricher:
         self._timeout = self._settings.OFT_SEARCH_TIMEOUT_S
         self._user_agent = self._settings.OPEN_FOOD_FACTS_USER_AGENT
 
-    async def enrich(self, product_name: str, client: httpx.AsyncClient) -> Optional[EnrichedImage]:
-        """Find and download an image for ``product_name``.
+    async def enrich(
+        self,
+        product_name: str,
+        client: httpx.AsyncClient,
+        gtin: Optional[str] = None,
+    ) -> Optional[EnrichedImage]:
+        """Find and download an image for a product.
 
-        Returns ``None`` (never raises) when no image is found, a network
-        error occurs, or no OFF result clears the name-similarity threshold —
-        enrichment is best-effort and must not fail the caller.
+        Args:
+            product_name: Product name used as fallback text search.
+            client: Shared httpx client (pooled connections).
+            gtin: If provided, attempt an exact barcode lookup first.
+
+        Returns ``None`` (never raises) when no image is found — enrichment is
+        best-effort and must not fail the caller.
         """
         if not product_name or not product_name.strip():
             return None
 
-        result = await self._search(product_name.strip(), client)
+        # Tier 1: exact barcode lookup — no fuzzy, just a direct product fetch.
+        if gtin:
+            result = await self._lookup_by_gtin(gtin, client)
+            if result:
+                built = await self._build_result(result[0], result[1], client, f"GTIN:{gtin}")
+                if built:
+                    return built
+                logger.debug("GTIN %s found in OFF but image unavailable; trying text search", gtin)
+
+        # Tier 2: text search restricted to Australian products, name cleaned.
+        search_name = _clean_search_name(product_name.strip())
+        result = await self._search(search_name, client)
         if not result:
             return None
-        match, score = result
+        return await self._build_result(result[0], result[1], client, product_name)
 
-        image_url = match.get("image_front_url") or match.get("image_url")
-        if not image_url:
-            logger.debug("OFF match for %r has no image", product_name)
+    async def _lookup_by_gtin(
+        self, gtin: str, client: httpx.AsyncClient
+    ) -> Optional[tuple[dict, float]]:
+        """Fetch a single product by GTIN/barcode. Returns ``(product, 100.0)`` on hit."""
+        await self._rate_limiter.wait()
+        url = _OFF_PRODUCT_URL.format(gtin)
+        try:
+            resp = await client.get(
+                url,
+                params={"fields": _OFF_SEARCH_FIELDS},
+                timeout=self._timeout,
+                headers={"User-Agent": self._user_agent},
+            )
+            if resp.status_code == 404:
+                logger.debug("OFF GTIN %s not found", gtin)
+                return None
+            if resp.status_code == 429:
+                retry_after = _parse_retry_after(resp.headers.get("Retry-After"))
+                self._rate_limiter.on_rate_limited(retry_after)
+                logger.warning("OFF rate-limited on GTIN lookup; backing off %.0fs", retry_after)
+                return None
+            resp.raise_for_status()
+            data = resp.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            logger.warning("OFF GTIN lookup failed for %s: %s", gtin, exc)
             return None
 
-        downloaded = await self._download_image(image_url, client)
-        if not downloaded:
+        product = data.get("product")
+        if not product:
             return None
-
-        image_bytes, content_type = downloaded
-        return EnrichedImage(
-            image_bytes=image_bytes,
-            content_type=content_type,
-            source_url=image_url,
-            off_code=match.get("code"),
-            match_score=score,
-        )
+        if not _best_image_url(product):
+            logger.debug("OFF GTIN %s: product found but has no image", gtin)
+            return None
+        return product, 100.0
 
     async def _search(
         self, name: str, client: httpx.AsyncClient
     ) -> Optional[tuple[dict, float]]:
-        """Return the first OFF product for ``name`` that has an image and
-        clears the name-similarity threshold.
+        """Text search restricted to Australian products.
 
-        Returns ``(product_dict, score)`` or ``None``.
+        Scores all candidates above the similarity threshold and returns the
+        highest-scoring one. Returns ``(product_dict, score)`` or ``None``.
         """
         await self._rate_limiter.wait()
         params = {
             "search_terms": name,
             "fields": _OFF_SEARCH_FIELDS,
-            "page_size": 5,
+            "page_size": 10,
             "sort_by": "unique_scans_n",  # prefer well-known products
+            "countries_tags": "en:australia",  # avoid European false positives
         }
         try:
             resp = await client.get(
@@ -170,8 +234,9 @@ class OFTImageEnricher:
             logger.warning("OFF search failed for %r: %s", name, exc)
             return None
 
+        best: Optional[tuple[dict, float]] = None
         for product in products:
-            if not (product.get("image_front_url") or product.get("image_url")):
+            if not _best_image_url(product):
                 continue
             off_name = product.get("product_name") or ""
             score = fuzz.token_sort_ratio(name.lower(), off_name.lower())
@@ -184,8 +249,33 @@ class OFTImageEnricher:
                     off_name,
                 )
                 continue
-            return product, score
-        return None
+            if best is None or score > best[1]:
+                best = (product, score)
+        return best
+
+    async def _build_result(
+        self,
+        match: dict,
+        score: float,
+        client: httpx.AsyncClient,
+        context: str,
+    ) -> Optional[EnrichedImage]:
+        """Download the best image from a matched product dict and wrap in EnrichedImage."""
+        image_url = _best_image_url(match)
+        if not image_url:
+            logger.debug("OFF match for %r has no image URL", context)
+            return None
+        downloaded = await self._download_image(image_url, client)
+        if not downloaded:
+            return None
+        image_bytes, content_type = downloaded
+        return EnrichedImage(
+            image_bytes=image_bytes,
+            content_type=content_type,
+            source_url=image_url,
+            off_code=match.get("code"),
+            match_score=score,
+        )
 
     async def _download_image(
         self, url: str, client: httpx.AsyncClient
@@ -231,3 +321,36 @@ def _parse_retry_after(value: Optional[str]) -> float:
         return float(value)
     except (TypeError, ValueError):
         return 60.0
+
+
+def _best_image_url(product: dict) -> Optional[str]:
+    """Extract the highest-quality available image URL from an OFF product dict.
+
+    Preference order:
+    1. selected_images.front.display — OFF's curated, moderated front image
+    2. image_front_url — raw front-camera upload (may be lower quality)
+    3. image_url — any image on the product
+    """
+    selected = product.get("selected_images") or {}
+    front = selected.get("front") or {}
+    display = front.get("display") or {}
+    if display:
+        # Prefer English; fall back to whatever language key exists first.
+        url = display.get("en") or next(iter(display.values()), None)
+        if url:
+            return url
+    if product.get("image_front_url"):
+        return product["image_front_url"]
+    return product.get("image_url")
+
+
+def _clean_search_name(name: str) -> str:
+    """Strip retailer own-brand prefixes before sending to OFF text search.
+
+    'Woolworths Full Cream Milk 2L' → 'Full Cream Milk 2L'
+    'Coles Chicken Breast 500g'     → 'Chicken Breast 500g'
+
+    Without this, the chain prefix eats into the similarity budget and causes
+    good matches to fall below _MIN_NAME_SIMILARITY.
+    """
+    return _STORE_PREFIX_RE.sub("", name).strip()
