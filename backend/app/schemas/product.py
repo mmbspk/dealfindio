@@ -30,6 +30,7 @@ class ProductResponse(BaseModel):
     )
     image_url: str | None = Field(None, description="Self-hosted product image URL (preferred)")
     external_image_url: str | None = Field(None, description="Original retailer CDN URL (fallback)")
+    image_source: str | None = Field(None, description="Source of image_url — 'open_food_facts' or null")
 
     @model_validator(mode="after")
     def _coalesce_image(self) -> "ProductResponse":

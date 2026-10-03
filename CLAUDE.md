@@ -1,5 +1,19 @@
 # dealfindio — Claude Code project rules
 
+## Mobile-first
+
+**dealfindio is primarily a mobile app.** Every decision — UX/UI, API design, data shape, image formats, storage, caching, notifications, scraper output — must be made mobile-first.
+
+Concrete implications:
+
+- **UX/UI:** touch-friendly targets (≥44pt), bottom-navigation, single-column layouts, thumb-zone primary actions, minimal modals.
+- **API responses:** paginated, lean payloads (no unused fields), optimised image URLs (serve WebP thumbnails at mobile sizes).
+- **Scraper/storage output:** include all fields a mobile client needs (price, image, short title, store, valid_to) — no post-processing required on device.
+- **Offline / resilience:** design for intermittent connectivity; cache catalogue snapshots locally where possible.
+- **Performance:** target ≤2 s first meaningful paint on a mid-range device over 4G; avoid large bundle or payload sizes.
+
+If a task directly touches any of these dimensions, implement the mobile path *as part of the same story*. If the mobile work can't fit in the current story (scope, risk, time), **create a child story** under the same epic so it is never forgotten.
+
 ## Git workflow
 
 **Never push directly to `main`.** All work goes on a feature branch with a PR.
