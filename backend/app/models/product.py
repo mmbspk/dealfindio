@@ -61,7 +61,9 @@ class Product(Base):
     off_image_off_code: Mapped[str | None] = mapped_column(String(50))
     off_image_off_name: Mapped[str | None] = mapped_column(String(300))
     off_image_status: Mapped[str | None] = mapped_column(String(20))  # pending|approved|rejected
-    off_image_ai_verdict: Mapped[str | None] = mapped_column(String(20))  # approved|rejected|skipped
+    off_image_ai_verdict: Mapped[str | None] = mapped_column(
+        String(20)
+    )  # approved|rejected|skipped
     off_image_ai_reason: Mapped[str | None] = mapped_column(String(300))
     off_image_ai_reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # Set by the full-catalog crawler: when this product was last seen in a

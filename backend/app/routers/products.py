@@ -56,6 +56,7 @@ def _build_store_url(
         return f"https://015.drakes.com.au/lines/{_name_to_slug(name)}"
     return None
 
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Products"])
@@ -577,7 +578,9 @@ async def get_product_stores(
                     continue
 
             store_source = f"catalog_{store.chain}"
-            store_external_id = product.external_id if product.external_source == store_source else None
+            store_external_id = (
+                product.external_id if product.external_source == store_source else None
+            )
             stores.append(
                 {
                     "id": str(store.id),

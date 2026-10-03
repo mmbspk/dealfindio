@@ -54,7 +54,13 @@ def _run_enrichment(chain: str | None, limit: int, dry_run: bool) -> dict:
 
         if dry_run:
             log.info("[dry-run] Would process %d products for chain=%s", candidates, chain or "all")
-            return {"chain": chain, "candidates": candidates, "enriched": 0, "skipped": 0, "dry_run": True}
+            return {
+                "chain": chain,
+                "candidates": candidates,
+                "enriched": 0,
+                "skipped": 0,
+                "dry_run": True,
+            }
 
         targets = [(p.id, p.name, p.gtin) for p in products]
         results = asyncio.run(_enrich_all(targets))
@@ -67,7 +73,9 @@ def _run_enrichment(chain: str | None, limit: int, dry_run: bool) -> dict:
                 continue
             try:
                 key = product_image_key(product_id, enriched_image.content_type)
-                public_url = store.put_object(key, enriched_image.image_bytes, enriched_image.content_type)
+                public_url = store.put_object(
+                    key, enriched_image.image_bytes, enriched_image.content_type
+                )
             except Exception as exc:
                 log.warning("Failed to store image for %s: %s", product_id, exc)
                 skipped += 1
@@ -82,13 +90,18 @@ def _run_enrichment(chain: str | None, limit: int, dry_run: bool) -> dict:
             product.off_image_off_code = enriched_image.off_code
             product.off_image_off_name = enriched_image.off_product_name
             product.off_image_status = "pending"
-            log.info("  ⏳ %s (score=%.0f) → pending review", product.name, enriched_image.match_score)
+            log.info(
+                "  ⏳ %s (score=%.0f) → pending review", product.name, enriched_image.match_score
+            )
             enriched += 1
 
         session.commit()
         log.info(
             "Chain=%s done: %d enriched, %d skipped of %d candidates",
-            chain or "all", enriched, skipped, candidates,
+            chain or "all",
+            enriched,
+            skipped,
+            candidates,
         )
         return {"chain": chain, "candidates": candidates, "enriched": enriched, "skipped": skipped}
     except Exception:

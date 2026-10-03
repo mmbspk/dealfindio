@@ -105,17 +105,17 @@ _SKIP_NODE_IDS = {
 # NodeId → (url_friendly_name, display_name)
 _SPECIALS_NODE_IDS: dict[str, tuple[str, str]] = {
     "1-E5BEE36E": ("specials/fruit-veg", "Fruit & Veg"),
-    "1_D5A2236":  ("specials/poultry-meat-seafood", "Poultry, Meat & Seafood"),
-    "1_DEB537E":  ("specials/bakery", "Bakery"),
-    "1_6E4F4E4":  ("specials/dairy-eggs-fridge", "Dairy, Eggs & Fridge"),
-    "1_39FD49C":  ("specials/frozen", "Frozen"),
-    "1_ACA2FC2":  ("specials/pantry", "Pantry"),
-    "1_5AF3A0A":  ("specials/snacks-confectionery", "Snacks & Confectionery"),
-    "1_8E4DA6F":  ("specials/drinks", "Drinks"),
-    "1_61D6FEB":  ("specials/health-wellness", "Health & Wellness"),
-    "1_717A94B":  ("specials/cleaning-maintenance", "Cleaning & Maintenance"),
-    "1_894D0A8":  ("specials/baby", "Baby"),
-    "1_2432B58":  ("specials/pet", "Pet"),
+    "1_D5A2236": ("specials/poultry-meat-seafood", "Poultry, Meat & Seafood"),
+    "1_DEB537E": ("specials/bakery", "Bakery"),
+    "1_6E4F4E4": ("specials/dairy-eggs-fridge", "Dairy, Eggs & Fridge"),
+    "1_39FD49C": ("specials/frozen", "Frozen"),
+    "1_ACA2FC2": ("specials/pantry", "Pantry"),
+    "1_5AF3A0A": ("specials/snacks-confectionery", "Snacks & Confectionery"),
+    "1_8E4DA6F": ("specials/drinks", "Drinks"),
+    "1_61D6FEB": ("specials/health-wellness", "Health & Wellness"),
+    "1_717A94B": ("specials/cleaning-maintenance", "Cleaning & Maintenance"),
+    "1_894D0A8": ("specials/baby", "Baby"),
+    "1_2432B58": ("specials/pet", "Pet"),
 }
 
 
@@ -225,7 +225,9 @@ class WoolworthsCatalogScraper(CatalogScraper):
             )
         return nodes
 
-    async def crawl_category(self, category: CategoryNode, auth: dict, *, page_sink=None, start_page: int = 1) -> Any:
+    async def crawl_category(
+        self, category: CategoryNode, auth: dict, *, page_sink=None, start_page: int = 1
+    ) -> Any:
         """Paginate one top-level department.
 
         When ``page_sink`` is provided, products are parsed and flushed per page
@@ -259,7 +261,8 @@ class WoolworthsCatalogScraper(CatalogScraper):
 
                 if page_sink is not None:
                     parsed = [
-                        p for item in page_products
+                        p
+                        for item in page_products
                         if (p := _parse_item(item, category, today)) is not None
                     ]
                     await page_sink(parsed, page)
@@ -328,7 +331,8 @@ class WoolworthsCatalogScraper(CatalogScraper):
                     completed_nodes = set(_json.loads(raw_resume))
                     self.logger.info(
                         "Woolworths specials: resuming — skipping %d already-completed nodes: %s",
-                        len(completed_nodes), completed_nodes,
+                        len(completed_nodes),
+                        completed_nodes,
                     )
             except Exception as exc:
                 self.logger.warning("Could not read Woolworths specials resume key: %s", exc)
@@ -362,14 +366,17 @@ class WoolworthsCatalogScraper(CatalogScraper):
             remaining = len(_SPECIALS_NODE_IDS) - len(completed_nodes)
             self.logger.info(
                 "Woolworths specials: crawling %d/%d specials categories",
-                remaining, len(_SPECIALS_NODE_IDS),
+                remaining,
+                len(_SPECIALS_NODE_IDS),
             )
 
             specials_cat = CategoryNode(id="specials", name="")
 
             for node_id, (url_name, cat_name) in _SPECIALS_NODE_IDS.items():
                 if node_id in completed_nodes:
-                    self.logger.info("Woolworths specials: skipping already-completed '%s'", cat_name)
+                    self.logger.info(
+                        "Woolworths specials: skipping already-completed '%s'", cat_name
+                    )
                     continue
 
                 cat_new_items: list[dict] = []
@@ -386,7 +393,9 @@ class WoolworthsCatalogScraper(CatalogScraper):
                                 "sortType": "TraderRelevance",
                                 "url": f"/shop/{url_name}",
                                 "location": f"/shop/{url_name}",
-                                "formatObject": json.dumps({"name": cat_name}, separators=(",", ":")),
+                                "formatObject": json.dumps(
+                                    {"name": cat_name}, separators=(",", ":")
+                                ),
                                 "categoryId": node_id,
                                 "isSpecial": "true",
                             },
@@ -434,7 +443,8 @@ class WoolworthsCatalogScraper(CatalogScraper):
 
                 if cat_new_items:
                     parsed = [
-                        p for item in cat_new_items
+                        p
+                        for item in cat_new_items
                         if (p := _parse_item(item, specials_cat, today)) is not None
                     ]
                     if parsed and product_sink:
@@ -442,7 +452,9 @@ class WoolworthsCatalogScraper(CatalogScraper):
                     total_products += len(cat_new_items)
                     self.logger.info(
                         "Woolworths specials: '%s' → %d unique products (running total: %d)",
-                        cat_name, len(cat_new_items), total_products,
+                        cat_name,
+                        len(cat_new_items),
+                        total_products,
                     )
 
                 # Mark this node as done in Redis so a same-day re-run skips it.
@@ -451,11 +463,14 @@ class WoolworthsCatalogScraper(CatalogScraper):
                         completed_nodes.add(node_id)
                         redis.setex(_resume_key, 90000, _json.dumps(list(completed_nodes)))
                     except Exception as exc:
-                        self.logger.warning("Could not save Woolworths specials resume key: %s", exc)
+                        self.logger.warning(
+                            "Could not save Woolworths specials resume key: %s", exc
+                        )
 
         self.logger.info(
             "Woolworths specials: fetched %d unique products across %d specials categories",
-            total_products, len(_SPECIALS_NODE_IDS),
+            total_products,
+            len(_SPECIALS_NODE_IDS),
         )
         return {"_sunk": True, "products_found": total_products}
 
@@ -567,7 +582,7 @@ def _parse_item(item: dict, category: CategoryNode, today: date) -> Optional[Cat
     # Woolworths uses "1EA" for single-item products (not informative — hide it).
     # Normalise multi-pack count markers: "44PK", "44EA" → "44 Pack".
     if package_size:
-        pk_m = re.match(r'^(\d+)\s*(?:ea|each|pk|pack)$', package_size, re.IGNORECASE)
+        pk_m = re.match(r"^(\d+)\s*(?:ea|each|pk|pack)$", package_size, re.IGNORECASE)
         if pk_m:
             count = int(pk_m.group(1))
             package_size = f"{count} Pack" if count > 1 else None

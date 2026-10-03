@@ -118,7 +118,9 @@ class IGACatalogScraper(CatalogScraper):
 
     # ── Category crawling ─────────────────────────────────────────────────────
 
-    async def crawl_category(self, category: CategoryNode, auth: dict, *, page_sink=None, start_page: int = 1) -> Any:
+    async def crawl_category(
+        self, category: CategoryNode, auth: dict, *, page_sink=None, start_page: int = 1
+    ) -> Any:
         store_id = auth.get("store_id", self.store_id)
         pages: list[dict] = []
         # Compute skip directly so resume doesn't waste requests re-fetching old pages.
@@ -370,11 +372,17 @@ def _parse_item(item: dict, cat_name: str | None, today: date) -> Optional[Catal
     package_size: Optional[str] = None
     # Map verbose IGA unit names to clean abbreviations
     _IGA_UNIT_ABBREV = {
-        "millilitre": "mL", "milliliter": "mL", "ml": "mL",
-        "litre": "L", "liter": "L",
-        "gram": "g", "grams": "g",
-        "kilogram": "kg", "kilograms": "kg",
-        "ounce": "oz", "ounces": "oz",
+        "millilitre": "mL",
+        "milliliter": "mL",
+        "ml": "mL",
+        "litre": "L",
+        "liter": "L",
+        "gram": "g",
+        "grams": "g",
+        "kilogram": "kg",
+        "kilograms": "kg",
+        "ounce": "oz",
+        "ounces": "oz",
     }
     if size_val is not None and size_type:
         type_lower = size_type.lower()

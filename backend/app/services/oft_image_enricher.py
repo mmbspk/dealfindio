@@ -166,11 +166,16 @@ class OFTImageEnricher:
                     built = await self._build_result(off_product, 100.0, client, f"GTIN:{gtin}")
                     if built:
                         return built
-                    logger.debug("GTIN %s: name matched but image unavailable; trying text search", gtin)
+                    logger.debug(
+                        "GTIN %s: name matched but image unavailable; trying text search", gtin
+                    )
                 else:
                     logger.debug(
                         "GTIN %s name mismatch (score=%.0f): OFF has %r, we want %r; trying text search",
-                        gtin, similarity, off_name, product_name,
+                        gtin,
+                        similarity,
+                        off_name,
+                        product_name,
                     )
 
         # Tier 2: text search restricted to Australian products, name cleaned.
@@ -215,9 +220,7 @@ class OFTImageEnricher:
             return None
         return product, 100.0
 
-    async def _search(
-        self, name: str, client: httpx.AsyncClient
-    ) -> Optional[tuple[dict, float]]:
+    async def _search(self, name: str, client: httpx.AsyncClient) -> Optional[tuple[dict, float]]:
         """Text search restricted to Australian products.
 
         Scores all candidates above the similarity threshold and returns the

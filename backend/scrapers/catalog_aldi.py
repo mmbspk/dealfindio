@@ -145,7 +145,7 @@ def _product_from_api(item: dict, category_name: str) -> Optional[CatalogProduct
     # ALDI returns count-based items as "44 each" — reformat to "44 Pack"; hide "1 each".
     selling_size = (item.get("sellingSize") or "").strip() or None
     if selling_size:
-        count_m = re.match(r'^(\d+)\s*(?:each|ea|pk|pack)$', selling_size, re.IGNORECASE)
+        count_m = re.match(r"^(\d+)\s*(?:each|ea|pk|pack)$", selling_size, re.IGNORECASE)
         if count_m:
             count = int(count_m.group(1))
             selling_size = f"{count} Pack" if count > 1 else None
@@ -268,7 +268,9 @@ class ALDICatalogScraper(CatalogScraper):
             )
         return resp.json()
 
-    async def crawl_category(self, category: CategoryNode, auth: dict, *, page_sink=None, start_page: int = 1) -> Any:
+    async def crawl_category(
+        self, category: CategoryNode, auth: dict, *, page_sink=None, start_page: int = 1
+    ) -> Any:
         """Fetch all pages for a category and return raw API responses."""
         pages: list[dict] = []
         # Resume: compute starting offset directly from checkpoint so we don't

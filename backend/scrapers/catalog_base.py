@@ -313,7 +313,9 @@ class CatalogScraper(ABC):
         """Return the flat list of leaf categories to crawl."""
 
     @abstractmethod
-    async def crawl_category(self, category: CategoryNode, auth: dict, *, page_sink=None, start_page: int = 1) -> Any:
+    async def crawl_category(
+        self, category: CategoryNode, auth: dict, *, page_sink=None, start_page: int = 1
+    ) -> Any:
         """Fetch all raw pages for one category. Return raw response data.
 
         When ``page_sink`` is provided, call it after each page as
@@ -462,7 +464,10 @@ class CatalogScraper(ABC):
 
     def _page_checkpoint_key(self, category_id: str) -> str:
         from datetime import date
-        return f"{self.CRAWLED_PAGE_KEY_PREFIX}:{self.chain}:{category_id}:{date.today().isoformat()}"
+
+        return (
+            f"{self.CRAWLED_PAGE_KEY_PREFIX}:{self.chain}:{category_id}:{date.today().isoformat()}"
+        )
 
     def _get_page_checkpoint(self, category_id: str) -> int:
         """Return the last successfully flushed page number (0 if none)."""
@@ -494,7 +499,9 @@ class CatalogScraper(ABC):
 
     # ── Crawl lifecycle ──────────────────────────────────────────────────────
 
-    async def run_full(self, product_sink=None, on_categories_discovered=None, on_category_start=None) -> dict:
+    async def run_full(
+        self, product_sink=None, on_categories_discovered=None, on_category_start=None
+    ) -> dict:
         """Crawl every category. ``mode='full'``.
 
         Args:
@@ -514,7 +521,9 @@ class CatalogScraper(ABC):
             on_category_start=on_category_start,
         )
 
-    async def run_delta(self, product_sink=None, on_categories_discovered=None, on_category_start=None) -> dict:
+    async def run_delta(
+        self, product_sink=None, on_categories_discovered=None, on_category_start=None
+    ) -> dict:
         """Crawl only categories whose response changed since last time."""
         return await self._run(
             mode="delta",
@@ -534,7 +543,14 @@ class CatalogScraper(ABC):
         """
         return await self._run(mode="specials", product_sink=product_sink, resume_page=resume_page)
 
-    async def _run(self, mode: str, product_sink=None, on_categories_discovered=None, resume_page: int = 1, on_category_start=None) -> dict:
+    async def _run(
+        self,
+        mode: str,
+        product_sink=None,
+        on_categories_discovered=None,
+        resume_page: int = 1,
+        on_category_start=None,
+    ) -> dict:
         errors: list[str] = []
         categories_found = 0
         categories_crawled = 0
@@ -546,7 +562,9 @@ class CatalogScraper(ABC):
         # ── Specials mode: bypass category loop entirely ──────────────────────
         if mode == "specials":
             try:
-                raw = await self._specials_with_reauth(auth, product_sink=product_sink, resume_page=resume_page)
+                raw = await self._specials_with_reauth(
+                    auth, product_sink=product_sink, resume_page=resume_page
+                )
             except Exception as exc:
                 self.logger.exception("Specials fetch failed for %s", self.chain)
                 raise ScraperError(f"Specials fetch failed: {exc}") from exc
@@ -633,9 +651,7 @@ class CatalogScraper(ABC):
             # Resume from last successfully flushed page (0 = start from beginning).
             start_page = self._get_page_checkpoint(category.id) + 1
             if start_page > 1:
-                self.logger.info(
-                    "Resuming %r from page %d (checkpoint)", category.name, start_page
-                )
+                self.logger.info("Resuming %r from page %d (checkpoint)", category.name, start_page)
 
             # Per-page sink: flushes products after each page, writes checkpoint.
             _cur_cat = category
@@ -714,10 +730,14 @@ class CatalogScraper(ABC):
             "status": "success" if not errors else "partial",
         }
 
-    async def _crawl_with_reauth(self, category: CategoryNode, auth: dict, *, page_sink=None, start_page: int = 1) -> Any:
+    async def _crawl_with_reauth(
+        self, category: CategoryNode, auth: dict, *, page_sink=None, start_page: int = 1
+    ) -> Any:
         """Crawl a category, re-authenticating once on an auth failure (401)."""
         try:
-            return await self.crawl_category(category, auth, page_sink=page_sink, start_page=start_page)
+            return await self.crawl_category(
+                category, auth, page_sink=page_sink, start_page=start_page
+            )
         except AuthExpiredError:
             self.logger.info("Auth expired for %s; re-authenticating", self.chain)
             await self._invalidate_auth()
@@ -725,9 +745,13 @@ class CatalogScraper(ABC):
             # Re-read the checkpoint: if page_sink flushed some pages before the
             # auth error, start from where we left off rather than re-flushing.
             retry_start = self._get_page_checkpoint(category.id) + 1
-            return await self.crawl_category(category, auth, page_sink=page_sink, start_page=retry_start)
+            return await self.crawl_category(
+                category, auth, page_sink=page_sink, start_page=retry_start
+            )
 
-    async def _specials_with_reauth(self, auth: dict, product_sink=None, resume_page: int = 1) -> Any:
+    async def _specials_with_reauth(
+        self, auth: dict, product_sink=None, resume_page: int = 1
+    ) -> Any:
         """Call crawl_specials, re-authenticating once on an auth failure.
 
         If the second attempt also raises AuthExpiredError the site is bot-blocking
@@ -735,13 +759,17 @@ class CatalogScraper(ABC):
         clean failure rather than letting AuthExpiredError propagate unhandled.
         """
         try:
-            return await self.crawl_specials(auth, product_sink=product_sink, resume_page=resume_page)
+            return await self.crawl_specials(
+                auth, product_sink=product_sink, resume_page=resume_page
+            )
         except AuthExpiredError:
             self.logger.info("Auth expired fetching specials for %s; re-authenticating", self.chain)
             await self._invalidate_auth()
             auth = await self._get_or_refresh_auth()
             try:
-                return await self.crawl_specials(auth, product_sink=product_sink, resume_page=resume_page)
+                return await self.crawl_specials(
+                    auth, product_sink=product_sink, resume_page=resume_page
+                )
             except AuthExpiredError as exc:
                 raise ScraperError(
                     f"{self.chain} specials bot-blocked after re-auth — site is blocking this session"
