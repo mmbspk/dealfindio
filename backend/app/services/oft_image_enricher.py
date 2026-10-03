@@ -77,6 +77,7 @@ class EnrichedImage:
     content_type: str
     source_url: str  # the OFF CDN URL the bytes came from (for provenance)
     off_code: Optional[str]  # OFF product barcode, if the match had one
+    off_product_name: Optional[str]  # OFF product_name at match time (for AI review context)
     match_score: float  # 100.0 for GTIN hits; rapidfuzz score for text matches
 
 
@@ -288,6 +289,7 @@ class OFTImageEnricher:
             content_type=content_type,
             source_url=image_url,
             off_code=match.get("code"),
+            off_product_name=match.get("product_name"),
             match_score=score,
         )
 

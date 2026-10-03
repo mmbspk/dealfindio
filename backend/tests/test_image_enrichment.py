@@ -694,6 +694,7 @@ class TestEnrichProductImagesTask:
             content_type="image/jpeg",
             source_url="https://static.oft/x.jpg",
             off_code="1",
+            off_product_name="Test Product",
             match_score=85.0,
         )
         fake_store = MagicMock()
@@ -712,9 +713,12 @@ class TestEnrichProductImagesTask:
         assert result["status"] == "success"
         assert result["enriched"] == 1
         refreshed = test_db_session.get(Product, product_id)
-        assert refreshed.image_url == "https://images.dealfindio.com.au/products/xx/abc.jpg"
-        assert refreshed.image_source == "open_food_facts"
-        assert refreshed.image_enriched_at is not None
+        # Pipeline writes to pending queue, not directly to image_url
+        assert refreshed.image_url is None
+        assert refreshed.off_image_url == "https://images.dealfindio.com.au/products/xx/abc.jpg"
+        assert refreshed.off_image_status == "pending"
+        assert refreshed.off_image_score == 85.0
+        assert refreshed.off_image_off_name == "Test Product"
 
     @pytest.mark.integration
     def test_no_match_counts_as_skipped(self, test_db_session, sample_store: Store):
@@ -748,3 +752,100 @@ class TestEnrichProductImagesTask:
         assert result["enriched"] == 0
         assert result["skipped"] == 1
         fake_store.put_object.assert_not_called()
+
+
+# ─── Image Review admin endpoints ─────────────────────────────────────────────
+
+class TestImageReviewAPI:
+    """Integration tests for the image review admin endpoints."""
+
+    @pytest.fixture
+    def admin_client(self, test_db_session):
+        from fastapi.testclient import TestClient
+
+        from app.deps import get_current_user, get_db, require_admin
+        from app.main import app
+        from app.models.user import User
+
+        def override_get_db():
+            return test_db_session
+
+        admin_user = User(firebase_uid="admin_uid", email="admin@test.com")
+        admin_user.is_admin = True
+
+        app.dependency_overrides[get_db] = override_get_db
+        app.dependency_overrides[get_current_user] = lambda: admin_user
+        app.dependency_overrides[require_admin] = lambda: admin_user
+        client = TestClient(app)
+        yield client
+        app.dependency_overrides.clear()
+
+    def _seed_pending(self, session) -> Product:
+        p = Product(
+            id=uuid4(),
+            name="Test Product",
+            brand="TestBrand",
+            image_url=None,
+            external_image_url="http://retailer.com/img.jpg",
+            off_image_url="http://localhost:8010/media/products/test/img.jpg",
+            off_image_score=88.0,
+            off_image_off_code="1234567890",
+            off_image_off_name="Test Product OFN",
+            off_image_status="pending",
+        )
+        session.add(p)
+        session.commit()
+        return p
+
+    @pytest.mark.integration
+    def test_list_candidates_returns_pending(self, admin_client, test_db_session):
+        product = self._seed_pending(test_db_session)
+        resp = admin_client.get("/api/v1/admin/image-review/candidates?status=pending")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["total"] >= 1
+        ids = [item["product_id"] for item in body["items"]]
+        assert str(product.id) in ids
+
+    @pytest.mark.integration
+    def test_decide_approve_promotes_to_image_url(self, admin_client, test_db_session):
+        product = self._seed_pending(test_db_session)
+        off_url = product.off_image_url
+
+        resp = admin_client.post(
+            f"/api/v1/admin/image-review/{product.id}/decide",
+            json={"decision": "approved"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["decision"] == "approved"
+
+        test_db_session.expire_all()
+        refreshed = test_db_session.get(Product, product.id)
+        assert refreshed.image_url == off_url
+        assert refreshed.image_source == "open_food_facts"
+        assert refreshed.off_image_status == "approved"
+
+    @pytest.mark.integration
+    def test_decide_reject_clears_candidate(self, admin_client, test_db_session):
+        product = self._seed_pending(test_db_session)
+
+        resp = admin_client.post(
+            f"/api/v1/admin/image-review/{product.id}/decide",
+            json={"decision": "rejected"},
+        )
+        assert resp.status_code == 200
+
+        test_db_session.expire_all()
+        refreshed = test_db_session.get(Product, product.id)
+        assert refreshed.image_url is None
+        assert refreshed.off_image_url is None
+        assert refreshed.off_image_status == "rejected"
+
+    @pytest.mark.integration
+    def test_decide_404_for_missing_product(self, admin_client, test_db_session):
+        resp = admin_client.post(
+            f"/api/v1/admin/image-review/{uuid4()}/decide",
+            json={"decision": "approved"},
+        )
+        assert resp.status_code == 404

@@ -5,7 +5,7 @@ const ALL_CHAINS = ['coles', 'woolworths', 'aldi', 'iga', 'drakes'] as const
 
 type CrawlerTab = 'catalog' | 'enrichment' | 'coverage'
 type DedupSubTab = 'health' | 'review' | 'run'
-type TopTab = 'crawlers' | 'dedup' | 'configs'
+type TopTab = 'crawlers' | 'dedup' | 'configs' | 'images'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -1899,6 +1899,418 @@ function DedupRunTab({
   )
 }
 
+// ─── Image Review ─────────────────────────────────────────────────────────────
+
+interface ImageCandidateItem {
+  product_id: string
+  name: string
+  brand: string | null
+  chain: string | null
+  retailer_image_url: string | null
+  off_image_url: string | null
+  off_image_score: number | null
+  off_image_off_code: string | null
+  off_image_off_name: string | null
+  off_image_status: string | null
+  off_image_ai_verdict: string | null
+  off_image_ai_reason: string | null
+}
+interface ImageCandidatePage { items: ImageCandidateItem[]; total: number }
+
+type ImagesSubTab = 'review' | 'run'
+
+interface ImageRunLogLine { type: 'config' | 'status' | 'item' | 'done' | 'error'; data: Record<string, unknown> }
+interface ImageRunDone { total: number; approved: number; rejected: number; skipped: number; dry_run: boolean }
+interface ImageRunState {
+  limit: number; minScore: number; autoApprove: boolean; minConfidence: number; dryRun: boolean
+  running: boolean; lines: ImageRunLogLine[]; done: ImageRunDone | null
+}
+
+function ImageCandidateCard({
+  item, onDecided,
+}: {
+  item: ImageCandidateItem
+  onDecided: (id: string) => void
+}) {
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  const [fading, setFading] = useState(false)
+
+  async function decide(decision: 'approved' | 'rejected') {
+    setBusy(true); setErr(null)
+    try {
+      await apiClient.post(`/api/v1/admin/image-review/${item.product_id}/decide`, { decision })
+      setFading(true)
+      setTimeout(() => onDecided(item.product_id), 300)
+    } catch (e) {
+      setErr(apiError(e))
+      setBusy(false)
+    }
+  }
+
+  const scoreTone: PillTone = (item.off_image_score ?? 0) >= 85 ? 'green' : (item.off_image_score ?? 0) >= 70 ? 'amber' : 'red'
+  const aiTone: PillTone = item.off_image_ai_verdict === 'approved' ? 'green' : item.off_image_ai_verdict === 'rejected' ? 'red' : 'gray'
+
+  return (
+    <div className={`border border-gray-200 rounded-xl bg-white shadow-sm overflow-hidden transition-opacity duration-300 ${fading ? 'opacity-0' : 'opacity-100'}`}>
+      <div className="p-4 sm:p-5">
+        {/* Header row */}
+        <div className="flex items-start justify-between gap-3 mb-3">
+          <div className="min-w-0">
+            <div className="text-sm font-semibold text-gray-900 leading-snug mb-1">{item.name}</div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <ChainBadge chain={item.chain} size="sm" />
+              {item.brand && <span className="text-xs text-gray-500">{item.brand}</span>}
+            </div>
+          </div>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {item.off_image_score != null && (
+              <Pill tone={scoreTone}>{item.off_image_score.toFixed(0)} match</Pill>
+            )}
+            {item.off_image_ai_verdict && (
+              <Pill tone={aiTone}>AI: {item.off_image_ai_verdict}</Pill>
+            )}
+          </div>
+        </div>
+
+        {/* Side-by-side images */}
+        <div className="grid grid-cols-2 gap-3 mb-3">
+          {/* Left: retailer CDN (currently live) */}
+          <div className="space-y-1">
+            <div className="text-[11px] font-medium text-gray-400 uppercase tracking-wide">Retailer (live)</div>
+            <div className="aspect-square rounded-lg border border-gray-100 bg-gray-50 flex items-center justify-center overflow-hidden">
+              {item.retailer_image_url
+                ? <img src={item.retailer_image_url} alt="Retailer" className="w-full h-full object-contain" />
+                : <PlaceholderIcon className="w-10 h-10 text-gray-200" />}
+            </div>
+          </div>
+          {/* Right: OFF candidate */}
+          <div className="space-y-1">
+            <div className="text-[11px] font-medium text-emerald-600 uppercase tracking-wide">Open Food Facts</div>
+            <div className="aspect-square rounded-lg border border-emerald-100 bg-emerald-50 flex items-center justify-center overflow-hidden">
+              {item.off_image_url
+                ? <img src={item.off_image_url} alt="OFF candidate" className="w-full h-full object-contain" />
+                : <PlaceholderIcon className="w-10 h-10 text-gray-200" />}
+            </div>
+          </div>
+        </div>
+
+        {/* OFF metadata */}
+        {item.off_image_off_name && (
+          <div className="text-xs text-gray-400 mb-3">
+            OFF name: <span className="text-gray-600">{item.off_image_off_name}</span>
+            {item.off_image_off_code && <span className="ml-2 font-mono text-gray-400">{item.off_image_off_code}</span>}
+          </div>
+        )}
+        {item.off_image_ai_reason && (
+          <div className="text-xs text-gray-400 italic mb-3">"{item.off_image_ai_reason}"</div>
+        )}
+
+        {err && <div className="text-xs text-red-600 mb-2">{err}</div>}
+
+        {/* Action buttons */}
+        {item.off_image_status === 'pending' && (
+          <div className="flex gap-2">
+            <AdmButton variant="primary" size="sm" className="flex-1" disabled={busy} onClick={() => decide('approved')}>
+              ✓ Use OFF Image
+            </AdmButton>
+            <AdmButton variant="danger" size="sm" className="flex-1" disabled={busy} onClick={() => decide('rejected')}>
+              ✗ Reject
+            </AdmButton>
+          </div>
+        )}
+        {item.off_image_status === 'approved' && (
+          <div className="flex justify-center">
+            <Pill tone="green">Approved — image is live</Pill>
+          </div>
+        )}
+        {item.off_image_status === 'rejected' && (
+          <div className="flex justify-center">
+            <Pill tone="red">Rejected</Pill>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function ImageReviewTab({ imageRunning }: { imageRunning: boolean }) {
+  const [statusFilter, setStatusFilter] = useState<'pending' | 'approved' | 'rejected'>('pending')
+  const [chainFilter, setChainFilter] = useState('')
+  const [minScore, setMinScore] = useState(0)
+  const [items, setItems] = useState<ImageCandidateItem[]>([])
+  const [total, setTotal] = useState(0)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const offsetRef = useRef(0)
+  const LIMIT = 20
+
+  const loadCandidates = useCallback(async (reset = false) => {
+    setLoading(true); setError(null)
+    const off = reset ? 0 : offsetRef.current
+    try {
+      const params: Record<string, string | number> = {
+        status: statusFilter, min_score: minScore, limit: LIMIT, offset: off,
+      }
+      if (chainFilter) params.chain = chainFilter
+      const r = await apiClient.get<ImageCandidatePage>('/api/v1/admin/image-review/candidates', { params })
+      if (reset) {
+        setItems(r.data.items); offsetRef.current = LIMIT
+      } else {
+        setItems(prev => [...prev, ...r.data.items]); offsetRef.current = off + LIMIT
+      }
+      setTotal(r.data.total)
+    } catch (e) { setError(apiError(e)) }
+    finally { setLoading(false) }
+  }, [statusFilter, minScore, chainFilter])
+
+  useEffect(() => { offsetRef.current = 0; void loadCandidates(true) }, [statusFilter, minScore, chainFilter, loadCandidates])
+
+  useEffect(() => {
+    if (!imageRunning || statusFilter !== 'pending') return
+    const iv = setInterval(() => void loadCandidates(true), 8000)
+    return () => clearInterval(iv)
+  }, [imageRunning, statusFilter, loadCandidates])
+
+  function handleDecided(id: string) {
+    setItems(prev => prev.filter(c => c.product_id !== id))
+    setTotal(prev => Math.max(0, prev - 1))
+  }
+
+  const hasMore = items.length < total
+
+  return (
+    <div className="space-y-4">
+      {/* Filters */}
+      <div className="flex flex-wrap gap-3 items-end">
+        <div className="flex gap-1">
+          {(['pending', 'approved', 'rejected'] as const).map(s => (
+            <button
+              key={s}
+              onClick={() => { setStatusFilter(s) }}
+              className={`px-3 py-1.5 rounded-md text-sm font-medium border transition-colors ${statusFilter === s ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-gray-600 border-gray-200 hover:border-emerald-300'}`}
+            >
+              {titleCase(s)}
+            </button>
+          ))}
+        </div>
+        <select
+          value={chainFilter}
+          onChange={e => setChainFilter(e.target.value)}
+          className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 bg-white"
+        >
+          <option value="">All chains</option>
+          {ALL_CHAINS.map(c => <option key={c} value={c}>{titleCase(c)}</option>)}
+        </select>
+        <label className="flex items-center gap-2 text-sm text-gray-600">
+          Min score
+          <input type="number" min={0} max={100} value={minScore}
+            onChange={e => setMinScore(Number(e.target.value))}
+            className="w-16 text-sm border border-gray-200 rounded-lg px-2 py-1.5 bg-white" />
+        </label>
+        <span className="text-sm text-gray-400 ml-auto">{total.toLocaleString()} {statusFilter}</span>
+      </div>
+
+      {error && <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-3 text-sm">{error}</div>}
+
+      {/* Keyboard hint */}
+      {statusFilter === 'pending' && (
+        <div className="text-[11px] text-gray-400 flex gap-x-3">
+          <span><kbd className="font-mono bg-gray-100 text-gray-600 px-1 rounded">A</kbd> approve</span>
+          <span><kbd className="font-mono bg-gray-100 text-gray-600 px-1 rounded">R</kbd> reject</span>
+        </div>
+      )}
+
+      {/* Cards grid — 2 cols on wider screens */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        {items.map(item => (
+          <ImageCandidateCard key={item.product_id} item={item} onDecided={handleDecided} />
+        ))}
+      </div>
+
+      {!loading && items.length === 0 && (
+        <div className="text-center py-16">
+          <div className="text-4xl mb-2">🎉</div>
+          <div className="text-gray-500 text-sm">No {statusFilter} candidates — queue is clear.</div>
+        </div>
+      )}
+      {loading && (
+        <div className="flex justify-center py-16">
+          <div className="w-8 h-8 border-2 border-gray-200 border-t-emerald-600 rounded-full animate-spin-slow" />
+        </div>
+      )}
+
+      {hasMore && (
+        <div className="flex justify-center py-2">
+          <AdmButton variant="secondary" onClick={() => loadCandidates(false)} disabled={loading}>
+            Load more ({(total - items.length).toLocaleString()} remaining)
+          </AdmButton>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ImageRunTab({
+  state, setState, esRef,
+}: {
+  state: ImageRunState
+  setState: React.Dispatch<React.SetStateAction<ImageRunState>>
+  esRef: React.MutableRefObject<EventSource | null>
+}) {
+  const { limit, minScore, autoApprove, minConfidence, dryRun, running, lines, done } = state
+  const logRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight
+  }, [lines])
+
+  function start() {
+    if (running) return
+    setState(s => ({ ...s, lines: [], done: null, running: true }))
+
+    async function openStream() {
+      let token = ''
+      try {
+        const { auth } = await import('../lib/firebase')
+        if (auth.currentUser) token = await auth.currentUser.getIdToken()
+      } catch { /* ignore */ }
+      if (!token) token = localStorage.getItem('auth_token') || ''
+
+      const params = new URLSearchParams({
+        limit: String(limit),
+        min_score: String(minScore),
+        auto_approve: String(autoApprove),
+        min_confidence: String(minConfidence),
+        dry_run: String(dryRun),
+        token,
+      })
+      const es = new EventSource(`/api/v1/admin/image-review/run?${params}`)
+      esRef.current = es
+
+      function onEvent(type: ImageRunLogLine['type']) {
+        return (e: MessageEvent) => {
+          const data = JSON.parse(e.data) as Record<string, unknown>
+          setState(s => ({ ...s, lines: [...s.lines, { type, data }] }))
+          if (type === 'done') {
+            setState(s => ({ ...s, done: data as unknown as ImageRunDone, running: false }))
+            es.close()
+          }
+          if (type === 'error') {
+            setState(s => ({ ...s, running: false }))
+            es.close()
+          }
+        }
+      }
+
+      es.addEventListener('config', onEvent('config'))
+      es.addEventListener('status', onEvent('status'))
+      es.addEventListener('item', onEvent('item'))
+      es.addEventListener('done', onEvent('done'))
+      es.addEventListener('error', onEvent('error'))
+      es.onerror = () => {
+        setState(s => ({ ...s, lines: [...s.lines, { type: 'error', data: { message: 'Connection lost.' } }], running: false }))
+        es.close()
+      }
+    }
+    openStream()
+  }
+
+  function stop() {
+    esRef.current?.close()
+    setState(s => ({ ...s, running: false, lines: [...s.lines, { type: 'status', data: { message: '— stopped by user —' } }] }))
+  }
+
+  return (
+    <div className="space-y-5">
+      {/* Options */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <label className="flex flex-col gap-1 text-sm font-medium text-gray-700">
+          Limit
+          <input type="number" min={1} max={500} value={limit}
+            onChange={e => setState(s => ({ ...s, limit: Number(e.target.value) }))}
+            className="input-base" disabled={running} />
+        </label>
+        <label className="flex flex-col gap-1 text-sm font-medium text-gray-700">
+          Min Score
+          <input type="number" min={0} max={100} value={minScore}
+            onChange={e => setState(s => ({ ...s, minScore: Number(e.target.value) }))}
+            className="input-base" disabled={running} />
+        </label>
+        <label className="flex flex-col gap-1 text-sm font-medium text-gray-700">
+          Min Confidence
+          <input type="number" min={0} max={1} step={0.05} value={minConfidence}
+            onChange={e => setState(s => ({ ...s, minConfidence: Number(e.target.value) }))}
+            className="input-base" disabled={running} />
+        </label>
+        <div className="flex flex-col gap-3 pt-1">
+          <label className="flex items-center gap-2 text-sm font-medium text-gray-700 cursor-pointer">
+            <input type="checkbox" checked={autoApprove}
+              onChange={e => setState(s => ({ ...s, autoApprove: e.target.checked }))}
+              disabled={running} className="rounded" />
+            Auto-approve/reject
+          </label>
+          <label className="flex items-center gap-2 text-sm font-medium text-gray-700 cursor-pointer">
+            <input type="checkbox" checked={dryRun}
+              onChange={e => setState(s => ({ ...s, dryRun: e.target.checked }))}
+              disabled={running} className="rounded" />
+            Dry run (no writes)
+          </label>
+        </div>
+      </div>
+
+      {/* Controls */}
+      <div className="flex gap-3 items-center">
+        <AdmButton variant="primary" onClick={start} disabled={running}>
+          {running ? 'Running…' : '▶ Run AI Image Review'}
+        </AdmButton>
+        {running && (
+          <AdmButton variant="secondary" onClick={stop}>Stop</AdmButton>
+        )}
+        {dryRun && !running && (
+          <span className="text-sm text-amber-600 font-medium">Dry-run mode — no DB changes</span>
+        )}
+      </div>
+
+      {/* Log */}
+      {lines.length > 0 && (
+        <div
+          ref={logRef}
+          className="bg-gray-900 rounded-xl p-4 font-mono text-xs leading-5 max-h-80 overflow-y-auto text-gray-100 space-y-0.5"
+        >
+          {lines.map((l, i) => {
+            if (l.type === 'config') return <div key={i} className="text-gray-400">[config] limit={String(l.data.limit)} min_score={String(l.data.min_score)} candidates={String(l.data.candidates)} auto_approve={String(l.data.auto_approve)} dry_run={String(l.data.dry_run)}</div>
+            if (l.type === 'status') return <div key={i} className="text-blue-300">[status] {String(l.data.message)}</div>
+            if (l.type === 'item') {
+              const v = String(l.data.verdict)
+              const tone = v === 'approved' ? 'text-emerald-400' : v === 'rejected' ? 'text-red-400' : 'text-amber-400'
+              return (
+                <div key={i} className={tone}>
+                  [{v}] {String(l.data.name)} — {String(l.data.reason ?? '')} (conf={String(l.data.confidence ?? '?')})
+                  {l.data.auto_actioned ? ' ✓ auto-actioned' : ''}
+                </div>
+              )
+            }
+            if (l.type === 'done') return <div key={i} className="text-gray-400 mt-1 border-t border-gray-700 pt-1">[done] total={String(l.data.total)} approved={String(l.data.approved)} rejected={String(l.data.rejected)} skipped={String(l.data.skipped)}</div>
+            if (l.type === 'error') return <div key={i} className="text-red-400">[error] {String(l.data.message)}</div>
+            return null
+          })}
+        </div>
+      )}
+
+      {/* Summary grid */}
+      {done && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+          <div className="bg-gray-50 rounded-xl p-4 text-center"><div className="text-2xl font-bold text-gray-900">{done.total}</div><div className="text-xs text-gray-500 mt-0.5">Reviewed</div></div>
+          <div className="bg-emerald-50 rounded-xl p-4 text-center"><div className="text-2xl font-bold text-emerald-700">{done.approved}</div><div className="text-xs text-gray-500 mt-0.5">Approved</div></div>
+          <div className="bg-red-50 rounded-xl p-4 text-center"><div className="text-2xl font-bold text-red-700">{done.rejected}</div><div className="text-xs text-gray-500 mt-0.5">Rejected</div></div>
+          <div className="bg-amber-50 rounded-xl p-4 text-center"><div className="text-2xl font-bold text-amber-700">{done.skipped}</div><div className="text-xs text-gray-500 mt-0.5">Skipped</div></div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Main Admin component ────────────────────────────────────────────────────
 
 const DEDUP_RUN_INITIAL: DedupRunState = {
@@ -1906,23 +2318,32 @@ const DEDUP_RUN_INITIAL: DedupRunState = {
   running: false, lines: [], done: null,
 }
 
+const IMAGES_RUN_INITIAL: ImageRunState = {
+  limit: 20, minScore: 0, autoApprove: false, minConfidence: 0.8, dryRun: true,
+  running: false, lines: [], done: null,
+}
+
 export default function Admin() {
   const [topTab, setTopTab] = useState<TopTab>('crawlers')
   const [crawlerTab, setCrawlerTab] = useState<CrawlerTab>('catalog')
   const [dedupSubTab, setDedupSubTab] = useState<DedupSubTab>('health')
+  const [imagesSubTab, setImagesSubTab] = useState<ImagesSubTab>('review')
   const [stats, setStats] = useState<Stats | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [registeredChains, setRegisteredChains] = useState<number>(0)
   const [freshness, setFreshness] = useState<SpecialsFreshnessItem[]>([])
   const [dedupRunState, setDedupRunState] = useState<DedupRunState>(DEDUP_RUN_INITIAL)
+  const [imagesRunState, setImagesRunState] = useState<ImageRunState>(IMAGES_RUN_INITIAL)
   const dedupEsRef = useRef<EventSource | null>(null)
+  const imagesEsRef = useRef<EventSource | null>(null)
 
   useEffect(() => { void loadStats() }, [])
 
-  // Close the EventSource when navigating away from Admin entirely.
+  // Close EventSources when navigating away from Admin entirely.
   useEffect(() => {
     return () => {
       dedupEsRef.current?.close()
+      imagesEsRef.current?.close()
     }
   }, [])
 
@@ -1962,7 +2383,7 @@ export default function Admin() {
 
         {/* Top-level section switcher */}
         <div className="flex gap-2 mb-4">
-          {(['crawlers', 'dedup', 'configs'] as const).map(t => (
+          {(['crawlers', 'dedup', 'configs', 'images'] as const).map(t => (
             <button
               key={t}
               className={`px-6 py-2 rounded-lg text-sm font-semibold border transition-colors inline-flex items-center gap-2
@@ -1974,6 +2395,9 @@ export default function Admin() {
               {titleCase(t)}
               {t === 'dedup' && dedupRunState.running && (
                 <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" title="AI Dedup running" />
+              )}
+              {t === 'images' && imagesRunState.running && (
+                <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" title="AI Image Review running" />
               )}
             </button>
           ))}
@@ -2039,6 +2463,39 @@ export default function Admin() {
           <div className="bg-white border border-gray-200 rounded-xl min-h-[400px]">
             <ConfigsTab />
           </div>
+        )}
+
+        {topTab === 'images' && (
+          <>
+            <div className="flex gap-1 border-b border-gray-200">
+              {(['review', 'run'] as const).map(t => (
+                <button
+                  key={t}
+                  className={`px-4 py-2.5 text-sm font-medium -mb-px border-b-2 transition-colors inline-flex items-center gap-2
+                    ${imagesSubTab === t
+                      ? 'text-emerald-700 border-emerald-600'
+                      : 'text-gray-500 border-transparent hover:text-gray-700'}`}
+                  onClick={() => setImagesSubTab(t)}
+                >
+                  {titleCase(t)}
+                  {t === 'run' && imagesRunState.running && (
+                    <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+                  )}
+                  {t === 'review' && imagesRunState.running && (
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" title="Auto-refreshing while run is active" />
+                  )}
+                </button>
+              ))}
+            </div>
+            <div className="bg-white border border-gray-200 rounded-b-xl rounded-tr-xl min-h-[400px] p-6 sm:p-7">
+              {imagesSubTab === 'review' && (
+                <ImageReviewTab imageRunning={imagesRunState.running} />
+              )}
+              {imagesSubTab === 'run' && (
+                <ImageRunTab state={imagesRunState} setState={setImagesRunState} esRef={imagesEsRef} />
+              )}
+            </div>
+          </>
         )}
       </div>
     </div>
