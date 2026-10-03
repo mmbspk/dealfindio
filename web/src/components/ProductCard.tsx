@@ -11,8 +11,8 @@ interface ProductCardProps {
 export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
   const [imgError, setImgError] = useState(false)
   const packSize = formatPackageSize(product.package_size)
-  const displayImage = product.external_image_url || product.image_url
-  const isOffImage = !product.external_image_url && product.image_source === 'open_food_facts'
+  const displayImage = product.image_url || product.external_image_url
+  const isOffImage = product.image_source === 'open_food_facts'
 
   return (
     <Link to={`/product/${product.id}`}>

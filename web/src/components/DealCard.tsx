@@ -25,8 +25,8 @@ export const DealCard: React.FC<Props> = ({ deal, viewMode = 'list' }) => {
   const chainLabel = deal.chain
     ? deal.chain.charAt(0).toUpperCase() + deal.chain.slice(1)
     : deal.store_name
-  const displayImage = deal.external_image_url || deal.image_url
-  const isOffImage = !deal.external_image_url && deal.image_source === 'open_food_facts'
+  const displayImage = deal.image_url || deal.external_image_url
+  const isOffImage = deal.image_source === 'open_food_facts'
 
   // ── Compact: small square tile ──────────────────────────────────────────
   if (viewMode === 'compact') {

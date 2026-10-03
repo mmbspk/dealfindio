@@ -135,8 +135,8 @@ export default function ProductsScreen() {
       >
         {/* Image */}
         <View style={styles.imageContainer}>
-          {(item.external_image_url || item.image_url) ? (
-            <Image source={{ uri: item.external_image_url || item.image_url! }} style={styles.image} resizeMode="contain" />
+          {(item.image_url || item.external_image_url) ? (
+            <Image source={{ uri: item.image_url || item.external_image_url! }} style={styles.image} resizeMode="contain" />
           ) : (
             <View style={[styles.image, styles.imagePlaceholder]}>
               <Text style={styles.imagePlaceholderText}>🛒</Text>
@@ -147,7 +147,7 @@ export default function ProductsScreen() {
               <Text style={styles.salePillText}>-{Math.round(item.sale_pct_off)}%</Text>
             </View>
           ) : null}
-          {!item.external_image_url && item.image_source === 'open_food_facts' && (
+          {item.image_source === 'open_food_facts' && (
             <View style={styles.offBadge}><Text style={styles.offBadgeText}>OFF</Text></View>
           )}
         </View>

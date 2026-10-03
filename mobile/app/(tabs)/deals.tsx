@@ -92,10 +92,10 @@ export default function DealsScreen() {
       <Pressable style={styles.card} onPress={() => router.push(`/product/${item.product_id}`)} accessibilityRole="button" accessibilityLabel={`Compare prices for ${item.product_name}`}>
         <View style={styles.cardMain}>
           <View style={styles.imageWrap}>
-            {(item.external_image_url || item.image_url) ? (
-              <Image source={{ uri: item.external_image_url || item.image_url! }} style={styles.dealImage} resizeMode="contain" />
+            {(item.image_url || item.external_image_url) ? (
+              <Image source={{ uri: item.image_url || item.external_image_url! }} style={styles.dealImage} resizeMode="contain" />
             ) : null}
-            {!item.external_image_url && item.image_source === 'open_food_facts' && (
+            {item.image_source === 'open_food_facts' && (
               <View style={styles.offBadge}><Text style={styles.offBadgeText}>OFF</Text></View>
             )}
           </View>

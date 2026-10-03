@@ -274,9 +274,9 @@ export const Product: React.FC = () => {
             <div className="bg-white rounded-2xl border border-gray-100 p-6">
               {/* Image */}
               <div className="w-40 h-40 mx-auto bg-gray-50 rounded-2xl overflow-hidden flex items-center justify-center mb-5 border border-gray-100 relative">
-                {(product.external_image_url || product.image_url) && !imgError ? (
+                {(product.image_url || product.external_image_url) && !imgError ? (
                   <img
-                    src={product.external_image_url || product.image_url!}
+                    src={product.image_url || product.external_image_url!}
                     alt={product.name}
                     className="w-full h-full object-contain"
                     onError={() => setImgError(true)}
@@ -286,7 +286,7 @@ export const Product: React.FC = () => {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
                   </svg>
                 )}
-                {!product.external_image_url && product.image_source === 'open_food_facts' && (
+                {product.image_source === 'open_food_facts' && (
                   <span className="absolute bottom-1 right-1 bg-green-600/80 text-white text-[9px] font-bold px-1 py-0.5 rounded leading-none pointer-events-none">
                     OFF
                   </span>

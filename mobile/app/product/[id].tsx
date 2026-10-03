@@ -128,9 +128,9 @@ export default function ProductDetailScreen() {
 
       {/* Product image */}
       <View style={styles.imageWrap}>
-        {(product.external_image_url || product.image_url) ? (
+        {(product.image_url || product.external_image_url) ? (
           <Image
-            source={{ uri: product.external_image_url || product.image_url! }}
+            source={{ uri: product.image_url || product.external_image_url! }}
             style={styles.image}
             resizeMode="contain"
           />
@@ -139,7 +139,7 @@ export default function ProductDetailScreen() {
             <Text style={styles.imagePlaceholderText}>No image</Text>
           </View>
         )}
-        {!product.external_image_url && product.image_source === 'open_food_facts' && (
+        {product.image_source === 'open_food_facts' && (
           <View style={styles.offBadge}><Text style={styles.offBadgeText}>OFF</Text></View>
         )}
       </View>
