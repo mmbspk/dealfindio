@@ -258,7 +258,9 @@ class ColesCatalogScraper(CatalogScraper):
             )
         return departments
 
-    async def crawl_category(self, category: CategoryNode, auth: dict, *, page_sink=None, start_page: int = 1) -> Any:
+    async def crawl_category(
+        self, category: CategoryNode, auth: dict, *, page_sink=None, start_page: int = 1
+    ) -> Any:
         """Page through one department. Returns the accumulated pages + L2 map.
 
         When ``page_sink`` is provided, products are parsed and flushed per page
@@ -274,9 +276,7 @@ class ColesCatalogScraper(CatalogScraper):
         # that Imperva doesn't flag the session after the first few categories.
         # Log before the sleep so the UI shows which category is next rather
         # than going dark for up to 90s.
-        self.logger.info(
-            "Crawling category '%s' (start_page=%d)", category.name, start_page
-        )
+        self.logger.info("Crawling category '%s' (start_page=%d)", category.name, start_page)
         await asyncio.sleep(
             random.uniform(self._BETWEEN_CATEGORY_MIN_S, self._BETWEEN_CATEGORY_MAX_S)
         )
@@ -308,7 +308,8 @@ class ColesCatalogScraper(CatalogScraper):
             if page_sink is not None:
                 # Streaming mode: parse this page immediately and flush
                 page_products = [
-                    p for item in results
+                    p
+                    for item in results
                     if (p := _parse_item(item, category, today, l2_map)) is not None
                 ]
                 await page_sink(page_products, page)
@@ -407,7 +408,8 @@ class ColesCatalogScraper(CatalogScraper):
                     except ValueError:
                         self.logger.warning(
                             "Coles on-special non-JSON body at page %d (%db) — bot block",
-                            page, len(resp.content),
+                            page,
+                            len(resp.content),
                         )
                         bot_blocked_at = page
                         break
@@ -451,14 +453,18 @@ class ColesCatalogScraper(CatalogScraper):
                 self.logger.warning(
                     "Coles on-special reached max IP rotations (%d) — stopping at page %d "
                     "with %d products saved",
-                    MAX_ROTATIONS, bot_blocked_at, products_found,
+                    MAX_ROTATIONS,
+                    bot_blocked_at,
+                    products_found,
                 )
                 break
 
             self.logger.info(
                 "Coles on-special bot-blocked at page %d (%d products so far) — "
                 "rotating to fresh IP #%d and resuming",
-                bot_blocked_at, products_found, rotation_count,
+                bot_blocked_at,
+                products_found,
+                rotation_count,
             )
             start_page = bot_blocked_at
             await self._invalidate_auth()
@@ -467,7 +473,8 @@ class ColesCatalogScraper(CatalogScraper):
 
         self.logger.info(
             "Fetched %d Coles on-special products across %d IP rotation(s)",
-            products_found, rotation_count,
+            products_found,
+            rotation_count,
         )
         return {"_sunk": True, "products_found": products_found}
 
@@ -475,7 +482,9 @@ class ColesCatalogScraper(CatalogScraper):
         """Products are already parsed and sunk inline in crawl_specials."""
         return []
 
-    async def _crawl_with_reauth(self, category: CategoryNode, auth: dict, *, page_sink=None, start_page: int = 1) -> Any:
+    async def _crawl_with_reauth(
+        self, category: CategoryNode, auth: dict, *, page_sink=None, start_page: int = 1
+    ) -> Any:
         """Coles override: re-auth with Imperva cool-down before retrying.
 
         On a bot-protection block (AuthExpiredError from non-JSON body), waits
@@ -483,7 +492,9 @@ class ColesCatalogScraper(CatalogScraper):
         Consecutive blocks get 5 / 15 / 30 min waits. Resets on a clean crawl.
         """
         try:
-            result = await self.crawl_category(category, auth, page_sink=page_sink, start_page=start_page)
+            result = await self.crawl_category(
+                category, auth, page_sink=page_sink, start_page=start_page
+            )
             self._consecutive_bot_blocks = 0  # clean run — reset counter
             return result
         except AuthExpiredError:
@@ -502,7 +513,9 @@ class ColesCatalogScraper(CatalogScraper):
             # One retry after cool-down. Re-read checkpoint in case page_sink
             # flushed some pages before the block — don't re-flush them.
             retry_start = self._get_page_checkpoint(category.id) + 1
-            result = await self.crawl_category(category, auth, page_sink=page_sink, start_page=retry_start)
+            result = await self.crawl_category(
+                category, auth, page_sink=page_sink, start_page=retry_start
+            )
             self._consecutive_bot_blocks = 0
             return result
 

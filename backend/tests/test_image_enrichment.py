@@ -195,7 +195,10 @@ class TestBestImageUrl:
 
     @pytest.mark.unit
     def test_falls_back_to_image_front_url(self):
-        product = {"image_front_url": "https://example.com/front.jpg", "image_url": "https://example.com/any.jpg"}
+        product = {
+            "image_front_url": "https://example.com/front.jpg",
+            "image_url": "https://example.com/any.jpg",
+        }
         assert _best_image_url(product) == "https://example.com/front.jpg"
 
     @pytest.mark.unit
@@ -436,7 +439,9 @@ class TestOFTImageEnricher:
                     },
                 )
             if str(request.url) == curated_url:
-                return httpx.Response(200, content=b"\xff\xd8", headers={"Content-Type": "image/jpeg"})
+                return httpx.Response(
+                    200, content=b"\xff\xd8", headers={"Content-Type": "image/jpeg"}
+                )
             return httpx.Response(404)
 
         transport = httpx.MockTransport(handler)
@@ -460,14 +465,24 @@ class TestOFTImageEnricher:
                     json={
                         "products": [
                             # Listed first but less specific name
-                            {"code": "111", "product_name": "Whole Milk 2L", "image_front_url": good_url},
+                            {
+                                "code": "111",
+                                "product_name": "Whole Milk 2L",
+                                "image_front_url": good_url,
+                            },
                             # Listed second but exact match — should win
-                            {"code": "222", "product_name": "Full Cream Milk 2L", "image_front_url": better_url},
+                            {
+                                "code": "222",
+                                "product_name": "Full Cream Milk 2L",
+                                "image_front_url": better_url,
+                            },
                         ]
                     },
                 )
             if str(request.url) in (good_url, better_url):
-                return httpx.Response(200, content=b"\xff\xd8", headers={"Content-Type": "image/jpeg"})
+                return httpx.Response(
+                    200, content=b"\xff\xd8", headers={"Content-Type": "image/jpeg"}
+                )
             return httpx.Response(404)
 
         transport = httpx.MockTransport(handler)
@@ -489,10 +504,18 @@ class TestOFTImageEnricher:
             if f"/api/v2/product/{gtin}" in str(request.url):
                 return httpx.Response(
                     200,
-                    json={"product": {"code": gtin, "product_name": "Weet-Bix 750g", "image_front_url": img_url}},
+                    json={
+                        "product": {
+                            "code": gtin,
+                            "product_name": "Weet-Bix 750g",
+                            "image_front_url": img_url,
+                        }
+                    },
                 )
             if str(request.url) == img_url:
-                return httpx.Response(200, content=b"\xff\xd8", headers={"Content-Type": "image/jpeg"})
+                return httpx.Response(
+                    200, content=b"\xff\xd8", headers={"Content-Type": "image/jpeg"}
+                )
             return httpx.Response(404)
 
         transport = httpx.MockTransport(handler)
@@ -522,16 +545,32 @@ class TestOFTImageEnricher:
                 # OFF returns a completely different product for this barcode
                 return httpx.Response(
                     200,
-                    json={"product": {"code": gtin, "product_name": "Chocolate Milk 2L", "image_front_url": img_url}},
+                    json={
+                        "product": {
+                            "code": gtin,
+                            "product_name": "Chocolate Milk 2L",
+                            "image_front_url": img_url,
+                        }
+                    },
                 )
             if "api/v2/search" in str(request.url):
                 # Text search finds the right product
                 return httpx.Response(
                     200,
-                    json={"products": [{"code": "jim-beam-code", "product_name": "Jim Beam Bourbon", "image_front_url": img_url}]},
+                    json={
+                        "products": [
+                            {
+                                "code": "jim-beam-code",
+                                "product_name": "Jim Beam Bourbon",
+                                "image_front_url": img_url,
+                            }
+                        ]
+                    },
                 )
             if str(request.url) == img_url:
-                return httpx.Response(200, content=b"\xff\xd8", headers={"Content-Type": "image/jpeg"})
+                return httpx.Response(
+                    200, content=b"\xff\xd8", headers={"Content-Type": "image/jpeg"}
+                )
             return httpx.Response(404)
 
         transport = httpx.MockTransport(handler)
@@ -555,10 +594,16 @@ class TestOFTImageEnricher:
             if "api/v2/search" in str(request.url):
                 return httpx.Response(
                     200,
-                    json={"products": [{"code": "111", "product_name": "Milk 2L", "image_front_url": img_url}]},
+                    json={
+                        "products": [
+                            {"code": "111", "product_name": "Milk 2L", "image_front_url": img_url}
+                        ]
+                    },
                 )
             if str(request.url) == img_url:
-                return httpx.Response(200, content=b"\xff\xd8", headers={"Content-Type": "image/jpeg"})
+                return httpx.Response(
+                    200, content=b"\xff\xd8", headers={"Content-Type": "image/jpeg"}
+                )
             return httpx.Response(404)
 
         transport = httpx.MockTransport(handler)
@@ -621,7 +666,11 @@ class TestFindProductsMissingImages:
         p3 = Product(id=uuid4(), name="Woolies Eggs", gtin=None)
         test_db_session.add_all([p1, p2, p3])
         test_db_session.flush()
-        for prod, source in [(p1, "catalog_coles"), (p2, "catalog_coles"), (p3, "catalog_woolworths")]:
+        for prod, source in [
+            (p1, "catalog_coles"),
+            (p2, "catalog_coles"),
+            (p3, "catalog_woolworths"),
+        ]:
             test_db_session.add(
                 PriceReport(
                     product_id=prod.id,
@@ -757,6 +806,7 @@ class TestEnrichProductImagesTask:
 
 
 # ─── Image Review admin endpoints ─────────────────────────────────────────────
+
 
 class TestImageReviewAPI:
     """Integration tests for the image review admin endpoints."""

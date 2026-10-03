@@ -53,11 +53,11 @@ _matcher = FuzzyMatcher()
 # Both rules require at least 2 clean, recent prices from OTHER chains as a
 # baseline so a single flawed report can't become the new normal.
 
-_SUSPECT_EXTREME_RATIO = 0.20    # Rule A: price < 20% of median → flag
-_SUSPECT_PRICE_RATIO = 0.35      # Rule B price leg: price < 35% of median
-_SUSPECT_WAS_RATIO = 0.65        # Rule B was-price leg: was < 65% of median
-_SUSPECT_MIN_SAMPLES = 2         # min other-chain prices needed for a baseline
-_SUSPECT_LOOKBACK_DAYS = 90      # how far back to look for baseline prices
+_SUSPECT_EXTREME_RATIO = 0.20  # Rule A: price < 20% of median → flag
+_SUSPECT_PRICE_RATIO = 0.35  # Rule B price leg: price < 35% of median
+_SUSPECT_WAS_RATIO = 0.65  # Rule B was-price leg: was < 65% of median
+_SUSPECT_MIN_SAMPLES = 2  # min other-chain prices needed for a baseline
+_SUSPECT_LOOKBACK_DAYS = 90  # how far back to look for baseline prices
 
 
 def _is_suspect_price(
@@ -75,17 +75,21 @@ def _is_suspect_price(
       identity is likely wrong — a mismatched item from fuzzy dedup).
     """
     cutoff = datetime.now(timezone.utc) - timedelta(days=_SUSPECT_LOOKBACK_DAYS)
-    rows = session.execute(
-        select(PriceReport.price_cents)
-        .where(
-            PriceReport.product_id == product.id,
-            PriceReport.created_at >= cutoff,
-            PriceReport.is_flagged == False,  # noqa: E712 — SQLAlchemy needs ==
-            PriceReport.source != f"catalog_{chain}",
+    rows = (
+        session.execute(
+            select(PriceReport.price_cents)
+            .where(
+                PriceReport.product_id == product.id,
+                PriceReport.created_at >= cutoff,
+                PriceReport.is_flagged == False,  # noqa: E712 — SQLAlchemy needs ==
+                PriceReport.source != f"catalog_{chain}",
+            )
+            .order_by(PriceReport.created_at.desc())
+            .limit(20)
         )
-        .order_by(PriceReport.created_at.desc())
-        .limit(20)
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     if len(rows) < _SUSPECT_MIN_SAMPLES:
         return False

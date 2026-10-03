@@ -146,6 +146,7 @@ def compute_freshness(
         last_run_at = last_run_at.replace(tzinfo=timezone.utc)
     else:
         from datetime import timezone as _tz
+
         last_run_at = last_run_at.astimezone(_tz.utc)
 
     hours_since = (now - last_run_at).total_seconds() / 3600

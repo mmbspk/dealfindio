@@ -282,7 +282,9 @@ class DrakesCatalogScraper(CatalogScraper):
         logger.info("Drakes: discovered %d categories: %s", len(nodes), [n.name for n in nodes])
         return nodes or _hardcoded_categories()
 
-    async def crawl_category(self, category: CategoryNode, auth: dict, *, page_sink=None, start_page: int = 1) -> Any:
+    async def crawl_category(
+        self, category: CategoryNode, auth: dict, *, page_sink=None, start_page: int = 1
+    ) -> Any:
         """Fetch all pages for one category, parse products inline, discard HTML immediately."""
         client = self._client
         if client is None:

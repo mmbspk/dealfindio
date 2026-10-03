@@ -32,18 +32,6 @@ class StatsResponse(BaseModel):
     products_by_chain: dict[str, int]
 
 
-
-
-
-
-
-
-
-
-
-
-
-
 @router.get("/stats", response_model=StatsResponse)
 def get_stats(db: Session = Depends(get_db), _admin=Depends(require_admin)) -> StatsResponse:
     """Return product and price report counts."""
@@ -61,8 +49,6 @@ def get_stats(db: Session = Depends(get_db), _admin=Depends(require_admin)) -> S
         total_price_reports=total_price_reports,
         products_by_chain=products_by_chain,
     )
-
-
 
 
 class SpecialsFreshnessItem(BaseModel):
@@ -1664,9 +1650,7 @@ def list_image_candidates(
 
     products = (
         db.execute(
-            stmt.order_by(Product.off_image_score.desc().nullslast())
-            .offset(offset)
-            .limit(limit)
+            stmt.order_by(Product.off_image_score.desc().nullslast()).offset(offset).limit(limit)
         )
         .scalars()
         .all()
@@ -1725,7 +1709,9 @@ def decide_image_candidate(
     if product is None:
         raise HTTPException(status_code=404, detail="Product not found")
     if not product.off_image_url:
-        raise HTTPException(status_code=400, detail="No pending OFF image candidate for this product")
+        raise HTTPException(
+            status_code=400, detail="No pending OFF image candidate for this product"
+        )
 
     if body.decision == "approved":
         product.image_url = product.off_image_url
@@ -1772,7 +1758,9 @@ def _run_image_ai_review_stream(
     base_url = get_runtime_value("ANTHROPIC_BASE_URL", db) or _settings.ANTHROPIC_BASE_URL
 
     if not api_key:
-        yield _sse("error", {"message": "ANTHROPIC_API_KEY is not set — add it in Admin → Configs → AI."})
+        yield _sse(
+            "error", {"message": "ANTHROPIC_API_KEY is not set — add it in Admin → Configs → AI."}
+        )
         return
 
     try:
@@ -1789,16 +1777,23 @@ def _run_image_ai_review_stream(
     stmt = sa_select(Product).where(Product.off_image_status == "pending")
     if min_score > 0:
         stmt = stmt.where(Product.off_image_score >= min_score)
-    candidates = db.execute(stmt.order_by(Product.off_image_score.desc().nullslast()).limit(limit)).scalars().all()
+    candidates = (
+        db.execute(stmt.order_by(Product.off_image_score.desc().nullslast()).limit(limit))
+        .scalars()
+        .all()
+    )
 
-    yield _sse("config", {
-        "limit": limit,
-        "min_score": min_score,
-        "auto_approve": auto_approve,
-        "min_confidence": min_confidence,
-        "dry_run": dry_run,
-        "candidates": len(candidates),
-    })
+    yield _sse(
+        "config",
+        {
+            "limit": limit,
+            "min_score": min_score,
+            "auto_approve": auto_approve,
+            "min_confidence": min_confidence,
+            "dry_run": dry_run,
+            "candidates": len(candidates),
+        },
+    )
     yield _sse("status", {"message": f"Loaded {len(candidates)} pending candidates"})
 
     approved = rejected = skipped = 0
@@ -1807,7 +1802,12 @@ def _run_image_ai_review_stream(
         if not url:
             return None
         try:
-            r = httpx.get(url, timeout=15, follow_redirects=True, headers={"User-Agent": "dealfindio-admin/1.0"})
+            r = httpx.get(
+                url,
+                timeout=15,
+                follow_redirects=True,
+                headers={"User-Agent": "dealfindio-admin/1.0"},
+            )
             r.raise_for_status()
             ct = (r.headers.get("Content-Type") or "image/jpeg").split(";")[0].strip()
             return r.content, ct
@@ -1829,13 +1829,16 @@ def _run_image_ai_review_stream(
 
         if not retailer_data or not off_data:
             skipped += 1
-            yield _sse("item", {
-                "product_id": str(product.id),
-                "name": product.name,
-                "verdict": "skipped",
-                "reason": "could not fetch one or both images",
-                "confidence": None,
-            })
+            yield _sse(
+                "item",
+                {
+                    "product_id": str(product.id),
+                    "name": product.name,
+                    "verdict": "skipped",
+                    "reason": "could not fetch one or both images",
+                    "confidence": None,
+                },
+            )
             if not dry_run:
                 product.off_image_ai_verdict = "skipped"
                 product.off_image_ai_reason = "image fetch failed"
@@ -1855,13 +1858,29 @@ def _run_image_ai_review_stream(
                     "LEFT image = retailer (currently live). RIGHT image = OFF candidate."
                 ),
             },
-            {"type": "image", "source": {"type": "base64", "media_type": retailer_ct, "data": base64.b64encode(retailer_bytes).decode()}},
-            {"type": "image", "source": {"type": "base64", "media_type": off_ct, "data": base64.b64encode(off_bytes).decode()}},
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": retailer_ct,
+                    "data": base64.b64encode(retailer_bytes).decode(),
+                },
+            },
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": off_ct,
+                    "data": base64.b64encode(off_bytes).decode(),
+                },
+            },
         ]
 
         try:
             response = client.messages.create(
-                model=_settings.AI_DEDUP_MODEL if hasattr(_settings, "AI_DEDUP_MODEL") else "claude-sonnet-4-6",
+                model=_settings.AI_DEDUP_MODEL
+                if hasattr(_settings, "AI_DEDUP_MODEL")
+                else "claude-sonnet-4-6",
                 max_tokens=256,
                 system=system_prompt,
                 messages=[{"role": "user", "content": user_content}],
@@ -1873,19 +1892,23 @@ def _run_image_ai_review_stream(
                 if raw.startswith("json"):
                     raw = raw[4:]
             import json as _json
+
             verdict_data = _json.loads(raw)
             ai_approved: bool = bool(verdict_data.get("approved", False))
             confidence: float = float(verdict_data.get("confidence", 0.5))
             reason: str = str(verdict_data.get("reason", ""))[:300]
         except Exception as exc:
             skipped += 1
-            yield _sse("item", {
-                "product_id": str(product.id),
-                "name": product.name,
-                "verdict": "skipped",
-                "reason": f"AI error: {exc}",
-                "confidence": None,
-            })
+            yield _sse(
+                "item",
+                {
+                    "product_id": str(product.id),
+                    "name": product.name,
+                    "verdict": "skipped",
+                    "reason": f"AI error: {exc}",
+                    "confidence": None,
+                },
+            )
             continue
 
         verdict_str = "approved" if ai_approved else "rejected"
@@ -1921,27 +1944,33 @@ def _run_image_ai_review_stream(
             else:
                 rejected += 1
 
-        yield _sse("item", {
-            "product_id": str(product.id),
-            "name": product.name,
-            "off_name": product.off_image_off_name,
-            "score": product.off_image_score,
-            "verdict": verdict_str,
-            "confidence": confidence,
-            "reason": reason,
-            "auto_actioned": auto_approve and high_confidence and not dry_run,
-        })
+        yield _sse(
+            "item",
+            {
+                "product_id": str(product.id),
+                "name": product.name,
+                "off_name": product.off_image_off_name,
+                "score": product.off_image_score,
+                "verdict": verdict_str,
+                "confidence": confidence,
+                "reason": reason,
+                "auto_actioned": auto_approve and high_confidence and not dry_run,
+            },
+        )
 
     if not dry_run:
         db.commit()
 
-    yield _sse("done", {
-        "total": len(candidates),
-        "approved": approved,
-        "rejected": rejected,
-        "skipped": skipped,
-        "dry_run": dry_run,
-    })
+    yield _sse(
+        "done",
+        {
+            "total": len(candidates),
+            "approved": approved,
+            "rejected": rejected,
+            "skipped": skipped,
+            "dry_run": dry_run,
+        },
+    )
 
 
 @router.get("/image-review/run")
