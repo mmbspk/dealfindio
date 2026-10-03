@@ -5,7 +5,6 @@ Defines Pydantic models for product search, detail, and price history responses.
 """
 
 from datetime import datetime
-from typing import Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator

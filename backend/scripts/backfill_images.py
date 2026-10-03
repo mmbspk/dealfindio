@@ -34,7 +34,7 @@ _DEFAULT_LIMIT = 500
 
 def _run_enrichment(chain: str | None, limit: int, dry_run: bool) -> dict:
     """Run the OFF enrichment pipeline synchronously for one chain (or all)."""
-    from app.workers.image_tasks import _find_products_missing_images, _enrich_all
+    from app.workers.image_tasks import _enrich_all, _find_products_missing_images
 
     settings = get_settings()
     engine = create_engine(settings.DATABASE_URL, echo=False)

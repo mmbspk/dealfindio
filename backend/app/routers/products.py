@@ -3,6 +3,9 @@ Products router with search, detail, price history, and per-product store endpoi
 """
 
 import logging
+
+# ── Store URL builder ─────────────────────────────────────────────────────────
+import re as _re
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, Literal
@@ -24,10 +27,6 @@ from app.schemas.product import (
 )
 from app.services.geo import haversine_km
 from app.services.search import search_products_by_gtin, search_products_ranked
-
-# ── Store URL builder ─────────────────────────────────────────────────────────
-
-import re as _re
 
 
 def _name_to_slug(name: str) -> str:

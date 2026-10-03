@@ -13,7 +13,6 @@ the scraper or notification queues.
 
 import asyncio
 import logging
-from datetime import datetime, timezone  # datetime used in EnrichResult typing
 from typing import Optional, TypedDict
 from uuid import UUID
 
