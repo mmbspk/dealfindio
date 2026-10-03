@@ -505,6 +505,43 @@ class TestOFTImageEnricher:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
+    async def test_gtin_name_mismatch_falls_back_to_text_search(self):
+        """GTIN hit whose OFF name doesn't match our product name falls back to search.
+
+        Woolworths internal store IDs can collide with unrelated OFF barcodes
+        (e.g. our 'Jim Beam Bourbon' GTIN resolves to 'Chocolate Milk' in OFF).
+        The enricher must reject the hit and try text search instead.
+        """
+        gtin = "00000020953584"
+        img_url = "https://static.openfoodfacts.org/images/products/front.jpg"
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if f"/api/v2/product/{gtin}" in str(request.url):
+                # OFF returns a completely different product for this barcode
+                return httpx.Response(
+                    200,
+                    json={"product": {"code": gtin, "product_name": "Chocolate Milk 2L", "image_front_url": img_url}},
+                )
+            if "api/v2/search" in str(request.url):
+                # Text search finds the right product
+                return httpx.Response(
+                    200,
+                    json={"products": [{"code": "jim-beam-code", "product_name": "Jim Beam Bourbon", "image_front_url": img_url}]},
+                )
+            if str(request.url) == img_url:
+                return httpx.Response(200, content=b"\xff\xd8", headers={"Content-Type": "image/jpeg"})
+            return httpx.Response(404)
+
+        transport = httpx.MockTransport(handler)
+        async with httpx.AsyncClient(transport=transport) as client:
+            result = await _enricher().enrich("Jim Beam Bourbon", client, gtin=gtin)
+
+        assert result is not None
+        # Must have come from text search, not the wrong GTIN hit
+        assert result.off_code == "jim-beam-code"
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
     async def test_gtin_404_falls_back_to_text_search(self):
         """404 on barcode lookup transparently falls back to text search."""
         gtin = "0000000000000"

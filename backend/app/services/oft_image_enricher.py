@@ -149,14 +149,28 @@ class OFTImageEnricher:
         if not product_name or not product_name.strip():
             return None
 
-        # Tier 1: exact barcode lookup — no fuzzy, just a direct product fetch.
+        # Tier 1: exact barcode lookup — verify name matches before accepting.
+        # Woolworths GTINs are internal store IDs that can collide with unrelated
+        # OFF barcodes (e.g. our "Jim Beam" GTIN resolves to "Chocolate Milk" in OFF).
+        # Apply the same similarity gate as text search so wrong-product images never
+        # get stored — a failed gate falls through to text search rather than giving up.
         if gtin:
             result = await self._lookup_by_gtin(gtin, client)
             if result:
-                built = await self._build_result(result[0], result[1], client, f"GTIN:{gtin}")
-                if built:
-                    return built
-                logger.debug("GTIN %s found in OFF but image unavailable; trying text search", gtin)
+                off_product, _ = result
+                off_name = off_product.get("product_name") or ""
+                search_name_for_check = _clean_search_name(product_name.strip())
+                similarity = fuzz.token_sort_ratio(search_name_for_check.lower(), off_name.lower())
+                if similarity >= _MIN_NAME_SIMILARITY:
+                    built = await self._build_result(off_product, 100.0, client, f"GTIN:{gtin}")
+                    if built:
+                        return built
+                    logger.debug("GTIN %s: name matched but image unavailable; trying text search", gtin)
+                else:
+                    logger.debug(
+                        "GTIN %s name mismatch (score=%.0f): OFF has %r, we want %r; trying text search",
+                        gtin, similarity, off_name, product_name,
+                    )
 
         # Tier 2: text search restricted to Australian products, name cleaned.
         search_name = _clean_search_name(product_name.strip())
