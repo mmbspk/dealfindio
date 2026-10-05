@@ -112,7 +112,7 @@ def get_scraper_proxy(session_id: Optional[str] = None) -> Optional[str]:
         return None
     if session_id:
         sep = "&" if "?" in raw else "?"
-        raw = f"{raw}{sep}sess={session_id}"
+        raw = f"{raw}{sep}sess={session_id}&sessttl=21600"
     return raw
 
 
