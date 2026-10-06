@@ -571,6 +571,10 @@ def _parse_item(item: dict, category: CategoryNode, today: date) -> Optional[Cat
     if additional.get("IsMarketProduct"):
         return None
 
+    # Skip online-only products — not available in physical stores.
+    if additional.get("IsOnlineOnly"):
+        return None
+
     dept_name = additional.get("sapdepartmentname") or additional.get("sapsubcategoryname")
     raw_label = f"{category.name} > {dept_name}" if dept_name else category.name
     category_label = _normalise_category(raw_label) or category.name
