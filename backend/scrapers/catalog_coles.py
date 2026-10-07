@@ -681,23 +681,44 @@ def _parse_item(
 
 
 def _extract_coles_package_size(item: dict) -> Optional[str]:
-    """Extract package size from the product name (Coles API has no dedicated field).
+    """Extract package size from a Coles API product item.
 
-    The name typically ends with the size: "Coca-Cola No Sugar 375mL 24 Pack".
-    We extract just the size portion — the last token group containing a unit.
+    Priority:
+      1. item["size"] — dedicated size field (e.g. "350g", "1.5L", "375mL")
+      2. item["description"] — full UPPERCASE title, e.g. "PAULS FARMHOUSE GOLD
+         FULL CREAM MILK 1.5 LITRE"; parse the trailing size token from here
+      3. item["name"] — short display name; only some products embed the size
+         (e.g. "Coca-Cola No Sugar 375mL 24 Pack")
     """
-    name = item.get("name") or ""
-    # Match a size token at the end of the name: e.g. "375mL 24 Pack", "2L", "500g"
-    m = re.search(
-        r"(\d+\.?\d*\s*(?:ml|mL|L|kg|g|oz)\b(?:\s+\d+\s*(?:Pack|pk|pack))?|\d+\s*(?:Pack|pk|pack))\s*$",
-        name,
-    )
+    # 1. Dedicated size field — fastest path, most reliable.
+    dedicated = (item.get("size") or "").strip()
+    if dedicated:
+        return dedicated
+
+    # 2. Full description (uppercase, e.g. "PAULS ... 1.5 LITRE").
+    desc = (item.get("description") or "").strip()
+    if desc:
+        # Normalise LITRE / LITRES → L, MILLILITRE → mL so the regex matches.
+        normalised = re.sub(r"\bLITRES?\b", "L", desc, flags=re.IGNORECASE)
+        normalised = re.sub(r"\bMILLILITRES?\b", "mL", normalised, flags=re.IGNORECASE)
+        m = _COLES_PACKAGE_SIZE_RE.search(normalised)
+        if m:
+            return m.group(0).strip()
+
+    # 3. Short display name — fallback for products that embed size in name.
+    name = (item.get("name") or "").strip()
+    m = _COLES_PACKAGE_SIZE_RE.search(name)
     if m:
         return m.group(0).strip()
+
     return None
 
 
 _COLES_UNIT_PRICE_RE = re.compile(r"\$?([\d.]+)\s*/\s*(.+)", re.IGNORECASE)
+_COLES_PACKAGE_SIZE_RE = re.compile(
+    r"(\d+\.?\d*\s*(?:ml|L|kg|g|oz)\b(?:\s+\d+\s*(?:pack|pk))?|\d+\s*(?:pack|pk))\s*$",
+    re.IGNORECASE,
+)
 
 
 def _extract_coles_unit_price(pricing: dict) -> Optional[float]:

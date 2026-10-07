@@ -312,6 +312,81 @@ class TestColesCatalogParsing:
         assert p.category == "Dairy, Eggs & Fridge"  # falls back to L1
 
 
+class TestColesPackageSize:
+    """Unit tests for _extract_coles_package_size — covers all three priority paths."""
+
+    def _fn(self, item):
+        from scrapers.catalog_coles import _extract_coles_package_size
+
+        return _extract_coles_package_size(item)
+
+    @pytest.mark.unit
+    def test_dedicated_size_field_wins(self):
+        item = {
+            "name": "Farmhouse Gold Full Cream Milk",
+            "description": "PAULS FARMHOUSE GOLD FULL CREAM MILK 1.5 LITRE",
+            "size": "1.5L",
+        }
+        assert self._fn(item) == "1.5L"
+
+    @pytest.mark.unit
+    def test_dedicated_size_various_units(self):
+        for size in ("350g", "180g", "420g", "375mL", "2kg"):
+            item = {"name": "Product", "size": size}
+            assert self._fn(item) == size
+
+    @pytest.mark.unit
+    def test_description_fallback_when_no_size_field(self):
+        item = {
+            "name": "Oat Milk",
+            "description": "MILKLAB OAT MILK 250ML",
+        }
+        assert self._fn(item) == "250ML"
+
+    @pytest.mark.unit
+    def test_description_litre_normalised(self):
+        item = {
+            "name": "Full Cream Milk",
+            "description": "PAULS FULL CREAM MILK 1.5 LITRE",
+        }
+        # "1.5 LITRE" normalises to "1.5 L" — space is preserved from the original
+        assert self._fn(item) == "1.5 L"
+
+    @pytest.mark.unit
+    def test_name_fallback_when_neither_size_nor_description(self):
+        item = {"name": "Coca-Cola No Sugar 375mL 24 Pack"}
+        assert self._fn(item) == "375mL 24 Pack"
+
+    @pytest.mark.unit
+    def test_name_inline_size(self):
+        item = {"name": "Milk 2L"}
+        assert self._fn(item) == "2L"
+
+    @pytest.mark.unit
+    def test_no_size_returns_none(self):
+        item = {"name": "Milk", "description": "COLES FRESH MILK"}
+        assert self._fn(item) is None
+
+    @pytest.mark.unit
+    def test_empty_size_field_falls_through(self):
+        item = {
+            "name": "Oat Milk",
+            "description": "MILKLAB OAT MILK 1L",
+            "size": "",
+        }
+        assert self._fn(item) == "1L"
+
+    @pytest.mark.unit
+    def test_no_regression_coles_kitchen_product(self):
+        # From live API: size field is "350g", description is the full uppercase title
+        item = {
+            "name": "Special Fried Rice",
+            "description": "COLES KITCHEN SPECIAL FRIED RICE 350G",
+            "size": "350g",
+        }
+        assert self._fn(item) == "350g"
+
+
 # ── catalog_ingest ───────────────────────────────────────────────────────────
 
 
