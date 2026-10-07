@@ -709,6 +709,76 @@ def cancel_catalog_crawl(
     return {"chain": chain, "status": "cancelled", "task_id": run.celery_task_id}
 
 
+# ── Listing backfill & coverage ───────────────────────────────────────────────
+
+
+class BackfillTriggerResponse(BaseModel):
+    task_id: str
+    message: str
+
+
+class ListingCoverageRow(BaseModel):
+    chain: str
+    eligible: int
+    backfilled: int
+    coverage_pct: float
+
+
+@router.post("/listings/backfill", response_model=BackfillTriggerResponse)
+def trigger_listing_backfill(
+    _admin=Depends(require_admin),
+) -> BackfillTriggerResponse:
+    """Enqueue the idempotent ProductRetailerListing backfill task.
+
+    The task creates listing rows for all historical Products with a catalog
+    SKU but no existing listing. Safe to call multiple times.
+    """
+    from app.workers.catalog_tasks import backfill_retailer_listings
+
+    task = backfill_retailer_listings.apply_async(queue="catalog")
+    return BackfillTriggerResponse(
+        task_id=task.id,
+        message="Backfill task enqueued. Poll /catalog/progress/{task_id} for status.",
+    )
+
+
+@router.get("/listings/coverage", response_model=list[ListingCoverageRow])
+def get_listing_coverage(
+    db: Session = Depends(get_db),
+    _admin=Depends(require_admin),
+) -> list[ListingCoverageRow]:
+    """Per-chain listing coverage — how many eligible Products have a listing row."""
+    rows = db.execute(
+        text(
+            """
+            SELECT
+                p.external_source,
+                COUNT(*)                                                    AS eligible,
+                COUNT(prl.id)                                               AS backfilled,
+                ROUND(COUNT(prl.id) * 100.0 / NULLIF(COUNT(*), 0), 1)      AS coverage_pct
+            FROM products p
+            LEFT JOIN product_retailer_listings prl
+              ON prl.chain = REPLACE(p.external_source, 'catalog_', '')
+             AND prl.external_id = p.external_id
+            WHERE p.external_source LIKE 'catalog_%'
+              AND p.external_id IS NOT NULL
+            GROUP BY p.external_source
+            ORDER BY eligible DESC
+            """
+        )
+    ).fetchall()
+
+    return [
+        ListingCoverageRow(
+            chain=r[0].removeprefix("catalog_"),
+            eligible=r[1],
+            backfilled=r[2],
+            coverage_pct=float(r[3] or 0),
+        )
+        for r in rows
+    ]
+
+
 class ConfigEntry(BaseModel):
     key: str
     label: str
