@@ -341,6 +341,7 @@ def ingest_catalog_product(
             external_image_url=cp.image_url,
             catalog_last_seen_at=now,
             in_stock=cp.in_stock,
+            is_online_only=cp.is_online_only,
             external_id=str(cp.external_id) if cp.external_id else None,
             external_source=f"catalog_{chain}" if cp.external_id else None,
             package_size=cp.package_size,
@@ -377,6 +378,7 @@ def ingest_catalog_product(
         # Always refresh liveness signals.
         product.catalog_last_seen_at = now
         product.in_stock = cp.in_stock
+        product.is_online_only = cp.is_online_only
         updated = True
 
     # Record the observed shelf price.
