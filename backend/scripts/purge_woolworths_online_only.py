@@ -29,7 +29,9 @@ def main(execute: bool) -> None:
 
     with engine.begin() as conn:
         # Find the most recent completed Woolworths full crawl.
-        row = conn.execute(text("""
+        row = conn.execute(
+            text(
+                """
             SELECT id, run_started_at, products_found, products_new, products_updated
             FROM catalog_crawl_runs
             WHERE chain = 'woolworths'
@@ -37,7 +39,9 @@ def main(execute: bool) -> None:
               AND status IN ('completed', 'completed_with_errors')
             ORDER BY run_started_at DESC
             LIMIT 1
-        """)).fetchone()
+        """
+            )
+        ).fetchone()
 
         if row is None:
             print("No completed Woolworths full crawl found. Run one first.")
@@ -50,12 +54,17 @@ def main(execute: bool) -> None:
         print()
 
         # Products not seen in (or before) that crawl.
-        stale = conn.execute(text("""
+        stale = conn.execute(
+            text(
+                """
             SELECT id, name, external_id, catalog_last_seen_at
             FROM products
             WHERE external_source = 'catalog_woolworths'
               AND (catalog_last_seen_at IS NULL OR catalog_last_seen_at < :cutoff)
-        """), {"cutoff": cutoff}).fetchall()
+        """
+            ),
+            {"cutoff": cutoff},
+        ).fetchall()
 
         if not stale:
             print("No stale Woolworths products found — nothing to delete.")
@@ -77,25 +86,41 @@ def main(execute: bool) -> None:
         # ── Delete from child tables with NO ACTION FK first ────────────────
         ids_literal = ", ".join(f"'{i}'" for i in stale_ids)
 
-        pred_del = conn.execute(text(f"""
+        pred_del = conn.execute(
+            text(
+                f"""
             DELETE FROM price_predictions WHERE product_id::text IN ({ids_literal})
-        """)).rowcount
+        """
+            )
+        ).rowcount
         print(f"Deleted price_predictions rows: {pred_del:,}")
 
-        report_del = conn.execute(text(f"""
+        report_del = conn.execute(
+            text(
+                f"""
             DELETE FROM price_reports WHERE product_id::text IN ({ids_literal})
-        """)).rowcount
+        """
+            )
+        ).rowcount
         print(f"Deleted price_reports rows: {report_del:,}")
 
-        watch_del = conn.execute(text(f"""
+        watch_del = conn.execute(
+            text(
+                f"""
             DELETE FROM user_watchlist WHERE product_id::text IN ({ids_literal})
-        """)).rowcount
+        """
+            )
+        ).rowcount
         print(f"Deleted user_watchlist rows: {watch_del:,}")
 
         # ── Delete products (cascades to product_match_candidates) ──────────
-        prod_del = conn.execute(text(f"""
+        prod_del = conn.execute(
+            text(
+                f"""
             DELETE FROM products WHERE id::text IN ({ids_literal})
-        """)).rowcount
+        """
+            )
+        ).rowcount
         print(f"Deleted products rows: {prod_del:,}")
 
         print()

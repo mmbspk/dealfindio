@@ -145,25 +145,38 @@ def mark_and_delete(online_only_ids: set[str], execute: bool) -> None:
 
     with engine.begin() as conn:
         # Mark matching DB products
-        marked = conn.execute(text("""
+        marked = conn.execute(
+            text(
+                """
             UPDATE products
             SET is_online_only = TRUE
             WHERE external_source = 'catalog_woolworths'
               AND external_id = ANY(:ids)
-        """), {"ids": list(online_only_ids)}).rowcount
+        """
+            ),
+            {"ids": list(online_only_ids)},
+        ).rowcount
         print(f"Marked {marked:,} existing DB products as is_online_only=TRUE")
 
         # Preview what would be deleted
-        sample = conn.execute(text("""
+        sample = conn.execute(
+            text(
+                """
             SELECT name, external_id, category
             FROM products
             WHERE external_source = 'catalog_woolworths' AND is_online_only = TRUE
             LIMIT 10
-        """)).fetchall()
-        total_marked = conn.execute(text("""
+        """
+            )
+        ).fetchall()
+        total_marked = conn.execute(
+            text(
+                """
             SELECT COUNT(*) FROM products
             WHERE external_source = 'catalog_woolworths' AND is_online_only = TRUE
-        """)).scalar()
+        """
+            )
+        ).scalar()
 
         print(f"\nProducts flagged is_online_only=TRUE in DB: {total_marked:,}")
         print("Sample:")
@@ -175,19 +188,33 @@ def mark_and_delete(online_only_ids: set[str], execute: bool) -> None:
             return
 
         # Delete from child tables (NO ACTION FK) then products (cascades match_candidates)
-        stale_ids_rows = conn.execute(text("""
+        stale_ids_rows = conn.execute(
+            text(
+                """
             SELECT id FROM products
             WHERE external_source = 'catalog_woolworths' AND is_online_only = TRUE
-        """)).fetchall()
+        """
+            )
+        ).fetchall()
         stale_ids = [str(r[0]) for r in stale_ids_rows]
 
         ids_literal = ", ".join(f"'{i}'" for i in stale_ids)
-        pred = conn.execute(text(f"DELETE FROM price_predictions WHERE product_id::text IN ({ids_literal})")).rowcount
-        rep  = conn.execute(text(f"DELETE FROM price_reports     WHERE product_id::text IN ({ids_literal})")).rowcount
-        wl   = conn.execute(text(f"DELETE FROM user_watchlist    WHERE product_id::text IN ({ids_literal})")).rowcount
-        prod = conn.execute(text(f"DELETE FROM products          WHERE id::text         IN ({ids_literal})")).rowcount
+        pred = conn.execute(
+            text(f"DELETE FROM price_predictions WHERE product_id::text IN ({ids_literal})")
+        ).rowcount
+        rep = conn.execute(
+            text(f"DELETE FROM price_reports     WHERE product_id::text IN ({ids_literal})")
+        ).rowcount
+        wl = conn.execute(
+            text(f"DELETE FROM user_watchlist    WHERE product_id::text IN ({ids_literal})")
+        ).rowcount
+        prod = conn.execute(
+            text(f"DELETE FROM products          WHERE id::text         IN ({ids_literal})")
+        ).rowcount
 
-        print(f"\nDeleted: {prod:,} products  {pred:,} predictions  {rep:,} price_reports  {wl:,} watchlist")
+        print(
+            f"\nDeleted: {prod:,} products  {pred:,} predictions  {rep:,} price_reports  {wl:,} watchlist"
+        )
         print("Done.")
 
 
@@ -198,6 +225,8 @@ async def main(execute: bool) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--execute", action="store_true", help="Delete after marking (default: dry run)")
+    parser.add_argument(
+        "--execute", action="store_true", help="Delete after marking (default: dry run)"
+    )
     args = parser.parse_args()
     asyncio.run(main(execute=args.execute))
