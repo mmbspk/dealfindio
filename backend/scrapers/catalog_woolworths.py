@@ -91,11 +91,18 @@ _BROWSE_URL = "https://www.woolworths.com.au/apis/ui/browse/category"
 # NodeIds for sections we don't want to crawl (non-grocery / specials overlay).
 _SKIP_NODE_IDS = {
     "specialsgroup",  # handled by crawl_specials via _SPECIALS_NODE_IDS
-    "1_A363395",  # Everyday Market (third-party marketplace)
+    "1_A363395",  # Everyday Market (third-party marketplace root)
     "1_F89E4BB",  # Healthylife (health supplement store)
     "1_BC1E589",  # Gift Ideas
     "1_9E60D27",  # Footy Finals (seasonal)
     "1_B63CF9E",  # Front of Store (internal/restricted)
+}
+
+# Name-fragment fallback for marketplace/non-grocery sub-trees. Used in
+# discover_categories() to skip nodes whose NodeId is unknown or rotated.
+_SKIP_CATEGORY_NAME_FRAGMENTS = {
+    "everyday market",
+    "marketplace",
 }
 
 # Woolworths specials sub-category node IDs (from the /shop/specials/* pages).
@@ -215,6 +222,9 @@ class WoolworthsCatalogScraper(CatalogScraper):
             if not node_id or node_id in _SKIP_NODE_IDS:
                 continue
             if cat.get("IsSpecial"):
+                continue
+            desc_lower = (cat.get("Description") or "").lower()
+            if any(f in desc_lower for f in _SKIP_CATEGORY_NAME_FRAGMENTS):
                 continue
             nodes.append(
                 CategoryNode(
@@ -560,6 +570,12 @@ def _parse_item(item: dict, category: CategoryNode, today: date) -> Optional[Cat
     stockcode = item.get("Stockcode")
     gtin = barcode  # only store real barcodes, not internal Stockcodes
 
+    # Everyday Market products have 10-digit stockcodes (range 1094737927–1141985970).
+    # Real grocery SKUs are ≤7 digits. IsMarketProduct is also checked but Woolworths
+    # sometimes omits it on marketplace items — the stockcode length is more reliable.
+    if item.get("IsMarketProduct") or (stockcode and len(str(stockcode)) >= 10):
+        return None
+
     image_url = item.get("MediumImageFile") or item.get("SmallImageFile")
     if not image_url and stockcode:
         image_url = f"https://cdn0.woolworths.media/content/wowproductimages/medium/{stockcode}.jpg"
@@ -567,8 +583,9 @@ def _parse_item(item: dict, category: CategoryNode, today: date) -> Optional[Cat
     # Derive category label: use SAP department name when available, then normalise.
     additional = item.get("AdditionalAttributes") or {}
 
-    # IsMarketProduct and IsOnlineOnly are top-level product fields, not in AdditionalAttributes.
-    if item.get("IsMarketProduct"):
+    # Secondary marketplace signal from AdditionalAttributes (guards against Woolworths
+    # changing its stockcode numbering scheme in future).
+    if additional.get("SourcePlatform") == "WMP":
         return None
 
     is_online_only = bool(item.get("IsOnlineOnly"))
