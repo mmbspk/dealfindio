@@ -391,7 +391,66 @@ class TestProductDetailEndpoints:
         assert data["lowest_price_aud"] == pytest.approx(2.00, abs=0.01)
 
 
-class TestStoreEndpoints:
+class TestProductStoresEndpoint:
+    """GET /api/v1/products/{id}/stores"""
+
+    @pytest.mark.integration
+    def test_stores_price_not_contaminated_by_batch_sibling(
+        self, test_client: TestClient, test_db_session
+    ):
+        """Batch crawl writes price_reports for multiple products with the same
+        created_at. The stores endpoint must return prices for the requested
+        product only, not for siblings sharing the same (store_id, created_at)."""
+        from datetime import datetime, timedelta, timezone
+
+        from app.models import PriceReport, Store
+
+        batch_ts = datetime.now(timezone.utc) - timedelta(days=1)
+
+        store = Store(
+            id=uuid4(),
+            chain="woolworths",
+            name="Woolworths Test",
+            suburb="Sydney",
+            state="NSW",
+            postcode="2000",
+        )
+        product_a = Product(id=uuid4(), name="Oat Milk 1L", brand="Milklab", category="dairy")
+        product_b = Product(id=uuid4(), name="Full Cream Milk 2L", brand="Pauls", category="dairy")
+        test_db_session.add_all([store, product_a, product_b])
+        test_db_session.flush()
+
+        # Both products written in the same batch — identical created_at
+        report_a = PriceReport(
+            product_id=product_a.id,
+            store_id=store.id,
+            price_cents=350,  # $3.50
+            source="catalog_woolworths",
+            confidence=1.0,
+            created_at=batch_ts,
+        )
+        report_b = PriceReport(
+            product_id=product_b.id,
+            store_id=store.id,
+            price_cents=890,  # $8.90
+            source="catalog_woolworths",
+            confidence=1.0,
+            created_at=batch_ts,
+        )
+        test_db_session.add_all([report_a, report_b])
+        test_db_session.commit()
+
+        response = test_client.get(f"/api/v1/products/{product_a.id}/stores")
+        assert response.status_code == 200
+        data = response.json()
+
+        # Exactly one store entry (not two due to dedup mis-fire)
+        assert data["count"] == 1
+        assert len(data["stores"]) == 1
+
+        # The price must be product_a's $3.50, not product_b's $8.90
+        assert data["stores"][0]["price_aud"] == pytest.approx(3.50, abs=0.01)
+
     """GET /api/v1/stores/nearby, /{id}, /{id}/deals"""
 
     @pytest.mark.integration
