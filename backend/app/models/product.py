@@ -95,6 +95,11 @@ class Product(Base):
         cascade="all, delete-orphan",
         foreign_keys="PricePrediction.product_id",
     )
+    retailer_listings: Mapped[list["ProductRetailerListing"]] = relationship(
+        back_populates="product",
+        cascade="all, delete-orphan",
+        foreign_keys="ProductRetailerListing.product_id",
+    )
 
     __table_args__ = (
         Index("idx_products_gtin", "gtin"),
