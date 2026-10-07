@@ -684,8 +684,7 @@ def _extract_coles_package_size(item: dict) -> Optional[str]:
     """Extract package size from a Coles API product item.
 
     Priority:
-      1. item["size"] — dedicated size field present since at least 2024
-         (e.g. "350g", "1.5L", "375mL")
+      1. item["size"] — dedicated size field (e.g. "350g", "1.5L", "375mL")
       2. item["description"] — full UPPERCASE title, e.g. "PAULS FARMHOUSE GOLD
          FULL CREAM MILK 1.5 LITRE"; parse the trailing size token from here
       3. item["name"] — short display name; only some products embed the size
@@ -696,24 +695,19 @@ def _extract_coles_package_size(item: dict) -> Optional[str]:
     if dedicated:
         return dedicated
 
-    _SIZE_RE = re.compile(
-        r"(\d+\.?\d*\s*(?:ml|L|kg|g|oz)\b(?:\s+\d+\s*(?:pack|pk))?|\d+\s*(?:pack|pk))\s*$",
-        re.IGNORECASE,
-    )
-
     # 2. Full description (uppercase, e.g. "PAULS ... 1.5 LITRE").
     desc = (item.get("description") or "").strip()
     if desc:
         # Normalise LITRE / LITRES → L, MILLILITRE → mL so the regex matches.
         normalised = re.sub(r"\bLITRES?\b", "L", desc, flags=re.IGNORECASE)
         normalised = re.sub(r"\bMILLILITRES?\b", "mL", normalised, flags=re.IGNORECASE)
-        m = _SIZE_RE.search(normalised)
+        m = _COLES_PACKAGE_SIZE_RE.search(normalised)
         if m:
             return m.group(0).strip()
 
     # 3. Short display name — fallback for products that embed size in name.
     name = (item.get("name") or "").strip()
-    m = _SIZE_RE.search(name)
+    m = _COLES_PACKAGE_SIZE_RE.search(name)
     if m:
         return m.group(0).strip()
 
@@ -721,6 +715,10 @@ def _extract_coles_package_size(item: dict) -> Optional[str]:
 
 
 _COLES_UNIT_PRICE_RE = re.compile(r"\$?([\d.]+)\s*/\s*(.+)", re.IGNORECASE)
+_COLES_PACKAGE_SIZE_RE = re.compile(
+    r"(\d+\.?\d*\s*(?:ml|L|kg|g|oz)\b(?:\s+\d+\s*(?:pack|pk))?|\d+\s*(?:pack|pk))\s*$",
+    re.IGNORECASE,
+)
 
 
 def _extract_coles_unit_price(pricing: dict) -> Optional[float]:
