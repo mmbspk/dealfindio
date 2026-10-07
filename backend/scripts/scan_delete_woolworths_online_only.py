@@ -21,7 +21,6 @@ import asyncio
 import json
 import os
 import sys
-from datetime import date
 
 import httpx
 
@@ -29,13 +28,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from sqlalchemy import create_engine, text
 
+from scrapers.catalog_base import CatalogStoreConfig, get_scraper_proxy
 from scrapers.catalog_woolworths import (
-    WoolworthsCatalogScraper,
     _BROWSE_URL,
     _JSON_HEADERS,
+    WoolworthsCatalogScraper,
     _extract_products,
 )
-from scrapers.catalog_base import CatalogStoreConfig, get_scraper_proxy
 
 DATABASE_URL = os.environ.get(
     "DATABASE_URL",
