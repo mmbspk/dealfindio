@@ -344,6 +344,7 @@ async def get_product(
                     PriceReport.created_at == latest_prices_subquery.c.max_created_at,
                 ),
             )
+            .where(PriceReport.product_id == product_id)
         ).all()
 
         # Group by chain and calculate stats

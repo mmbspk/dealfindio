@@ -339,6 +339,57 @@ class TestProductDetailEndpoints:
         response = test_client.get(f"/api/v1/products/{uuid4()}/prices")
         assert response.status_code == 404
 
+    @pytest.mark.integration
+    def test_product_detail_price_not_contaminated_by_batch_sibling(
+        self, test_client: TestClient, test_db_session
+    ):
+        """Price reports sharing a created_at timestamp (batch crawl) must not bleed
+        across products — the outer query must filter by product_id."""
+        from datetime import datetime, timedelta, timezone
+
+        from app.models import PriceReport, Store
+
+        batch_ts = datetime.now(timezone.utc) - timedelta(days=1)
+
+        store = Store(
+            id=uuid4(),
+            chain="coles",
+            name="Coles Test",
+            suburb="Sydney",
+            state="NSW",
+            postcode="2000",
+        )
+        product_a = Product(id=uuid4(), name="Oat Milk 250mL", brand="Milklab", category="dairy")
+        product_b = Product(id=uuid4(), name="A2 Milk 3L", brand="A2", category="dairy")
+        test_db_session.add_all([store, product_a, product_b])
+        test_db_session.flush()
+
+        # Both products written in the same batch — identical created_at
+        report_a = PriceReport(
+            product_id=product_a.id,
+            store_id=store.id,
+            price_cents=200,  # $2.00
+            source="catalog_coles",
+            confidence=1.0,
+            created_at=batch_ts,
+        )
+        report_b = PriceReport(
+            product_id=product_b.id,
+            store_id=store.id,
+            price_cents=1050,  # $10.50
+            source="catalog_coles",
+            confidence=1.0,
+            created_at=batch_ts,
+        )
+        test_db_session.add_all([report_a, report_b])
+        test_db_session.commit()
+
+        response = test_client.get(f"/api/v1/products/{product_a.id}")
+        assert response.status_code == 200
+        data = response.json()
+        # lowest_price_aud must reflect product_a's $2.00, not product_b's $10.50
+        assert data["lowest_price_aud"] == pytest.approx(2.00, abs=0.01)
+
 
 class TestStoreEndpoints:
     """GET /api/v1/stores/nearby, /{id}, /{id}/deals"""
