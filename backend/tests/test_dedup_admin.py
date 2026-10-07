@@ -52,7 +52,7 @@ class TestMatchProductBrandVeto:
         # Incoming ALDI item: same generic name, DIFFERENT brand.
         cp = _catalog_product("Orange Soft Drink 1.25L", brand="Kirks", price_cents=250)
 
-        match, score, candidate = _match_product(test_db_session, cp, "aldi")
+        match, score, candidate, _ = _match_product(test_db_session, cp, "aldi")
 
         # Hard veto: no auto-merge AND no review candidate.
         assert match is None
@@ -79,7 +79,7 @@ class TestMatchProductBrandVeto:
         # Same product line, slightly different wording → high but sub-100 title.
         cp = _catalog_product("Orange Soft Drink Can 1.25L", brand=None, price_cents=250)
 
-        match, score, candidate = _match_product(test_db_session, cp, "aldi")
+        match, score, candidate, _ = _match_product(test_db_session, cp, "aldi")
 
         # Not auto-merged: a phantom brand score must not inflate it to ≥100.
         assert match is None
@@ -104,7 +104,7 @@ class TestMatchProductBrandVeto:
 
         cp = _catalog_product("Orange Soft Drink 1.25L", brand=None, price_cents=250)
 
-        match, score, candidate = _match_product(test_db_session, cp, "aldi")
+        match, score, candidate, _ = _match_product(test_db_session, cp, "aldi")
 
         assert match is not None
         assert candidate is None
