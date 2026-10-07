@@ -45,9 +45,13 @@ def upgrade() -> None:
         ),
         sa.Column("chain", sa.String(50), nullable=False),
         sa.Column("external_id", sa.String(128), nullable=False),
+        sa.Column("external_source", sa.String(50), nullable=True),
         sa.Column("external_name", sa.String(500), nullable=True),
         sa.Column("external_brand", sa.String(255), nullable=True),
         sa.Column("external_category", sa.String(200), nullable=True),
+        sa.Column("external_image_url", sa.String(500), nullable=True),
+        sa.Column("external_url", sa.String(500), nullable=True),
+        sa.Column("package_size_raw", sa.String(200), nullable=True),
         sa.Column("catalog_last_seen_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column(
             "in_stock",
@@ -61,7 +65,6 @@ def upgrade() -> None:
             nullable=False,
             server_default=sa.text("false"),
         ),
-        sa.Column("external_image_url", sa.String(500), nullable=True),
     )
     op.create_unique_constraint(
         "uq_listing_chain_external_id",

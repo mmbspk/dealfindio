@@ -34,13 +34,22 @@ class ProductRetailerListing(Base):
     )
     chain: Mapped[str] = mapped_column(String(50), nullable=False)
     external_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    # Provenance: which acquisition pipeline produced this listing,
+    # e.g. "catalog_coles". Distinct from chain so that future non-catalog
+    # sources for the same retailer don't require an identity migration.
+    external_source: Mapped[str | None] = mapped_column(String(50))
     external_name: Mapped[str | None] = mapped_column(String(500))
     external_brand: Mapped[str | None] = mapped_column(String(255))
     external_category: Mapped[str | None] = mapped_column(String(200))
+    external_image_url: Mapped[str | None] = mapped_column(String(500))
+    # Retailer product page URL. Some scrapers don't return one; nullable.
+    external_url: Mapped[str | None] = mapped_column(String(500))
+    # Raw package-size string from the retailer (e.g. "2L", "375mL 24 Pack").
+    # Story #50 will parse this into structured quantity/unit fields.
+    package_size_raw: Mapped[str | None] = mapped_column(String(200))
     catalog_last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     in_stock: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     is_online_only: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
-    external_image_url: Mapped[str | None] = mapped_column(String(500))
 
     product: Mapped["Product"] = relationship(
         back_populates="retailer_listings",

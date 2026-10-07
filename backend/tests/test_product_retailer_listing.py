@@ -8,6 +8,9 @@ Covers:
 4. one Product can have multiple listings from the same chain with different external_ids
 5. deleting the canonical Product cascades to its listings
 6. nullable optional fields can be left unset
+7. package_size_raw can be stored and read back
+8. external_url can be stored and read back
+9. external_source can be stored and read back
 """
 
 from uuid import uuid4
@@ -131,5 +134,51 @@ class TestProductRetailerListingSchema:
         assert listing.external_category is None
         assert listing.catalog_last_seen_at is None
         assert listing.external_image_url is None
+        assert listing.external_url is None
+        assert listing.package_size_raw is None
+        assert listing.external_source is None
         assert listing.in_stock is True
         assert listing.is_online_only is False
+
+    def test_package_size_raw_can_be_stored(self, test_db_session: Session):
+        product = _make_product(test_db_session)
+        listing = _make_listing(
+            test_db_session,
+            product,
+            chain="coles",
+            external_id="PKG-001",
+            package_size_raw="375mL 24 Pack",
+        )
+        test_db_session.commit()
+        test_db_session.refresh(listing)
+
+        assert listing.package_size_raw == "375mL 24 Pack"
+
+    def test_external_url_can_be_stored(self, test_db_session: Session):
+        product = _make_product(test_db_session)
+        url = "https://www.woolworths.com.au/shop/productdetails/12345"
+        listing = _make_listing(
+            test_db_session,
+            product,
+            chain="woolworths",
+            external_id="WW-12345",
+            external_url=url,
+        )
+        test_db_session.commit()
+        test_db_session.refresh(listing)
+
+        assert listing.external_url == url
+
+    def test_external_source_can_be_stored(self, test_db_session: Session):
+        product = _make_product(test_db_session)
+        listing = _make_listing(
+            test_db_session,
+            product,
+            chain="coles",
+            external_id="SRC-001",
+            external_source="catalog_coles",
+        )
+        test_db_session.commit()
+        test_db_session.refresh(listing)
+
+        assert listing.external_source == "catalog_coles"
