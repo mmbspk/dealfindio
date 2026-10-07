@@ -181,7 +181,7 @@ def _sale_bonus(pct_off: float | None) -> float:
 
 
 def _trigram_lane(
-    session, q: str, filters, on_sale, negated_words: list[str]
+    session, q: str, filters, negated_words: list[str]
 ) -> list[tuple[Product, float]]:
     from app.services.embeddings import normalise_product_name
 
@@ -200,16 +200,16 @@ def _trigram_lane(
     similarity_score = similarity_name * literal(0.7) + full_sim_brand * literal(0.3)
 
     stmt = (
-        select(Product, similarity_score.label("score"), on_sale.label("on_sale_flag"))
+        select(Product, similarity_score.label("score"))
         .where(and_(similarity_name >= _TRGM_THRESHOLD, *filters))
-        .order_by(similarity_score.desc(), on_sale.desc(), Product.name)
+        .order_by(similarity_score.desc(), Product.name)
         .limit(_CANDIDATE_POOL)
     )
     rows = session.execute(stmt).all()
 
     if not rows:
         stmt = (
-            select(Product, literal(0.0).label("score"), on_sale.label("on_sale_flag"))
+            select(Product, literal(0.0).label("score"))
             .where(
                 and_(
                     Product.name.ilike(f"%{normalised_q}%")
@@ -218,7 +218,7 @@ def _trigram_lane(
                     *filters,
                 )
             )
-            .order_by(on_sale.desc(), Product.name)
+            .order_by(Product.name)
             .limit(_CANDIDATE_POOL)
         )
         rows = session.execute(stmt).all()
@@ -232,7 +232,7 @@ def _trigram_lane(
     return result
 
 
-def _vector_lane(session, q, filters, on_sale) -> list[tuple[Product, float]]:
+def _vector_lane(session, q, filters) -> list[tuple[Product, float]]:
     try:
         from pgvector.sqlalchemy import Vector
         from sqlalchemy import cast
@@ -244,9 +244,9 @@ def _vector_lane(session, q, filters, on_sale) -> list[tuple[Product, float]]:
         cosine_sim = (1 - cosine_dist).label("vec_score")
 
         stmt = (
-            select(Product, cosine_sim, on_sale.label("on_sale_flag"))
+            select(Product, cosine_sim)
             .where(and_(Product.name_embedding.isnot(None), *filters))
-            .order_by(cosine_dist, on_sale.desc())
+            .order_by(cosine_dist)
             .limit(_CANDIDATE_POOL)
         )
         rows = session.execute(stmt).all()
@@ -359,15 +359,13 @@ def search_products_ranked(
         rows = session.execute(stmt).all()
         return [row[0] for row in rows][offset : offset + limit]
 
-    on_sale = _on_sale_subquery()
-
     # Parse query intent once — used by both the trigram penalty and the RRF k-factor.
     query_words = [w.lower() for w in q.strip().split() if w]
     negated_words = _parse_negations(query_words)
     intent = _is_intent_query(query_words)
 
-    trgm_results = _trigram_lane(session, q, filters, on_sale, negated_words)
-    vec_results = _vector_lane(session, q, filters, on_sale)
+    trgm_results = _trigram_lane(session, q, filters, negated_words)
+    vec_results = _vector_lane(session, q, filters)
 
     fused = (
         _fuse_rrf(trgm_results, vec_results, intent_query=intent)
