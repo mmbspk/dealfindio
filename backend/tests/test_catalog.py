@@ -317,6 +317,7 @@ class TestColesPackageSize:
 
     def _fn(self, item):
         from scrapers.catalog_coles import _extract_coles_package_size
+
         return _extract_coles_package_size(item)
 
     @pytest.mark.unit
