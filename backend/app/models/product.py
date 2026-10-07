@@ -70,6 +70,7 @@ class Product(Base):
     # catalog crawl, and whether it was in stock at that time.
     catalog_last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     in_stock: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    is_online_only: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     # The store's own SKU/stockcode + which store it came from. Together these
     # form a stable unique key for catalog dedup (preferred over fuzzy name match).
     external_id: Mapped[str | None] = mapped_column(String(64))

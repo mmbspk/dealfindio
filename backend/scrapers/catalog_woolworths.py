@@ -567,13 +567,11 @@ def _parse_item(item: dict, category: CategoryNode, today: date) -> Optional[Cat
     # Derive category label: use SAP department name when available, then normalise.
     additional = item.get("AdditionalAttributes") or {}
 
-    # Skip third-party marketplace products — not sold/shipped by Woolworths.
-    if additional.get("IsMarketProduct"):
+    # IsMarketProduct and IsOnlineOnly are top-level product fields, not in AdditionalAttributes.
+    if item.get("IsMarketProduct"):
         return None
 
-    # Skip online-only products — not available in physical stores.
-    if additional.get("IsOnlineOnly"):
-        return None
+    is_online_only = bool(item.get("IsOnlineOnly"))
 
     dept_name = additional.get("sapdepartmentname") or additional.get("sapsubcategoryname")
     raw_label = f"{category.name} > {dept_name}" if dept_name else category.name
@@ -617,4 +615,5 @@ def _parse_item(item: dict, category: CategoryNode, today: date) -> Optional[Cat
         package_size=package_size,
         unit_price=unit_price,
         unit_price_label=cup_measure.strip() or None,
+        is_online_only=is_online_only,
     )

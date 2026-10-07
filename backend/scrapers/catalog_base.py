@@ -153,6 +153,7 @@ class CatalogProduct(ScrapedProduct):
     unit_price_label: Optional[str] = None  # unit label for unit_price e.g. "100g", "100ml", "ea"
     # When set by the scraper (e.g. specials crawl), overrides the was_price_cents heuristic.
     is_on_sale: Optional[bool] = None
+    is_online_only: bool = False
 
 
 @dataclass
