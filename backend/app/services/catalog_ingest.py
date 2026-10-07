@@ -200,16 +200,28 @@ def _match_product(
     - both None → no match found; create a new product row
 
     Resolution priority:
-      1. ProductRetailerListing(chain, external_id) — durable, most trusted once established
-      2. Product.external_source/external_id — legacy SKU match (pre-listing migration)
-      3. GTIN — globally unique, highly trusted
+      1. GTIN — globally unique; outranks every other signal when a match exists
+      2. ProductRetailerListing(chain, external_id) — durable SKU→canonical mapping
+      3. Product.external_source/external_id — legacy SKU match (pre-listing migration)
       4. Fuzzy name match — cross-chain dedup only; NOT trusted for listing reassignment
 
-    The listing lookup (step 1) short-circuits all subsequent steps once the
-    (chain, external_id) mapping is established, preventing fuzzy instability from
-    moving a known SKU between canonical products across crawls.
+    GTIN is Step 1 so that a trusted identifier correction always wins over an
+    existing (possibly stale) listing association.  When GTIN is present but has
+    no matching Product we still fall through to the listing/legacy steps; fuzzy is
+    skipped because a novel GTIN means this is genuinely a new product.
     """
-    # Step 1 — durable listing lookup (new authoritative source)
+    # Step 1 — GTIN (globally unique; outranks listing when both are present)
+    if cp.gtin:
+        normalized = cp.gtin.zfill(14)
+        found = session.execute(
+            select(Product).where(Product.gtin == normalized)
+        ).scalar_one_or_none()
+        if found:
+            return found, 100.0, None, ResolutionReason.GTIN
+        # GTIN present, no match: fall through to listing/legacy so an already-
+        # established mapping is not discarded; fuzzy is skipped below.
+
+    # Step 2 — durable listing lookup
     if cp.external_id:
         listing = session.execute(
             select(ProductRetailerListing).where(
@@ -222,7 +234,7 @@ def _match_product(
             if product is not None:
                 return product, 100.0, None, ResolutionReason.LISTING
 
-    # Step 2 — legacy SKU on Product (backward-compat during #49 migration)
+    # Step 3 — legacy SKU on Product (backward-compat during #49 migration)
     external_source = f"catalog_{chain}"
     if cp.external_id:
         found = session.execute(
@@ -234,21 +246,9 @@ def _match_product(
         if found:
             return found, 100.0, None, ResolutionReason.LEGACY_SKU
 
-    # Step 3 — GTIN
-    if cp.gtin:
-        normalized = cp.gtin.zfill(14)
-        found = session.execute(
-            select(Product).where(Product.gtin == normalized)
-        ).scalar_one_or_none()
-        if found:
-            return found, 100.0, None, ResolutionReason.GTIN
-
     # Step 4 — fuzzy name match
-    # Skip only if GTIN is set (GTIN is globally unique, so no match means
-    # it's genuinely a new product). If we have an external_id but no GTIN,
-    # still try fuzzy matching against products from OTHER chains (same-chain
-    # miss already handled above). This is what makes cross-chain dedup work
-    # for stores like ALDI that never share SKUs with Coles/Woolworths.
+    # Skip entirely when GTIN is present: a GTIN with no DB match means this is
+    # a genuinely new product; merging it via partial name similarity would be wrong.
     if cp.gtin:
         return None, 0.0, None, ResolutionReason.NEW
     normalized_input = _matcher.normalize_name(cp.product_name)
@@ -368,9 +368,15 @@ def _upsert_retailer_listing(
     Only writes when ``cp.external_id`` is set — listings require a stable
     retailer SKU as their identity key.
 
-    Reassignment policy:
-    - LISTING/LEGACY_SKU/GTIN/NEW: trust the resolved product_id; log if changing
-    - FUZZY: never move the listing to a fuzzy-matched product; log and keep existing
+    Reassignment policy when an existing listing points at a different product:
+    - Dangling (old product deleted): always reassign (log INFO).
+    - GTIN: allow — globally unique; this is the trusted correction path (log WARNING).
+    - FUZZY: never — unstable name similarity must not move an established SKU
+      mapping (log WARNING, keep existing, still refresh metadata).
+    - LISTING: invariant violation — _match_product resolved through this very
+      listing so product_id should already match; log ERROR, keep existing.
+    - NEW / LEGACY_SKU: block — a newly created product or a migration-era SKU
+      hit should not steal an established listing (log WARNING, keep existing).
     """
     if not cp.external_id:
         return
@@ -421,6 +427,18 @@ def _upsert_retailer_listing(
             )
             listing.product_id = product.id
 
+        elif resolution == ResolutionReason.GTIN:
+            # GTIN is globally unique and trusted — the only correction path
+            # allowed to move an established listing to a different canonical product.
+            logger.warning(
+                "Reassigning listing %s/%s via GTIN: old_product=%s new_product=%s",
+                chain,
+                external_id,
+                listing.product_id,
+                product.id,
+            )
+            listing.product_id = product.id
+
         elif resolution == ResolutionReason.FUZZY:
             # Fuzzy match suggests a different product — do NOT move the listing.
             # The durable SKU association wins over unstable name similarity.
@@ -432,22 +450,42 @@ def _upsert_retailer_listing(
                 listing.product_id,
                 product.id,
             )
-            # Still refresh all metadata; just keep product_id unchanged
+            _refresh_listing_metadata(listing, cp, external_source, now)
+            session.flush()
+            return
+
+        elif resolution == ResolutionReason.LISTING:
+            # _match_product resolved via this very listing, so product_id must
+            # already match — a conflict here is an invariant violation.
+            logger.error(
+                "Invariant violation: LISTING resolution for %s/%s returned "
+                "product=%s but listing.product_id=%s; keeping existing",
+                chain,
+                external_id,
+                product.id,
+                listing.product_id,
+            )
             _refresh_listing_metadata(listing, cp, external_source, now)
             session.flush()
             return
 
         else:
-            # Trusted path (LEGACY_SKU/GTIN/NEW) — allow reassignment with audit log
+            # NEW / LEGACY_SKU (and any future reason): block reassignment.
+            # An established (chain, external_id) mapping is authoritative;
+            # a newly-created product or a migration-era legacy hit must not
+            # steal it.  The mismatch is logged so it can be investigated.
             logger.warning(
-                "Reassigning listing %s/%s: old_product=%s new_product=%s reason=%s",
+                "Blocked %s reassignment for listing %s/%s: "
+                "keeping product_id=%s proposed=%s",
+                resolution.value,
                 chain,
                 external_id,
                 listing.product_id,
                 product.id,
-                resolution.value,
             )
-            listing.product_id = product.id
+            _refresh_listing_metadata(listing, cp, external_source, now)
+            session.flush()
+            return
 
     _refresh_listing_metadata(listing, cp, external_source, now)
     session.flush()

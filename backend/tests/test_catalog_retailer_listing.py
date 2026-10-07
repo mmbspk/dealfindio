@@ -28,7 +28,6 @@ from app.services.catalog_ingest import (
 )
 from scrapers.catalog_base import CatalogProduct
 
-
 # ── helpers ────────────────────────────────────────────────────────────────────
 
 
@@ -383,3 +382,110 @@ class TestTrustedGTINReassignment:
 
         assert listing.product_id == product_b.id
         assert any("Reassigning listing" in r.message for r in caplog.records)
+
+
+# ── Test H: End-to-end GTIN correction through real ingest path ───────────────
+
+
+class TestGTINOverridesExistingListingEndToEnd:
+    """
+    Regression: GTIN match must outrank an existing listing association when they conflict.
+
+    This test MUST FAIL on head 38cec8f (listing short-circuits before GTIN is checked)
+    and PASS after the resolution order fix (GTIN moves to Step 1).
+    """
+
+    @pytest.mark.integration
+    def test_gtin_corrects_listing_through_full_ingest(
+        self, test_db_session: Session, caplog
+    ):
+        """
+        1. Product A exists (no GTIN)
+        2. Listing (coles, SKU123) -> Product A already established
+        3. Product B exists with a trusted GTIN
+        4. New crawl: (coles, SKU123, gtin = Product B's GTIN)
+        5. After ingest:
+           - resolver selects Product B (GTIN wins)
+           - listing.product_id moves to Product B
+           - reassignment WARNING is logged
+           - exactly one listing row (no duplicate)
+           - PriceReport is on Product B
+        """
+        product_a = Product(id=uuid4(), name="Milk 2L (pre-GTIN canonical)")
+        test_db_session.add(product_a)
+        test_db_session.commit()
+
+        listing = ProductRetailerListing(
+            product_id=product_a.id,
+            chain="coles",
+            external_id="H-SKU123",
+            external_source="catalog_coles",
+            external_name="Milk 2L (pre-GTIN canonical)",
+            in_stock=True,
+            is_online_only=False,
+        )
+        test_db_session.add(listing)
+        test_db_session.commit()
+
+        product_b_gtin = "09300617006552"
+        product_b = Product(id=uuid4(), name="Milk 2L Full Cream", gtin=product_b_gtin)
+        test_db_session.add(product_b)
+        test_db_session.commit()
+
+        cp = _cp("Milk 2L Full Cream", external_id="H-SKU123", gtin=product_b_gtin)
+
+        with caplog.at_level(logging.WARNING, logger="app.services.catalog_ingest"):
+            ingest_catalog_products([cp], "coles", test_db_session)
+        test_db_session.commit()
+
+        test_db_session.refresh(listing)
+
+        assert listing.product_id == product_b.id, (
+            "GTIN match (Product B) must outrank the existing listing (Product A)"
+        )
+
+        count = test_db_session.execute(
+            select(func.count()).select_from(ProductRetailerListing).where(
+                ProductRetailerListing.chain == "coles",
+                ProductRetailerListing.external_id == "H-SKU123",
+            )
+        ).scalar()
+        assert count == 1
+
+        pr = test_db_session.query(PriceReport).filter_by(product_id=product_b.id).first()
+        assert pr is not None, "PriceReport must be associated with GTIN-resolved Product B"
+        assert pr.price_cents == 350
+
+        assert any("Reassigning listing" in r.message for r in caplog.records)
+
+    @pytest.mark.integration
+    def test_gtin_same_product_no_spurious_warning(
+        self, test_db_session: Session, caplog
+    ):
+        """When GTIN and listing both point to the same product, no reassignment warning."""
+        product_gtin = "09300617099999"
+        product = Product(id=uuid4(), name="Cheese 500g", gtin=product_gtin)
+        test_db_session.add(product)
+        test_db_session.commit()
+
+        listing = ProductRetailerListing(
+            product_id=product.id,
+            chain="coles",
+            external_id="H-CHEESE-SKU",
+            external_source="catalog_coles",
+            external_name="Cheese 500g",
+            in_stock=True,
+            is_online_only=False,
+        )
+        test_db_session.add(listing)
+        test_db_session.commit()
+
+        cp = _cp("Cheese 500g", external_id="H-CHEESE-SKU", gtin=product_gtin)
+
+        with caplog.at_level(logging.WARNING, logger="app.services.catalog_ingest"):
+            ingest_catalog_products([cp], "coles", test_db_session)
+        test_db_session.commit()
+
+        test_db_session.refresh(listing)
+        assert listing.product_id == product.id
+        assert not any("Reassigning listing" in r.message for r in caplog.records)
