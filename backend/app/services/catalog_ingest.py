@@ -475,8 +475,7 @@ def _upsert_retailer_listing(
             # a newly-created product or a migration-era legacy hit must not
             # steal it.  The mismatch is logged so it can be investigated.
             logger.warning(
-                "Blocked %s reassignment for listing %s/%s: "
-                "keeping product_id=%s proposed=%s",
+                "Blocked %s reassignment for listing %s/%s: " "keeping product_id=%s proposed=%s",
                 resolution.value,
                 chain,
                 external_id,

@@ -112,7 +112,9 @@ class TestListingCreateOnFirstIngest:
         test_db_session.commit()
 
         count = test_db_session.execute(
-            select(func.count()).select_from(ProductRetailerListing).where(
+            select(func.count())
+            .select_from(ProductRetailerListing)
+            .where(
                 ProductRetailerListing.chain == "coles",
                 ProductRetailerListing.external_id == "M-001",
             )
@@ -134,7 +136,9 @@ class TestListingUpsertOnReingest:
         test_db_session.commit()
 
         count = test_db_session.execute(
-            select(func.count()).select_from(ProductRetailerListing).where(
+            select(func.count())
+            .select_from(ProductRetailerListing)
+            .where(
                 ProductRetailerListing.chain == "woolworths",
                 ProductRetailerListing.external_id == "BREAD-001",
             )
@@ -202,7 +206,9 @@ class TestTwoChainsShareExternalId:
         test_db_session.commit()
 
         count = test_db_session.execute(
-            select(func.count()).select_from(ProductRetailerListing).where(
+            select(func.count())
+            .select_from(ProductRetailerListing)
+            .where(
                 ProductRetailerListing.external_id == "COLA-CAN-375",
             )
         ).scalar()
@@ -299,9 +305,7 @@ class TestLegacyProductDualWrite:
 
 class TestFuzzyReassignmentProtection:
     @pytest.mark.integration
-    def test_fuzzy_does_not_move_existing_listing(
-        self, test_db_session: Session, caplog
-    ):
+    def test_fuzzy_does_not_move_existing_listing(self, test_db_session: Session, caplog):
         """An existing listing keeps its product_id when fuzzy resolution suggests another."""
         product_a = Product(id=uuid4(), name="Original Product")
         test_db_session.add(product_a)
@@ -396,9 +400,7 @@ class TestGTINOverridesExistingListingEndToEnd:
     """
 
     @pytest.mark.integration
-    def test_gtin_corrects_listing_through_full_ingest(
-        self, test_db_session: Session, caplog
-    ):
+    def test_gtin_corrects_listing_through_full_ingest(self, test_db_session: Session, caplog):
         """
         1. Product A exists (no GTIN)
         2. Listing (coles, SKU123) -> Product A already established
@@ -440,12 +442,14 @@ class TestGTINOverridesExistingListingEndToEnd:
 
         test_db_session.refresh(listing)
 
-        assert listing.product_id == product_b.id, (
-            "GTIN match (Product B) must outrank the existing listing (Product A)"
-        )
+        assert (
+            listing.product_id == product_b.id
+        ), "GTIN match (Product B) must outrank the existing listing (Product A)"
 
         count = test_db_session.execute(
-            select(func.count()).select_from(ProductRetailerListing).where(
+            select(func.count())
+            .select_from(ProductRetailerListing)
+            .where(
                 ProductRetailerListing.chain == "coles",
                 ProductRetailerListing.external_id == "H-SKU123",
             )
@@ -459,9 +463,7 @@ class TestGTINOverridesExistingListingEndToEnd:
         assert any("Reassigning listing" in r.message for r in caplog.records)
 
     @pytest.mark.integration
-    def test_gtin_same_product_no_spurious_warning(
-        self, test_db_session: Session, caplog
-    ):
+    def test_gtin_same_product_no_spurious_warning(self, test_db_session: Session, caplog):
         """When GTIN and listing both point to the same product, no reassignment warning."""
         product_gtin = "09300617099999"
         product = Product(id=uuid4(), name="Cheese 500g", gtin=product_gtin)
