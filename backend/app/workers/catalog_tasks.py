@@ -20,6 +20,8 @@ from typing import TypedDict
 from uuid import uuid4
 
 from celery.exceptions import SoftTimeLimitExceeded
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.config import get_settings
 from app.models import CatalogCrawlRun
@@ -419,6 +421,75 @@ class BackfillResult(TypedDict):
     conflict_skipped: int
 
 
+def _try_create_listing(
+    session, product, chain: str, external_id: str, counts: BackfillResult
+) -> None:
+    """Insert one ProductRetailerListing inside a savepoint.
+
+    If a concurrent transaction inserts the same (chain, external_id) between
+    the caller's initial SELECT check and this INSERT, the UNIQUE constraint
+    fires. The savepoint is rolled back automatically and we recover by
+    reloading the winning row, applying the same conflict semantics as the
+    normal pre-check path.
+    """
+    from app.models import ProductRetailerListing
+
+    new_listing = ProductRetailerListing(
+        product_id=product.id,
+        chain=chain,
+        external_id=external_id,
+        external_source=product.external_source,
+        external_name=product.name or None,
+        external_brand=product.brand or None,
+        external_category=None,
+        external_image_url=product.external_image_url or None,
+        external_url=None,
+        package_size_raw=product.package_size or None,
+        in_stock=product.in_stock,
+        is_online_only=product.is_online_only,
+        catalog_last_seen_at=product.catalog_last_seen_at,
+    )
+    try:
+        with session.begin_nested():
+            session.add(new_listing)
+            session.flush()
+        counts["created"] += 1
+    except IntegrityError:
+        # Savepoint was rolled back automatically. Expunge the failed object so
+        # autoflush does not retry it, then reload the row that won the race.
+        try:
+            session.expunge(new_listing)
+        except Exception:
+            pass  # already removed by SQLAlchemy savepoint rollback machinery
+
+        with session.no_autoflush:
+            won = session.execute(
+                select(ProductRetailerListing).where(
+                    ProductRetailerListing.chain == chain,
+                    ProductRetailerListing.external_id == external_id,
+                )
+            ).scalar_one_or_none()
+
+        if won is None:
+            logger.error(
+                "Backfill: IntegrityError but no row found after recovery for %s/%s",
+                chain,
+                external_id,
+            )
+        elif won.product_id == product.id:
+            counts["already_exists"] += 1
+        else:
+            logger.warning(
+                "Backfill conflict: listing %s/%s -> product=%s, "
+                "product row wants product=%s; skipping",
+                chain,
+                external_id,
+                won.product_id,
+                product.id,
+            )
+            counts["conflict_skipped"] += 1
+
+
 def _do_backfill(session) -> BackfillResult:
     """Idempotent backfill of ProductRetailerListing from existing Product rows.
 
@@ -429,10 +500,11 @@ def _do_backfill(session) -> BackfillResult:
     - logs WARNING and skips if the row points at a *different* product_id
       (an established mapping is never overwritten by a backfill)
 
+    Each insert is wrapped in a savepoint so a concurrent dual-write winning
+    the race does not abort the whole batch — see _try_create_listing().
+
     Processed in batches so the function is safe to run on a large dataset.
     """
-    from sqlalchemy import select
-
     from app.models import Product, ProductRetailerListing
 
     counts: BackfillResult = {
@@ -489,24 +561,7 @@ def _do_backfill(session) -> BackfillResult:
                     counts["conflict_skipped"] += 1
                 continue
 
-            session.add(
-                ProductRetailerListing(
-                    product_id=product.id,
-                    chain=chain,
-                    external_id=external_id,
-                    external_source=product.external_source,
-                    external_name=product.name or None,
-                    external_brand=product.brand or None,
-                    external_category=None,  # raw category not stored on Product
-                    external_image_url=product.external_image_url or None,
-                    external_url=None,  # not stored on Product
-                    package_size_raw=product.package_size or None,
-                    in_stock=product.in_stock,
-                    is_online_only=product.is_online_only,
-                    catalog_last_seen_at=product.catalog_last_seen_at,
-                )
-            )
-            counts["created"] += 1
+            _try_create_listing(session, product, chain, external_id, counts)
 
         session.commit()
         offset += len(batch)

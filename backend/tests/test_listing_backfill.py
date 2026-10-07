@@ -14,7 +14,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models import Product, ProductRetailerListing
-from app.workers.catalog_tasks import _do_backfill
+from app.workers.catalog_tasks import BackfillResult, _do_backfill, _try_create_listing
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -276,3 +276,126 @@ class TestBackfillCountsAccuracy:
         assert result["created"] == 1  # p_new
         assert result["already_exists"] == 1  # p_exists
         assert result["conflict_skipped"] == 0
+
+
+# ── 9. Concurrency race regression ─────────────────────────────────────────────
+
+
+class TestBackfillConcurrencyRace:
+    """Deterministic regression for the backfill/dual-write concurrent-insert race.
+
+    Pattern: the initial SELECT check sees no row, but a concurrent transaction
+    creates the same (chain, external_id) before our INSERT completes.
+    We simulate this by calling _try_create_listing() directly against a key
+    that already has a row — the savepoint INSERT fires IntegrityError, the
+    savepoint is rolled back, and the helper recovers by reloading the winner.
+    """
+
+    @pytest.mark.integration
+    def test_race_same_product_counts_as_already_exists(self, test_db_session: Session):
+        """Concurrent writer inserted same (chain, external_id) pointing at the same product.
+        Must recover, count as already_exists, leave no duplicate row.
+        """
+        p = _product(
+            test_db_session, "Milk", external_source="catalog_coles", external_id="RACE-001"
+        )
+        # Simulate concurrent writer: listing already exists, same product
+        test_db_session.add(
+            ProductRetailerListing(
+                product_id=p.id,
+                chain="coles",
+                external_id="RACE-001",
+                external_source="catalog_coles",
+                external_name="Concurrent same-product insert",
+                in_stock=True,
+                is_online_only=False,
+            )
+        )
+        test_db_session.flush()
+
+        counts: BackfillResult = {
+            "total_eligible": 0,
+            "created": 0,
+            "already_exists": 0,
+            "conflict_skipped": 0,
+        }
+        # Call helper directly, skipping the initial SELECT check that _do_backfill does.
+        # The savepoint INSERT will fail (row already exists), triggering recovery.
+        _try_create_listing(test_db_session, p, "coles", "RACE-001", counts)
+
+        assert counts["already_exists"] == 1
+        assert counts["created"] == 0
+        assert counts["conflict_skipped"] == 0
+
+        # Exactly one row — no duplicate was created
+        row_count = test_db_session.execute(
+            select(func.count())
+            .select_from(ProductRetailerListing)
+            .where(
+                ProductRetailerListing.chain == "coles",
+                ProductRetailerListing.external_id == "RACE-001",
+            )
+        ).scalar()
+        assert row_count == 1
+
+    @pytest.mark.integration
+    def test_race_different_product_counts_as_conflict_and_preserves_winner(
+        self, test_db_session: Session, caplog
+    ):
+        """Concurrent writer inserted same (chain, external_id) pointing at a DIFFERENT product.
+        Must recover, count as conflict_skipped, log WARNING, leave winner's mapping intact.
+        """
+        import logging
+
+        p_backfill = _product(
+            test_db_session,
+            "Product A (backfill)",
+            external_source="catalog_coles",
+            external_id="RACE-002",
+        )
+        p_winner = Product(id=uuid4(), name="Product B (concurrent winner)")
+        test_db_session.add(p_winner)
+        test_db_session.flush()
+
+        # Simulate concurrent writer: listing created pointing at p_winner, not p_backfill
+        winner_listing = ProductRetailerListing(
+            product_id=p_winner.id,
+            chain="coles",
+            external_id="RACE-002",
+            external_source="catalog_coles",
+            external_name="Concurrent different-product insert",
+            in_stock=True,
+            is_online_only=False,
+        )
+        test_db_session.add(winner_listing)
+        test_db_session.flush()
+
+        counts: BackfillResult = {
+            "total_eligible": 0,
+            "created": 0,
+            "already_exists": 0,
+            "conflict_skipped": 0,
+        }
+        with caplog.at_level(logging.WARNING, logger="app.workers.catalog_tasks"):
+            _try_create_listing(test_db_session, p_backfill, "coles", "RACE-002", counts)
+
+        assert counts["conflict_skipped"] == 1
+        assert counts["created"] == 0
+        assert counts["already_exists"] == 0
+
+        # Established mapping (p_winner) must be preserved
+        test_db_session.refresh(winner_listing)
+        assert winner_listing.product_id == p_winner.id
+
+        # Only one row exists
+        row_count = test_db_session.execute(
+            select(func.count())
+            .select_from(ProductRetailerListing)
+            .where(
+                ProductRetailerListing.chain == "coles",
+                ProductRetailerListing.external_id == "RACE-002",
+            )
+        ).scalar()
+        assert row_count == 1
+
+        assert any("Backfill conflict" in r.message for r in caplog.records)
