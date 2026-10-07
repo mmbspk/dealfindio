@@ -12,7 +12,7 @@ from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import and_, asc, desc, func, select
+from sqlalchemy import and_, asc, desc, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.deps import get_db
@@ -79,6 +79,7 @@ def _attach_prices(db: Session, products: list[Product]) -> list[ProductResponse
         .where(
             PriceReport.product_id.in_(product_ids),
             PriceReport.is_flagged == False,  # noqa: E712
+            or_(PriceReport.valid_to.is_(None), PriceReport.valid_to >= datetime.now(timezone.utc)),
         )
         .group_by(PriceReport.product_id, PriceReport.store_id)
         .subquery()
@@ -230,7 +231,13 @@ async def search_products(
                         PriceReport.store_id,
                         func.max(PriceReport.created_at).label("latest_at"),
                     )
-                    .where(PriceReport.is_flagged == False)  # noqa: E712
+                    .where(
+                        PriceReport.is_flagged == False,  # noqa: E712
+                        or_(
+                            PriceReport.valid_to.is_(None),
+                            PriceReport.valid_to >= datetime.now(timezone.utc),
+                        ),
+                    )
                     .group_by(PriceReport.product_id, PriceReport.store_id)
                     .subquery()
                 )
@@ -327,6 +334,10 @@ async def get_product(
                     PriceReport.product_id == product_id,
                     PriceReport.created_at >= datetime.now(timezone.utc) - timedelta(days=90),
                     PriceReport.is_flagged == False,  # noqa: E712
+                    or_(
+                        PriceReport.valid_to.is_(None),
+                        PriceReport.valid_to >= datetime.now(timezone.utc),
+                    ),
                 )
             )
             .group_by(PriceReport.store_id)
@@ -542,6 +553,10 @@ async def get_product_stores(
                     PriceReport.product_id == product_id,
                     PriceReport.created_at >= cutoff,
                     PriceReport.is_flagged == False,  # noqa: E712
+                    or_(
+                        PriceReport.valid_to.is_(None),
+                        PriceReport.valid_to >= datetime.now(timezone.utc),
+                    ),
                 )
             )
             .group_by(PriceReport.store_id)

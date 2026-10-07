@@ -633,3 +633,224 @@ class TestErrorHandling:
     ):
         response = test_client.get("/api/v1/products/search?q=Milk")
         assert response.headers["content-type"].startswith("application/json")
+
+
+class TestValidToExpiry:
+    """GET /api/v1/products/{id} and /stores — valid_to expiry enforcement.
+
+    Price reports with valid_to < now must not be served as current prices.
+    """
+
+    def _make_store(self):
+        return Store(
+            id=uuid4(),
+            chain="coles",
+            name="Coles Test",
+            suburb="Sydney",
+            state="NSW",
+            postcode="2000",
+        )
+
+    @pytest.mark.integration
+    def test_product_detail_null_valid_to_price_returned(
+        self, test_client: TestClient, test_db_session
+    ):
+        """valid_to=None means no expiry — price must be returned as current."""
+        from datetime import datetime, timedelta, timezone
+
+        from app.models import PriceReport
+
+        store = self._make_store()
+        product = Product(id=uuid4(), name="Milk No Expiry 2L", brand="Pauls", category="dairy")
+        test_db_session.add_all([store, product])
+        test_db_session.flush()
+
+        report = PriceReport(
+            product_id=product.id,
+            store_id=store.id,
+            price_cents=350,
+            source="catalog_coles",
+            confidence=1.0,
+            created_at=datetime.now(timezone.utc) - timedelta(days=1),
+            valid_to=None,
+        )
+        test_db_session.add(report)
+        test_db_session.commit()
+
+        response = test_client.get(f"/api/v1/products/{product.id}")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["lowest_price_aud"] == pytest.approx(3.50, abs=0.01)
+
+    @pytest.mark.integration
+    def test_product_detail_future_valid_to_price_returned(
+        self, test_client: TestClient, test_db_session
+    ):
+        """valid_to in the future — price is still valid, must be returned."""
+        from datetime import datetime, timedelta, timezone
+
+        from app.models import PriceReport
+
+        store = self._make_store()
+        product = Product(id=uuid4(), name="Milk Future Expiry 2L", brand="Pauls", category="dairy")
+        test_db_session.add_all([store, product])
+        test_db_session.flush()
+
+        report = PriceReport(
+            product_id=product.id,
+            store_id=store.id,
+            price_cents=299,
+            source="catalog_coles",
+            confidence=1.0,
+            created_at=datetime.now(timezone.utc) - timedelta(days=1),
+            valid_to=datetime.now(timezone.utc) + timedelta(days=7),
+        )
+        test_db_session.add(report)
+        test_db_session.commit()
+
+        response = test_client.get(f"/api/v1/products/{product.id}")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["lowest_price_aud"] == pytest.approx(2.99, abs=0.01)
+
+    @pytest.mark.integration
+    def test_product_detail_expired_valid_to_excluded(
+        self, test_client: TestClient, test_db_session
+    ):
+        """valid_to in the past — expired special must NOT appear as current price."""
+        from datetime import datetime, timedelta, timezone
+
+        from app.models import PriceReport
+
+        store = self._make_store()
+        product = Product(
+            id=uuid4(), name="Milk Expired Special 2L", brand="Pauls", category="dairy"
+        )
+        test_db_session.add_all([store, product])
+        test_db_session.flush()
+
+        report = PriceReport(
+            product_id=product.id,
+            store_id=store.id,
+            price_cents=199,
+            source="catalog_coles",
+            confidence=1.0,
+            is_on_sale=True,
+            sale_pct_off=43.0,
+            created_at=datetime.now(timezone.utc) - timedelta(days=5),
+            valid_to=datetime.now(timezone.utc) - timedelta(days=1),
+        )
+        test_db_session.add(report)
+        test_db_session.commit()
+
+        response = test_client.get(f"/api/v1/products/{product.id}")
+        assert response.status_code == 200
+        data = response.json()
+        # Expired special must not surface as current price
+        assert data["lowest_price_aud"] is None
+
+    @pytest.mark.integration
+    def test_product_stores_expired_price_excluded_valid_retained(
+        self, test_client: TestClient, test_db_session
+    ):
+        """Stores endpoint: expired price at store_a is excluded; valid price at store_b
+        is retained. Mixed scenario tests that valid_to gates per-store selection."""
+        from datetime import datetime, timedelta, timezone
+
+        from app.models import PriceReport, Store
+
+        now = datetime.now(timezone.utc)
+        store_a = Store(
+            id=uuid4(),
+            chain="coles",
+            name="Coles Test A",
+            suburb="Sydney",
+            state="NSW",
+            postcode="2000",
+        )
+        store_b = Store(
+            id=uuid4(),
+            chain="woolworths",
+            name="Woolworths Test B",
+            suburb="Sydney",
+            state="NSW",
+            postcode="2000",
+        )
+        product = Product(
+            id=uuid4(), name="Oat Milk Mixed Expiry 1L", brand="Oatly", category="dairy"
+        )
+        test_db_session.add_all([store_a, store_b, product])
+        test_db_session.flush()
+
+        # store_a: expired special (valid_to=yesterday)
+        report_a = PriceReport(
+            product_id=product.id,
+            store_id=store_a.id,
+            price_cents=150,
+            source="flyer_coles",
+            confidence=1.0,
+            is_on_sale=True,
+            created_at=now - timedelta(days=3),
+            valid_to=now - timedelta(days=1),
+        )
+        # store_b: valid regular price (valid_to=None)
+        report_b = PriceReport(
+            product_id=product.id,
+            store_id=store_b.id,
+            price_cents=450,
+            source="catalog_woolworths",
+            confidence=1.0,
+            created_at=now - timedelta(days=2),
+            valid_to=None,
+        )
+        test_db_session.add_all([report_a, report_b])
+        test_db_session.commit()
+
+        response = test_client.get(f"/api/v1/products/{product.id}/stores")
+        assert response.status_code == 200
+        data = response.json()
+
+        store_chains = {s["chain"] for s in data["stores"]}
+        # Only store_b (woolworths) should appear; store_a's expired price excluded
+        assert "woolworths" in store_chains
+        assert "coles" not in store_chains
+        assert data["count"] == 1
+
+    @pytest.mark.integration
+    def test_search_enrich_expired_sale_gets_no_bonus(self, test_db_session):
+        """_enrich_scores() must not apply a sale bonus for expired specials."""
+        from datetime import datetime, timedelta, timezone
+
+        from app.models import PriceReport
+        from app.services.search import _enrich_scores
+
+        now = datetime.now(timezone.utc)
+        store = self._make_store()
+        product = Product(
+            id=uuid4(), name="Search Expired Sale Milk 1L", brand="Pauls", category="dairy"
+        )
+        test_db_session.add_all([store, product])
+        test_db_session.flush()
+
+        # Only a single expired on-sale report
+        report = PriceReport(
+            product_id=product.id,
+            store_id=store.id,
+            price_cents=199,
+            source="flyer_coles",
+            confidence=1.0,
+            is_on_sale=True,
+            sale_pct_off=50.0,
+            created_at=now - timedelta(days=5),
+            valid_to=now - timedelta(days=1),
+        )
+        test_db_session.add(report)
+        test_db_session.commit()
+
+        base_rrf = 0.5
+        fused = [(product, base_rrf)]
+        enriched = _enrich_scores(test_db_session, fused, lat=None, lon=None, radius_km=25.0)
+
+        _, score = enriched[0]
+        # No valid sale price → no bonus → score unchanged from base RRF
+        assert score == pytest.approx(base_rrf, abs=1e-6)

@@ -21,8 +21,9 @@ Fallback chain:
 from __future__ import annotations
 
 import math
+from datetime import datetime, timezone
 
-from sqlalchemy import and_, case, func, literal, select
+from sqlalchemy import and_, case, func, literal, or_, select
 from sqlalchemy.orm import Session
 
 from app.models import PriceReport, Product, Store
@@ -102,9 +103,15 @@ def _is_postgres(session: Session) -> bool:
 
 
 def _on_sale_subquery():
+    now = datetime.now(timezone.utc)
     return (
         select(func.max(case((PriceReport.is_on_sale == True, 1), else_=0)))
-        .where(PriceReport.product_id == Product.id)
+        .where(
+            and_(
+                PriceReport.product_id == Product.id,
+                or_(PriceReport.valid_to.is_(None), PriceReport.valid_to >= now),
+            )
+        )
         .correlate(Product)
         .scalar_subquery()
     )
@@ -271,6 +278,7 @@ def _enrich_scores(
         return fused
 
     product_ids = [p.id for p, _ in fused]
+    now = datetime.now(timezone.utc)
 
     # Best active price report per product: highest sale_pct_off + nearest store
     rows = session.execute(
@@ -282,6 +290,7 @@ def _enrich_scores(
             and_(
                 PriceReport.product_id.in_(product_ids),
                 PriceReport.is_on_sale == True,  # noqa: E712
+                or_(PriceReport.valid_to.is_(None), PriceReport.valid_to >= now),
             )
         )
         .group_by(PriceReport.product_id)
