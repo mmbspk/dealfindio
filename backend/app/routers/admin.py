@@ -720,8 +720,68 @@ class BackfillTriggerResponse(BaseModel):
 class ListingCoverageRow(BaseModel):
     chain: str
     eligible: int
-    backfilled: int
+    correctly_mapped: int
+    missing: int
+    conflicted: int
     coverage_pct: float
+    ready_for_read_migration: bool
+
+
+def _get_listing_coverage(db: Session) -> list[ListingCoverageRow]:
+    """Compute per-chain listing coverage with explicit conflict visibility.
+
+    Each eligible Product row falls into exactly one bucket:
+    - correctly_mapped: listing exists and listing.product_id == product.id
+    - missing:          no listing exists for (chain, external_id)
+    - conflicted:       listing exists but listing.product_id != product.id
+
+    coverage_pct = correctly_mapped / eligible * 100
+
+    #49c read-migration gate:
+      ready_for_read_migration = (coverage_pct == 100 AND conflicted == 0)
+    Conflicted identities are NOT counted as covered.
+    """
+    rows = db.execute(
+        text(
+            """
+            SELECT
+                p.external_source,
+                COUNT(*) AS eligible,
+                COUNT(CASE WHEN prl.id IS NOT NULL
+                                AND prl.product_id = p.id   THEN 1 END) AS correctly_mapped,
+                COUNT(CASE WHEN prl.id IS NULL              THEN 1 END) AS missing,
+                COUNT(CASE WHEN prl.id IS NOT NULL
+                                AND prl.product_id != p.id  THEN 1 END) AS conflicted,
+                ROUND(
+                    COUNT(CASE WHEN prl.id IS NOT NULL
+                                    AND prl.product_id = p.id THEN 1 END)
+                    * 100.0 / NULLIF(COUNT(*), 0),
+                    1
+                ) AS coverage_pct
+            FROM products p
+            LEFT JOIN product_retailer_listings prl
+              ON prl.chain = REPLACE(p.external_source, 'catalog_', '')
+             AND prl.external_id = p.external_id
+            WHERE p.external_source LIKE 'catalog_%'
+              AND p.external_id IS NOT NULL
+            GROUP BY p.external_source
+            ORDER BY eligible DESC
+            """
+        )
+    ).fetchall()
+
+    return [
+        ListingCoverageRow(
+            chain=r[0].removeprefix("catalog_"),
+            eligible=r[1],
+            correctly_mapped=r[2],
+            missing=r[3],
+            conflicted=r[4],
+            coverage_pct=float(r[5] or 0),
+            ready_for_read_migration=(r[2] == r[1] and r[4] == 0),
+        )
+        for r in rows
+    ]
 
 
 @router.post("/listings/backfill", response_model=BackfillTriggerResponse)
@@ -747,36 +807,13 @@ def get_listing_coverage(
     db: Session = Depends(get_db),
     _admin=Depends(require_admin),
 ) -> list[ListingCoverageRow]:
-    """Per-chain listing coverage — how many eligible Products have a listing row."""
-    rows = db.execute(
-        text(
-            """
-            SELECT
-                p.external_source,
-                COUNT(*)                                                    AS eligible,
-                COUNT(prl.id)                                               AS backfilled,
-                ROUND(COUNT(prl.id) * 100.0 / NULLIF(COUNT(*), 0), 1)      AS coverage_pct
-            FROM products p
-            LEFT JOIN product_retailer_listings prl
-              ON prl.chain = REPLACE(p.external_source, 'catalog_', '')
-             AND prl.external_id = p.external_id
-            WHERE p.external_source LIKE 'catalog_%'
-              AND p.external_id IS NOT NULL
-            GROUP BY p.external_source
-            ORDER BY eligible DESC
-            """
-        )
-    ).fetchall()
+    """Per-chain listing coverage with explicit conflict counts.
 
-    return [
-        ListingCoverageRow(
-            chain=r[0].removeprefix("catalog_"),
-            eligible=r[1],
-            backfilled=r[2],
-            coverage_pct=float(r[3] or 0),
-        )
-        for r in rows
-    ]
+    #49c read-migration is safe when every chain reports:
+      coverage_pct == 100  AND  conflicted == 0
+    (equivalently: ready_for_read_migration == true for all expected chains)
+    """
+    return _get_listing_coverage(db)
 
 
 class ConfigEntry(BaseModel):
