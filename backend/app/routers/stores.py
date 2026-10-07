@@ -11,7 +11,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import and_, desc, func, select
+from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.deps import get_db
@@ -226,6 +226,10 @@ async def get_store_deals(
                     PriceReport.store_id == store_id,
                     PriceReport.is_on_sale == True,
                     PriceReport.created_at >= cutoff,
+                    or_(
+                        PriceReport.valid_to.is_(None),
+                        PriceReport.valid_to >= datetime.now(timezone.utc),
+                    ),
                 )
             )
             .order_by(desc(PriceReport.sale_pct_off))

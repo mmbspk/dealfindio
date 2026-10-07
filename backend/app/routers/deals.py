@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import and_, desc, func, select
+from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.deps import get_db
@@ -51,6 +51,10 @@ def _fetch_deals(
             and_(
                 PriceReport.is_on_sale == True,
                 PriceReport.created_at >= cutoff,
+                or_(
+                    PriceReport.valid_to.is_(None),
+                    PriceReport.valid_to >= datetime.now(timezone.utc),
+                ),
             )
         )
     )

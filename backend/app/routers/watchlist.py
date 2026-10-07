@@ -18,10 +18,11 @@ Endpoints:
 """
 
 import logging
+from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import desc, select
+from sqlalchemy import and_, desc, or_, select
 from sqlalchemy.orm import Session
 
 from app.deps import get_current_user, get_db
@@ -69,7 +70,15 @@ def _enrich_item(item: UserWatchlist, db: Session) -> WatchlistItemResponse:
         latest = db.execute(
             select(PriceReport, Store)
             .join(Store, PriceReport.store_id == Store.id)
-            .where(PriceReport.product_id == item.product_id)
+            .where(
+                and_(
+                    PriceReport.product_id == item.product_id,
+                    or_(
+                        PriceReport.valid_to.is_(None),
+                        PriceReport.valid_to >= datetime.now(timezone.utc),
+                    ),
+                )
+            )
             .order_by(desc(PriceReport.created_at))
             .limit(1)
         ).first()
