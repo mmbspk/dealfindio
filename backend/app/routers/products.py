@@ -558,6 +558,7 @@ async def get_product_stores(
                     PriceReport.created_at == latest_subq.c.max_created_at,
                 ),
             )
+            .where(PriceReport.product_id == product_id)
         ).all()
 
         stores = []
