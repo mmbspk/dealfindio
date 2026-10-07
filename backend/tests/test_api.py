@@ -345,11 +345,9 @@ class TestProductDetailEndpoints:
     ):
         """Price reports sharing a created_at timestamp (batch crawl) must not bleed
         across products — the outer query must filter by product_id."""
-        from datetime import datetime, timezone
+        from datetime import datetime, timedelta, timezone
 
         from app.models import PriceReport, Store
-
-        from datetime import timedelta
 
         batch_ts = datetime.now(timezone.utc) - timedelta(days=1)
 
