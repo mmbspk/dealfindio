@@ -10,6 +10,8 @@ to a consistent format used in Product.package_size_norm:
   Weight ≥ 1000 g   → "N.Nkg"    e.g. "1kg", "2.5kg"
   Multipack         → "NxNmL"    e.g. "6x375mL", "24x375mL"
   Unparseable       → None
+
+Imperial units (oz, fl oz) are not supported and return None.
 """
 
 from __future__ import annotations
@@ -22,9 +24,6 @@ _ML = re.compile(r"millilitres?|milliliters?|mls?", re.I)
 _L = re.compile(r"litres?|liters?|(?<!\w)l(?!\w)", re.I)
 _G = re.compile(r"grams?|(?<!\w)gm(?!\w)|(?<!\w)g(?!\w)", re.I)
 _KG = re.compile(r"kilograms?|kgs?", re.I)
-_OZ = re.compile(r"ounces?|(?<!\w)oz(?!\w)", re.I)
-
-_OZ_TO_ML = 29.5735
 
 # ── capture patterns ─────────────────────────────────────────────────────────
 
@@ -34,14 +33,15 @@ _UNIT = (
     r"|litres?|liters?"
     r"|kilograms?|kgs?"
     r"|grams?|gm"
-    r"|ounces?|oz"
     r"|[lL](?!\w)"
     r"|[gG](?!\w))"
 )
 
-# "24 x 375mL" or "24x375mL"
+# Count group uses _NUM (allows float) so fractional counts like "1.5x375mL" are
+# detected and explicitly rejected rather than falling through to single-size matching.
+# Negative lookbehind (?<![\d.]) ensures the count is not part of a longer decimal.
 _RE_MULTI_EXPLICIT = re.compile(
-    rf"({_NUM})\s*[xX×]\s*({_NUM})\s*({_UNIT})",
+    rf"(?<![\d.])({_NUM})\s*[xX×]\s*({_NUM})\s*({_UNIT})",
     re.I,
 )
 
@@ -59,7 +59,7 @@ _RE_SINGLE = re.compile(rf"({_NUM})\s*({_UNIT})", re.I)
 
 
 def _normalise_unit(raw_unit: str) -> str:
-    """Return canonical unit key: 'ml', 'l', 'g', 'kg', 'oz'."""
+    """Return canonical unit key: 'ml', 'l', 'g', 'kg'."""
     u = raw_unit.strip()
     if _ML.fullmatch(u):
         return "ml"
@@ -69,8 +69,6 @@ def _normalise_unit(raw_unit: str) -> str:
         return "g"
     if _KG.fullmatch(u):
         return "kg"
-    if _OZ.fullmatch(u):
-        return "oz"
     return ""
 
 
@@ -99,8 +97,6 @@ def _to_ml(value: float, unit: str) -> float | None:
         return value
     if unit == "l":
         return value * 1000
-    if unit == "oz":
-        return round(value * _OZ_TO_ML, 3)
     return None
 
 
@@ -137,6 +133,7 @@ def normalize_package_size(raw: str | None) -> str | None:
       "2500g"        → "2.5kg"
       "24 x 375mL"   → "24x375mL"
       "375mL 24 Pack"→ "24x375mL"
+      "12 oz"        → None (imperial not supported)
       "assorted"     → None
     """
     if not raw:
@@ -146,10 +143,14 @@ def normalize_package_size(raw: str | None) -> str | None:
     # 1. Explicit multipack: "24 x 375mL"
     m = _RE_MULTI_EXPLICIT.search(s)
     if m:
-        count = int(float(m.group(1)))
+        count_f = float(m.group(1))
         size_val = float(m.group(2))
         unit = _normalise_unit(m.group(3))
-        if not unit:
+        # Reject fractional pack count (e.g. "1.5 x 375mL") without falling through.
+        if count_f != int(count_f):
+            return None
+        count = int(count_f)
+        if not unit or count == 0 or size_val == 0:
             return None
         inner = _format_single(size_val, unit)
         if inner is None:
@@ -162,7 +163,7 @@ def normalize_package_size(raw: str | None) -> str | None:
         size_val = float(m.group(1))
         unit = _normalise_unit(m.group(2))
         count = int(m.group(3))
-        if not unit:
+        if not unit or count == 0 or size_val == 0:
             return None
         inner = _format_single(size_val, unit)
         if inner is None:
@@ -174,7 +175,7 @@ def normalize_package_size(raw: str | None) -> str | None:
     if m:
         size_val = float(m.group(1))
         unit = _normalise_unit(m.group(2))
-        if not unit:
+        if not unit or size_val == 0:
             return None
         return _format_single(size_val, unit)
 

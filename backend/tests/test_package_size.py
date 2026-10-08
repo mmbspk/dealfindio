@@ -173,3 +173,45 @@ class TestEdgeCases:
         # "260g - 280g" — the regex finds 260g first
         result = normalize_package_size("260g - 280g")
         assert result == "260g"
+
+
+class TestImperialRejection:
+    """oz / fl oz are not supported → None."""
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            "12 oz",
+            "12oz",
+            "12 OZ",
+            "1.5 oz",
+            "16 oz",
+            "6 ounces",
+            "6 ounce",
+        ],
+    )
+    def test_oz_returns_none(self, raw):
+        assert normalize_package_size(raw) is None
+
+
+class TestNumericValidation:
+    """Zero values and fractional pack counts → None."""
+
+    def test_zero_volume_returns_none(self):
+        assert normalize_package_size("0mL") is None
+
+    def test_zero_weight_returns_none(self):
+        assert normalize_package_size("0g") is None
+
+    def test_zero_litre_returns_none(self):
+        assert normalize_package_size("0L") is None
+
+    def test_zero_pack_count_returns_none(self):
+        assert normalize_package_size("0 x 375mL") is None
+
+    def test_fractional_pack_count_returns_none(self):
+        # "1.5 x 375mL" — fractional count is nonsensical
+        assert normalize_package_size("1.5 x 375mL") is None
+
+    def test_zero_pack_size_in_multipack_returns_none(self):
+        assert normalize_package_size("6 x 0mL") is None
