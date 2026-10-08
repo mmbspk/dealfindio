@@ -1,16 +1,15 @@
 """
 Batch helpers for reading per-product metadata from ProductRetailerListing.
 
-Used by routers to apply the #49c read migration: retailer-specific fields
-(image, package size, stock status) are sourced from ProductRetailerListing
-rather than the legacy columns on Product.
+Used by routers to source retailer-specific fields (image, package size,
+stock status) from ProductRetailerListing — the canonical source.
 """
 
 from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
 from app.models import Product, ProductRetailerListing
@@ -120,19 +119,13 @@ def get_listing_enrichment_by_chain_map(
 
 
 def in_stock_filter_clause(in_stock: bool):
-    """SQLAlchemy WHERE clause for no-chain in_stock filter with missing-listing fallback.
+    """SQLAlchemy WHERE clause for listing-based in_stock filter.
 
-    Without this, NOT EXISTS(listing with in_stock=True) incorrectly matches
-    products that have zero listings, because NOT EXISTS of an empty set is True.
+    Zero-listing products are excluded from both in_stock=True and in_stock=False
+    because we have no signal for them.
 
-    Correct semantics:
-      in_stock=True:  has a listing with in_stock=True
-                      OR no listing exists AND Product.in_stock is True
-      in_stock=False: has at least one listing AND none are in-stock
-                      OR no listing exists AND Product.in_stock is False
-
-    Both OR branches include a TODO(#49e): once legacy Product columns are
-    dropped the no-listing branch can be removed entirely.
+    in_stock=True:  EXISTS(listing with in_stock=True)
+    in_stock=False: EXISTS(any listing) AND NOT EXISTS(listing with in_stock=True)
     """
     has_any_listing = (
         select(ProductRetailerListing.id)
@@ -149,12 +142,6 @@ def in_stock_filter_clause(in_stock: bool):
     )
 
     if in_stock:
-        return or_(
-            has_in_stock_listing,
-            and_(~has_any_listing, Product.in_stock == True),  # noqa: E712  # TODO(#49e)
-        )
+        return has_in_stock_listing
     else:
-        return or_(
-            and_(has_any_listing, ~has_in_stock_listing),
-            and_(~has_any_listing, Product.in_stock == False),  # noqa: E712  # TODO(#49e)
-        )
+        return and_(has_any_listing, ~has_in_stock_listing)

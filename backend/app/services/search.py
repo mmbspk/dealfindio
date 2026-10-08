@@ -259,8 +259,7 @@ def _trigram_lane(
             .where(
                 and_(
                     Product.name.ilike(f"%{normalised_q}%")
-                    | Product.brand.ilike(f"%{normalised_q}%")
-                    | Product.package_size.ilike(f"%{normalised_q}%"),
+                    | Product.brand.ilike(f"%{normalised_q}%"),
                     *filters,
                 )
             )

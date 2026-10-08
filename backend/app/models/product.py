@@ -8,7 +8,7 @@ Products are shared across stores and price reports.
 from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Boolean, DateTime, Index, String
+from sqlalchemy import DateTime, Index, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
@@ -30,7 +30,6 @@ class Product(Base):
         unit_type: Unit of measurement ('ea', 'kg', 'L', 'g', 'ml')
         unit_size: Quantity per unit (e.g., 2.0 for 2L bottles)
         image_url: Self-hosted image URL written by the OFF enrichment pipeline (NULL until enriched)
-        external_image_url: Original retailer CDN URL scraped by catalog crawlers (provenance only)
         image_source: Provenance of image_url ('open_food_facts')
         image_enriched_at: When the image was last (re)sourced by the enricher
         price_reports: Relationship to price reports for this product
@@ -46,11 +45,9 @@ class Product(Base):
     category: Mapped[str | None] = mapped_column(String(100))
     unit_type: Mapped[str | None] = mapped_column(String(20))
     unit_size: Mapped[float | None]
-    package_size: Mapped[str | None] = mapped_column(String(100))
     unit_price: Mapped[float | None]  # comparable price per standard unit (e.g. per 100g)
     unit_price_label: Mapped[str | None] = mapped_column(String(50))  # e.g. "100g", "100ml", "ea"
     image_url: Mapped[str | None] = mapped_column(String(500))
-    external_image_url: Mapped[str | None] = mapped_column(String(500))
     image_source: Mapped[str | None] = mapped_column(String(50))
     image_enriched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
@@ -66,15 +63,6 @@ class Product(Base):
     )  # approved|rejected|skipped
     off_image_ai_reason: Mapped[str | None] = mapped_column(String(300))
     off_image_ai_reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    # Set by the full-catalog crawler: when this product was last seen in a
-    # catalog crawl, and whether it was in stock at that time.
-    catalog_last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    in_stock: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
-    is_online_only: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
-    # The store's own SKU/stockcode + which store it came from. Together these
-    # form a stable unique key for catalog dedup (preferred over fuzzy name match).
-    external_id: Mapped[str | None] = mapped_column(String(64))
-    external_source: Mapped[str | None] = mapped_column(String(50))
     # 384-dim sentence embedding of the normalised product name (all-MiniLM-L6-v2).
     # NULL until the embedding backfill task runs.
     name_embedding: Mapped[list[float] | None] = mapped_column(Vector(384), nullable=True)

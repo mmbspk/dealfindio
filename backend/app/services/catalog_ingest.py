@@ -9,17 +9,12 @@ module is the sync upsert path for that.
 
 Matching strategy (in priority order):
   1. by durable ProductRetailerListing(chain, external_id) — most stable once established;
-  2. by legacy Product.external_source/external_id — backward-compat during #49 migration;
-  3. by GTIN, if present;
-  4. by normalized name.
-On create, all provided metadata is written. On update, we fill only missing
-fields (never clobber a human/OFF-sourced image with a null) and always refresh
-``catalog_last_seen_at`` / ``in_stock``. A ``PriceReport`` with
-``source="catalog_{chain}"`` records the observed shelf price.
-
-Story #49b adds dual-write to ``ProductRetailerListing`` after every canonical
-product resolution. Existing ``Product`` retailer fields continue to be written
-for backward compatibility; #49c will migrate API reads, #49e will remove them.
+  2. by GTIN, if present;
+  3. by normalized name.
+On create, only canonical product metadata is written; retailer-specific metadata
+goes exclusively to ``ProductRetailerListing``. On update, we fill only missing
+canonical fields (never clobber a human/OFF-sourced image with a null). A
+``PriceReport`` with ``source="catalog_{chain}"`` records the observed shelf price.
 """
 
 from __future__ import annotations
@@ -30,7 +25,7 @@ from datetime import date, datetime, timedelta, timezone
 from enum import Enum
 from typing import Optional
 
-from sqlalchemy import desc, or_, select
+from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
 from app.models import PriceReport, Product, ProductRetailerListing, Store
@@ -73,7 +68,6 @@ class ResolutionReason(str, Enum):
     """
 
     LISTING = "listing"  # durable listing hit — most trusted once established
-    LEGACY_SKU = "legacy_sku"  # Product.external_source/external_id match (pre-listing)
     GTIN = "gtin"  # GTIN match — globally unique, highly trusted
     FUZZY = "fuzzy"  # composite name/brand/price score — NOT trusted for reassignment
     NEW = "new"  # no match found; caller created a new canonical Product
@@ -202,12 +196,11 @@ def _match_product(
     Resolution priority:
       1. GTIN — globally unique; outranks every other signal when a match exists
       2. ProductRetailerListing(chain, external_id) — durable SKU→canonical mapping
-      3. Product.external_source/external_id — legacy SKU match (pre-listing migration)
-      4. Fuzzy name match — cross-chain dedup only; NOT trusted for listing reassignment
+      3. Fuzzy name match — cross-chain dedup only; NOT trusted for listing reassignment
 
     GTIN is Step 1 so that a trusted identifier correction always wins over an
     existing (possibly stale) listing association.  When GTIN is present but has
-    no matching Product we still fall through to the listing/legacy steps; fuzzy is
+    no matching Product we still fall through to the listing step; fuzzy is
     skipped because a novel GTIN means this is genuinely a new product.
     """
     # Step 1 — GTIN (globally unique; outranks listing when both are present)
@@ -218,7 +211,7 @@ def _match_product(
         ).scalar_one_or_none()
         if found:
             return found, 100.0, None, ResolutionReason.GTIN
-        # GTIN present, no match: fall through to listing/legacy so an already-
+        # GTIN present, no match: fall through to listing so an already-
         # established mapping is not discarded; fuzzy is skipped below.
 
     # Step 2 — durable listing lookup
@@ -234,19 +227,7 @@ def _match_product(
             if product is not None:
                 return product, 100.0, None, ResolutionReason.LISTING
 
-    # Step 3 — legacy SKU on Product (backward-compat during #49 migration)
-    external_source = f"catalog_{chain}"
-    if cp.external_id:
-        found = session.execute(
-            select(Product).where(
-                Product.external_source == external_source,
-                Product.external_id == str(cp.external_id),
-            )
-        ).scalar_one_or_none()
-        if found:
-            return found, 100.0, None, ResolutionReason.LEGACY_SKU
-
-    # Step 4 — fuzzy name match
+    # Step 3 — fuzzy name match
     # Skip entirely when GTIN is present: a GTIN with no DB match means this is
     # a genuinely new product; merging it via partial name similarity would be wrong.
     if cp.gtin:
@@ -254,14 +235,18 @@ def _match_product(
     normalized_input = _matcher.normalize_name(cp.product_name)
     if not normalized_input:
         return None, 0.0, None, ResolutionReason.NEW
-    # Exclude products already owned by this chain's SKU namespace so we don't
-    # accidentally merge two different ALDI products via fuzzy name.
-    candidates = list(
-        session.execute(
-            select(Product).where(
-                or_(Product.external_source != external_source, Product.external_source.is_(None))
-            )
+    # Exclude products already owned by a listing for this chain so we don't
+    # accidentally merge two different products via fuzzy name.
+    has_listing_for_chain = (
+        select(ProductRetailerListing.id)
+        .where(
+            ProductRetailerListing.product_id == Product.id,
+            ProductRetailerListing.chain == chain,
         )
+        .exists()
+    )
+    candidates = list(
+        session.execute(select(Product).where(~has_listing_for_chain))
         .scalars()
         .all()
     )
@@ -375,8 +360,8 @@ def _upsert_retailer_listing(
       mapping (log WARNING, keep existing, still refresh metadata).
     - LISTING: invariant violation — _match_product resolved through this very
       listing so product_id should already match; log ERROR, keep existing.
-    - NEW / LEGACY_SKU: block — a newly created product or a migration-era SKU
-      hit should not steal an established listing (log WARNING, keep existing).
+    - NEW: block — a newly created product should not steal an established listing
+      (log WARNING, keep existing).
     """
     if not cp.external_id:
         return
@@ -470,10 +455,10 @@ def _upsert_retailer_listing(
             return
 
         else:
-            # NEW / LEGACY_SKU (and any future reason): block reassignment.
+            # NEW (and any future reason): block reassignment.
             # An established (chain, external_id) mapping is authoritative;
-            # a newly-created product or a migration-era legacy hit must not
-            # steal it.  The mismatch is logged so it can be investigated.
+            # a newly-created product must not steal it.  The mismatch is logged
+            # so it can be investigated.
             logger.warning(
                 "Blocked %s reassignment for listing %s/%s: " "keeping product_id=%s proposed=%s",
                 resolution.value,
@@ -542,13 +527,6 @@ def ingest_catalog_product(
             name=cp.product_name,
             brand=cp.brand,
             category=normalise_category(cp.category),
-            external_image_url=cp.image_url,
-            catalog_last_seen_at=now,
-            in_stock=cp.in_stock,
-            is_online_only=cp.is_online_only,
-            external_id=str(cp.external_id) if cp.external_id else None,
-            external_source=f"catalog_{chain}" if cp.external_id else None,
-            package_size=cp.package_size,
             unit_price=cp.unit_price,
             unit_price_label=cp.unit_price_label,
         )
@@ -558,18 +536,12 @@ def ingest_catalog_product(
             _propose_candidate(session, product, fuzzy_candidate, match_score)
         created = True
     else:
-        # Fill only missing metadata — never clobber an existing image/brand.
-        if cp.image_url and not product.external_image_url:
-            product.external_image_url = cp.image_url
-            updated = True
+        # Fill only missing canonical metadata — never clobber an existing brand/category.
         if cp.brand and not product.brand:
             product.brand = cp.brand
             updated = True
         if cp.category and not product.category:
             product.category = normalise_category(cp.category)
-            updated = True
-        if cp.package_size and not product.package_size:
-            product.package_size = cp.package_size
             updated = True
         if cp.unit_price is not None and (
             product.unit_price is None or product.unit_price != cp.unit_price
@@ -579,13 +551,8 @@ def ingest_catalog_product(
         if cp.unit_price_label and product.unit_price_label != cp.unit_price_label:
             product.unit_price_label = cp.unit_price_label
             updated = True
-        # Always refresh liveness signals.
-        product.catalog_last_seen_at = now
-        product.in_stock = cp.in_stock
-        product.is_online_only = cp.is_online_only
-        updated = True
 
-    # Dual-write: upsert the retailer listing (Story #49b).
+    # Upsert the retailer listing — sole source of retailer-specific metadata.
     # Happens after canonical product_id is confirmed and flushed.
     # Participates in the same savepoint as the Product write.
     _upsert_retailer_listing(session, cp, chain, product, resolution, now)

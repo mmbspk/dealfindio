@@ -111,8 +111,6 @@ def _enrich_item(
     #   1. product.image_url (canonical self-hosted) — always wins
     #   2. current_chain listing image — chain-specific, avoids cross-retailer leakage
     #   3. product-level listing image — fallback when no price / chain unknown
-    #   4. product.external_image_url — legacy fallback until #49e drops legacy columns
-    # TODO(#49e): remove Product fallback after #49e drops legacy columns
     ld = listing_enrichment.get(product.id) if product and listing_enrichment else None
     chain_ld = (
         chain_listing_enrichment.get((product.id, current_chain))
@@ -122,7 +120,6 @@ def _enrich_item(
     listing_image = (
         (chain_ld["external_image_url"] if chain_ld and chain_ld["external_image_url"] else None)
         or (ld["external_image_url"] if ld and ld["external_image_url"] else None)
-        or (product.external_image_url if product else None)
     )
 
     return WatchlistItemResponse(

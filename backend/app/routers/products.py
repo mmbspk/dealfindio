@@ -140,7 +140,7 @@ def _attach_prices(db: Session, products: list[Product]) -> list[ProductResponse
             data.is_on_sale = price["is_on_sale"]
             data.available_chains = price["available_chains"]
 
-        # Override with listing-backed retailer metadata (#49c read migration)
+        # Populate retailer metadata from listing
         ld = listing_map.get(p.id)
         if ld:
             data.in_stock = ld["any_in_stock"]
@@ -152,8 +152,6 @@ def _attach_prices(db: Session, products: list[Product]) -> list[ProductResponse
                 # Only replace image_url if canonical (self-hosted) image is absent
                 if not p.image_url:
                     data.image_url = listing_image
-        # else: no listing → keep Product field values
-        # TODO(#49e): remove Product fallback after #49e drops legacy columns
 
         results.append(data)
     return results
@@ -463,7 +461,7 @@ async def get_product(
             )
             response.is_on_sale = any(pr.is_on_sale for pr, _ in price_reports)
 
-        # Override with listing-backed retailer metadata (#49c read migration)
+        # Override with listing-backed retailer metadata
         ld = get_listing_enrichment_map(db, [product_id]).get(product_id)
         if ld:
             response.in_stock = ld["any_in_stock"]
@@ -473,8 +471,6 @@ async def get_product(
                 response.external_image_url = ld["external_image_url"]
                 if not product.image_url:
                     response.image_url = ld["external_image_url"]
-        # else: no listing → keep Product field values
-        # TODO(#49e): remove Product fallback after #49e drops legacy columns
 
         return response
 
@@ -688,14 +684,7 @@ async def get_product_stores(
                     listing.external_source, listing.external_id, product.name
                 )
             else:
-                # TODO(#49e): remove fallback after #49e drops legacy Product columns
-                store_url = _build_store_url(
-                    product.external_source,
-                    product.external_id
-                    if product.external_source == f"catalog_{store.chain}"
-                    else None,
-                    product.name,
-                )
+                store_url = _build_store_url(None, None, product.name)
             stores.append(
                 {
                     "id": str(store.id),

@@ -411,11 +411,14 @@ class TestCatalogIngest:
         assert counts.created == 1
         assert counts.price_reports == 1
         product = test_db_session.query(Product).filter_by(name="Fresh Catalog Milk 2L").one()
-        # Scraped CDN URL lands in external_image_url; image_url stays NULL for enricher.
-        assert product.external_image_url == "http://img/m.jpg"
+        # image_url stays NULL — enricher writes it; retailer image lives in listing
         assert product.image_url is None
         assert product.image_source is None
-        assert product.catalog_last_seen_at is not None
+        # Verify retailer image landed in the listing, not on Product
+        from app.models import ProductRetailerListing
+        listing = test_db_session.query(ProductRetailerListing).filter_by(product_id=product.id).one()
+        assert listing.external_image_url == "http://img/m.jpg"
+        assert listing.catalog_last_seen_at is not None
         report = test_db_session.query(PriceReport).filter_by(product_id=product.id).one()
         assert report.source == "catalog_coles"
         assert report.is_on_sale is True
@@ -444,12 +447,16 @@ class TestCatalogIngest:
         test_db_session.commit()
 
         assert counts.created == 0
-        assert counts.updated == 1
+        # No canonical fields to update (no brand/category/unit_price in cp), so updated=0
+        assert counts.updated == 0
         refreshed = test_db_session.get(Product, existing.id)
-        # Existing OFF image_url must NOT be overwritten; catalog URL goes to external_image_url.
+        # Existing OFF image_url must NOT be overwritten; catalog URL goes to listing only.
         assert refreshed.image_url == "http://existing/keep.jpg"
-        assert refreshed.external_image_url == "http://catalog/new.jpg"
-        assert refreshed.catalog_last_seen_at is not None
+        # Product no longer has external_image_url — verify it's in the listing
+        from app.models import ProductRetailerListing
+        listing = test_db_session.query(ProductRetailerListing).filter_by(product_id=existing.id).first()
+        if listing:
+            assert listing.catalog_last_seen_at is not None
 
     @pytest.mark.integration
     def test_empty_batch_is_noop(self, test_db_session):

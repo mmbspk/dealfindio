@@ -16,7 +16,7 @@ from sqlalchemy import select as sa_select
 from sqlalchemy.orm import Session
 
 from app.deps import get_db, get_redis, require_admin, require_admin_sse
-from app.models import PriceReport, Product
+from app.models import PriceReport, Product, ProductRetailerListing
 
 router = APIRouter()
 
@@ -525,17 +525,14 @@ def get_catalog_product_counts(
     db: Session = Depends(get_db),
     _admin=Depends(require_admin),
 ) -> dict[str, int]:
-    """Return total product count per chain (keyed by chain name, not external_source)."""
-    from sqlalchemy import text as sa_text
-
+    """Return distinct product count per chain (from ProductRetailerListing)."""
     rows = db.execute(
-        sa_text(
-            "SELECT external_source, COUNT(*) FROM products "
-            "WHERE external_source LIKE 'catalog_%' "
-            "GROUP BY external_source"
-        )
-    ).fetchall()
-    return {src.replace("catalog_", ""): cnt for src, cnt in rows}
+        sa_select(
+            ProductRetailerListing.chain,
+            func.count(ProductRetailerListing.product_id.distinct()).label("cnt"),
+        ).group_by(ProductRetailerListing.chain)
+    ).all()
+    return {chain: cnt for chain, cnt in rows}
 
 
 @router.get("/catalog/progress/{task_id}", response_model=CatalogProgressResponse)
@@ -609,24 +606,24 @@ def get_catalog_coverage(
     db: Session = Depends(get_db),
     _admin=Depends(require_admin),
 ) -> list[CatalogCoverageRow]:
-    """Per-chain field coverage stats — total products, % non-null for key fields, last crawl."""
+    """Per-chain field coverage stats from ProductRetailerListing."""
     rows = db.execute(
         text(
             """
         SELECT
-            external_source,
-            COUNT(*)                                             AS total,
-            ROUND(COUNT(brand)       * 100.0 / COUNT(*), 1)     AS brand_pct,
-            ROUND(COUNT(COALESCE(image_url, external_image_url))   * 100.0 / COUNT(*), 1)     AS image_pct,
-            ROUND(COUNT(package_size)* 100.0 / COUNT(*), 1)     AS pkg_pct,
-            ROUND(COUNT(unit_price)  * 100.0 / COUNT(*), 1)     AS unit_price_pct,
-            ROUND(COUNT(unit_price_label)* 100.0 / COUNT(*), 1) AS unit_label_pct,
-            ROUND(COUNT(category)    * 100.0 / COUNT(*), 1)     AS category_pct,
-            ROUND(COUNT(gtin)        * 100.0 / COUNT(*), 1)     AS gtin_pct,
-            MAX(catalog_last_seen_at)                            AS last_crawled
-        FROM products
-        WHERE external_source LIKE 'catalog_%'
-        GROUP BY external_source
+            chain,
+            COUNT(*)                                                              AS total,
+            ROUND(COUNT(external_brand)          * 100.0 / COUNT(*), 1)          AS brand_pct,
+            ROUND(COUNT(external_image_url)      * 100.0 / COUNT(*), 1)          AS image_pct,
+            ROUND(COUNT(package_size_raw)        * 100.0 / COUNT(*), 1)          AS pkg_pct,
+            ROUND(COUNT(p.unit_price)            * 100.0 / COUNT(*), 1)          AS unit_price_pct,
+            ROUND(COUNT(p.unit_price_label)      * 100.0 / COUNT(*), 1)          AS unit_label_pct,
+            ROUND(COUNT(external_category)       * 100.0 / COUNT(*), 1)          AS category_pct,
+            ROUND(COUNT(p.gtin)                  * 100.0 / COUNT(*), 1)          AS gtin_pct,
+            MAX(catalog_last_seen_at)                                             AS last_crawled
+        FROM product_retailer_listings prl
+        JOIN products p ON p.id = prl.product_id
+        GROUP BY chain
         ORDER BY total DESC
     """
         )
@@ -648,11 +645,10 @@ def get_catalog_coverage(
 
     out = []
     for r in rows:
-        chain = r[0].replace("catalog_", "")
-        cats_crawled, cats_total = cat_map.get(chain, (0, 0))
+        cats_crawled, cats_total = cat_map.get(r[0], (0, 0))
         out.append(
             CatalogCoverageRow(
-                chain=chain,
+                chain=r[0],
                 total_products=r[1],
                 brand_pct=float(r[2]),
                 image_pct=float(r[3]),
@@ -707,113 +703,6 @@ def cancel_catalog_crawl(
     db.commit()
 
     return {"chain": chain, "status": "cancelled", "task_id": run.celery_task_id}
-
-
-# ── Listing backfill & coverage ───────────────────────────────────────────────
-
-
-class BackfillTriggerResponse(BaseModel):
-    task_id: str
-    message: str
-
-
-class ListingCoverageRow(BaseModel):
-    chain: str
-    eligible: int
-    correctly_mapped: int
-    missing: int
-    conflicted: int
-    coverage_pct: float
-    ready_for_read_migration: bool
-
-
-def _get_listing_coverage(db: Session) -> list[ListingCoverageRow]:
-    """Compute per-chain listing coverage with explicit conflict visibility.
-
-    Each eligible Product row falls into exactly one bucket:
-    - correctly_mapped: listing exists and listing.product_id == product.id
-    - missing:          no listing exists for (chain, external_id)
-    - conflicted:       listing exists but listing.product_id != product.id
-
-    coverage_pct = correctly_mapped / eligible * 100
-
-    #49c read-migration gate:
-      ready_for_read_migration = (coverage_pct == 100 AND conflicted == 0)
-    Conflicted identities are NOT counted as covered.
-    """
-    rows = db.execute(
-        text(
-            """
-            SELECT
-                p.external_source,
-                COUNT(*) AS eligible,
-                COUNT(CASE WHEN prl.id IS NOT NULL
-                                AND prl.product_id = p.id   THEN 1 END) AS correctly_mapped,
-                COUNT(CASE WHEN prl.id IS NULL              THEN 1 END) AS missing,
-                COUNT(CASE WHEN prl.id IS NOT NULL
-                                AND prl.product_id != p.id  THEN 1 END) AS conflicted,
-                ROUND(
-                    COUNT(CASE WHEN prl.id IS NOT NULL
-                                    AND prl.product_id = p.id THEN 1 END)
-                    * 100.0 / NULLIF(COUNT(*), 0),
-                    1
-                ) AS coverage_pct
-            FROM products p
-            LEFT JOIN product_retailer_listings prl
-              ON prl.chain = REPLACE(p.external_source, 'catalog_', '')
-             AND prl.external_id = p.external_id
-            WHERE p.external_source LIKE 'catalog_%'
-              AND p.external_id IS NOT NULL
-            GROUP BY p.external_source
-            ORDER BY eligible DESC
-            """
-        )
-    ).fetchall()
-
-    return [
-        ListingCoverageRow(
-            chain=r[0].removeprefix("catalog_"),
-            eligible=r[1],
-            correctly_mapped=r[2],
-            missing=r[3],
-            conflicted=r[4],
-            coverage_pct=float(r[5] or 0),
-            ready_for_read_migration=(r[2] == r[1] and r[4] == 0),
-        )
-        for r in rows
-    ]
-
-
-@router.post("/listings/backfill", response_model=BackfillTriggerResponse)
-def trigger_listing_backfill(
-    _admin=Depends(require_admin),
-) -> BackfillTriggerResponse:
-    """Enqueue the idempotent ProductRetailerListing backfill task.
-
-    The task creates listing rows for all historical Products with a catalog
-    SKU but no existing listing. Safe to call multiple times.
-    """
-    from app.workers.catalog_tasks import backfill_retailer_listings
-
-    task = backfill_retailer_listings.apply_async(queue="catalog")
-    return BackfillTriggerResponse(
-        task_id=task.id,
-        message="Backfill task enqueued. Poll /catalog/progress/{task_id} for status.",
-    )
-
-
-@router.get("/listings/coverage", response_model=list[ListingCoverageRow])
-def get_listing_coverage(
-    db: Session = Depends(get_db),
-    _admin=Depends(require_admin),
-) -> list[ListingCoverageRow]:
-    """Per-chain listing coverage with explicit conflict counts.
-
-    #49c read-migration is safe when every chain reports:
-      coverage_pct == 100  AND  conflicted == 0
-    (equivalently: ready_for_read_migration == true for all expected chains)
-    """
-    return _get_listing_coverage(db)
 
 
 class ConfigEntry(BaseModel):
@@ -983,22 +872,31 @@ def _latest_price_map(session: Session, product_ids: list) -> dict:
     return {str(row.product_id): row.price_cents / 100.0 for row in rows}
 
 
-def _product_to_detail(p: "Product", price_aud: float | None) -> MatchProductDetail:
+def _product_to_detail(p: "Product", price_aud: float | None, db: Session) -> MatchProductDetail:
     from app.services.ai_dedup import _build_store_url
 
-    chain = None
-    if p.external_source and p.external_source.startswith("catalog_"):
-        chain = p.external_source.replace("catalog_", "")
+    listing = db.execute(
+        sa_select(ProductRetailerListing)
+        .where(ProductRetailerListing.product_id == p.id)
+        .order_by(ProductRetailerListing.catalog_last_seen_at.desc().nulls_last())
+        .limit(1)
+    ).scalar_one_or_none()
+
+    chain = listing.chain if listing else None
+    external_id = listing.external_id if listing else None
+    image = p.image_url or (listing.external_image_url if listing else None)
+    package_size = listing.package_size_raw if listing else None
+
     return MatchProductDetail(
         id=str(p.id),
         name=p.name,
         brand=p.brand,
         category=p.category,
-        image_url=p.image_url or p.external_image_url,
+        image_url=image,
         chain=chain,
         price_aud=price_aud,
-        store_url=_build_store_url(chain, p.external_id, p.name),
-        package_size=p.package_size,
+        store_url=_build_store_url(chain, external_id, p.name),
+        package_size=package_size,
         unit_price=p.unit_price,
     )
 
@@ -1092,18 +990,19 @@ def list_dedup_candidates(
     for r in rows:
         pa = r.product_a
         pb = r.product_b
-        if chain and not (
-            (pa.external_source or "").endswith(chain) or (pb.external_source or "").endswith(chain)
-        ):
-            continue
+        if chain:
+            pa_chains = {l.chain for l in pa.retailer_listings}
+            pb_chains = {l.chain for l in pb.retailer_listings}
+            if chain not in pa_chains and chain not in pb_chains:
+                continue
         items.append(
             MatchCandidateResponse(
                 id=str(r.id),
                 score=r.score,
                 status=r.status,
                 proposed_by=r.proposed_by,
-                product_a=_product_to_detail(pa, price_map.get(str(pa.id))),
-                product_b=_product_to_detail(pb, price_map.get(str(pb.id))),
+                product_a=_product_to_detail(pa, price_map.get(str(pa.id)), db),
+                product_b=_product_to_detail(pb, price_map.get(str(pb.id)), db),
                 created_at=r.created_at,
                 ai_verdict=r.ai_verdict,
                 ai_confidence=r.ai_confidence,
@@ -1195,7 +1094,7 @@ def decide_candidate(
                 chain=None,
                 price_aud=None,
             )
-        return _product_to_detail(product, price_map.get(str(pid)))
+        return _product_to_detail(product, price_map.get(str(pid)), db)
 
     if row is None:
         # Expected on approve: merging deletes the dropped product, which
@@ -1332,8 +1231,8 @@ def propose_manual_match(
         score=row.score,
         status=row.status,
         proposed_by=row.proposed_by,
-        product_a=_product_to_detail(row.product_a, price_map.get(str(row.product_a_id))),
-        product_b=_product_to_detail(row.product_b, price_map.get(str(row.product_b_id))),
+        product_a=_product_to_detail(row.product_a, price_map.get(str(row.product_a_id)), db),
+        product_b=_product_to_detail(row.product_b, price_map.get(str(row.product_b_id)), db),
         created_at=row.created_at,
     )
 
@@ -1432,8 +1331,9 @@ def _run_ai_dedup_stream(
     matcher = FuzzyMatcher()
 
     def _chain_of(p: Product) -> str | None:
-        src = p.external_source or ""
-        return src[len("catalog_") :] if src.startswith("catalog_") else None
+        if p.retailer_listings:
+            return p.retailer_listings[0].chain
+        return None
 
     def _norm(p: Product) -> str:
         return matcher.normalize_name(p.name)
@@ -1443,8 +1343,13 @@ def _run_ai_dedup_stream(
             return verdict.value
         return DedupDecision.SAME.value if verdict.same_product else DedupDecision.DIFFERENT.value
 
+    has_listing = (
+        sa_select(ProductRetailerListing.id)
+        .where(ProductRetailerListing.product_id == Product.id)
+        .exists()
+    )
     products = list(
-        db.execute(sa_select(Product).where(Product.external_source.like("catalog_%")))
+        db.execute(sa_select(Product).where(has_listing))
         .scalars()
         .all()
     )
@@ -1665,7 +1570,10 @@ def get_image_enrichment_status(
         text(
             "SELECT COUNT(*) AS total, "
             "COUNT(image_url) AS with_self_hosted, "
-            "COUNT(COALESCE(image_url, external_image_url)) AS with_any "
+            "COUNT(CASE WHEN image_url IS NOT NULL OR EXISTS("
+            "  SELECT 1 FROM product_retailer_listings prl"
+            "  WHERE prl.product_id = products.id AND prl.external_image_url IS NOT NULL"
+            ") THEN 1 END) AS with_any "
             "FROM products"
         )
     ).one()
@@ -1772,13 +1680,26 @@ def list_image_candidates(
             ),
             {"pid": str(p.id)},
         ).fetchone()
+        chain_name = chain_row.chain if chain_row else None
+        listing_image = None
+        if chain_name:
+            lr = db.execute(
+                sa_select(ProductRetailerListing.external_image_url)
+                .where(
+                    ProductRetailerListing.product_id == p.id,
+                    ProductRetailerListing.chain == chain_name,
+                )
+                .order_by(ProductRetailerListing.catalog_last_seen_at.desc().nulls_last())
+                .limit(1)
+            ).scalar_one_or_none()
+            listing_image = lr
         items.append(
             ImageCandidateItem(
                 product_id=str(p.id),
                 name=p.name,
                 brand=p.brand,
-                chain=chain_row.chain if chain_row else None,
-                retailer_image_url=p.external_image_url,
+                chain=chain_name,
+                retailer_image_url=listing_image,
                 off_image_url=p.off_image_url,
                 off_image_score=p.off_image_score,
                 off_image_off_code=p.off_image_off_code,
@@ -1931,7 +1852,14 @@ def _run_image_ai_review_stream(
     )
 
     for product in candidates:
-        retailer_data = _fetch_image(product.external_image_url)
+        retailer_image_url = db.execute(
+            sa_select(ProductRetailerListing.external_image_url)
+            .where(ProductRetailerListing.product_id == product.id)
+            .where(ProductRetailerListing.external_image_url.isnot(None))
+            .order_by(ProductRetailerListing.catalog_last_seen_at.desc().nulls_last())
+            .limit(1)
+        ).scalar_one_or_none()
+        retailer_data = _fetch_image(retailer_image_url)
         off_data = _fetch_image(product.off_image_url)
 
         if not retailer_data or not off_data:

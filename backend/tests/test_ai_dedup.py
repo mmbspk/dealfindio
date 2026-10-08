@@ -250,14 +250,12 @@ class TestPropagateGtin:
             name="Coke A",
             brand="Coca-Cola",
             gtin=keep_gtin,
-            external_source="catalog_woolworths",
         )
         drop = Product(
             id=uuid4(),
             name="Coke B",
             brand="Coca-Cola",
             gtin=drop_gtin,
-            external_source="catalog_coles",
         )
         session.add_all([keep, drop])
         session.flush()
@@ -303,7 +301,7 @@ class TestPropagateGtin:
         # dropped row (and would also have over-matched any unrelated row).
         from app.models import Product
 
-        other = Product(id=uuid4(), name="Owner", gtin=VALID_B, external_source="catalog_aldi")
+        other = Product(id=uuid4(), name="Owner", gtin=VALID_B)
         test_db_session.add(other)
         test_db_session.flush()
         keep, drop = self._seed(test_db_session, keep_gtin=None, drop_gtin=VALID_A)
@@ -462,10 +460,10 @@ class TestAdminAiFields:
         from app.models.product_match import ProductMatchCandidate
 
         a = Product(
-            id=uuid4(), name="Coke 1.25L", brand="Coca-Cola", external_source="catalog_woolworths"
+            id=uuid4(), name="Coke 1.25L", brand="Coca-Cola"
         )
         b = Product(
-            id=uuid4(), name="Coca Cola 1.25L", brand="Coca-Cola", external_source="catalog_coles"
+            id=uuid4(), name="Coca Cola 1.25L", brand="Coca-Cola"
         )
         test_db_session.add_all([a, b])
         test_db_session.flush()
