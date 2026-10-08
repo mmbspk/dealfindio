@@ -245,7 +245,7 @@ def check_watchlist_for_price(self, price_report_id: str) -> NotificationResult:
 
                 # Log in-app notification FIRST so the badge count includes this event
                 # when the push is dispatched moments later.
-                _log_notification(
+                in_app_notif = _log_notification(
                     session,
                     user,
                     watchlist_item,
@@ -267,7 +267,7 @@ def check_watchlist_for_price(self, price_report_id: str) -> NotificationResult:
                         {
                             "product_id": str(price_report.product_id),
                             "list_id": str(watchlist_item.list_id) if watchlist_item.list_id else None,
-                            "notification_id": None,  # filled after push log below
+                            "notification_id": str(in_app_notif.id) if in_app_notif else None,
                             "store_id": str(price_report.store_id),
                             "price_cents": str(price_report.price_cents),
                             "trigger_type": trigger_type,
@@ -351,7 +351,7 @@ def _log_notification(
     fcm_message_id: str | None = None,
     email_message_id: str | None = None,
     is_delivered: bool = False,
-) -> None:
+) -> Notification | None:
     try:
         notif = Notification(
             user_id=watchlist_item.user_id,
@@ -368,12 +368,14 @@ def _log_notification(
         )
         session.add(notif)
         session.commit()
+        return notif
     except Exception as e:
         logger.error(f"Failed to log {channel} notification: {e}")
         try:
             session.rollback()
         except Exception:
             pass
+        return None
 
 
 @celery_app.task(

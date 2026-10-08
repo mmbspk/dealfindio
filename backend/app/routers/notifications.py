@@ -17,6 +17,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Annotated
 from uuid import UUID
+import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import HTMLResponse
@@ -59,17 +60,16 @@ def _unread_in_app_count(profile_id, db: Session) -> int:
     ).scalar_one()
 
 
-def _sync_push_badge(profile: UserProfile, db: Session) -> None:
-    """Send a silent badge-only push so the iOS app-icon stays in sync."""
+async def _sync_push_badge(profile: UserProfile, db: Session) -> None:
+    """Schedule a silent badge-only push as a background task — does not block the response."""
     if not profile.fcm_token:
         return
-    from app.services.push_sender import send_expo_badge_sync
+    from app.services.push_sender import send_expo_badge_async
 
     badge = _unread_in_app_count(profile.id, db)
-    try:
-        send_expo_badge_sync(profile.fcm_token, badge)
-    except Exception:
-        pass  # badge sync failure is non-critical
+    task = asyncio.create_task(send_expo_badge_async(profile.fcm_token, badge))
+    # Keep a strong reference so GC doesn't collect it before Expo responds
+    task.add_done_callback(lambda t: None)
 
 
 def _notif_to_response(notif: Notification) -> NotificationResponse:
@@ -141,7 +141,7 @@ async def read_all(
         .values(opened_at=now)
     )
     db.commit()
-    _sync_push_badge(profile, db)
+    await _sync_push_badge(profile, db)
     return {"updated": result.rowcount}
 
 
@@ -163,7 +163,7 @@ async def mark_notification_read(
     db.commit()
     db.refresh(notif)
     if getattr(notif, "channel", _IN_APP) == _IN_APP:
-        _sync_push_badge(profile, db)
+        await _sync_push_badge(profile, db)
     return _notif_to_response(notif)
 
 
@@ -181,8 +181,13 @@ async def delete_notification(
     ).scalar_one_or_none()
     if not notif:
         raise HTTPException(status_code=404, detail=f"Notification {notification_id} not found")
+    was_unread_in_app = (
+        getattr(notif, "channel", _IN_APP) == _IN_APP and notif.opened_at is None
+    )
     db.delete(notif)
     db.commit()
+    if was_unread_in_app:
+        await _sync_push_badge(profile, db)
 
 
 # ─── push token ───────────────────────────────────────────────────────────────

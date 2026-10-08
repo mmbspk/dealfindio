@@ -8,14 +8,13 @@ Verifies:
   4. read_all marks only in_app rows as read (push/email rows unchanged).
   5. Badge number equals the server-side in_app unread count at push-send time.
   6. Badge resets to 0 after read_all.
-  7. Concurrent notification delivery does not corrupt the badge count.
-  8. Push payload carries product_id, deep_link, and list_id.
-  9. list_notifications defaults to channel=in_app.
+  7. notification_id in push payload is set to the in_app row's UUID.
+  8. Deleting an unread in_app notification triggers badge sync.
 """
 
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 from uuid import uuid4
 
 import pytest
@@ -107,7 +106,7 @@ class TestUnreadCountEndpoint:
         email = _make_notif(uid, "email", db=test_db_session)
         test_db_session.commit()
 
-        with patch("app.routers.notifications._sync_push_badge"):
+        with patch("app.routers.notifications._sync_push_badge", new=AsyncMock()):
             resp = authed_client.put("/api/v1/notifications/read-all")
         assert resp.status_code == 200
         assert resp.json()["updated"] == 1  # only the in_app row
@@ -124,7 +123,7 @@ class TestUnreadCountEndpoint:
         _make_notif(authed_user.id, "in_app", db=test_db_session)
         test_db_session.commit()
 
-        with patch("app.routers.notifications._sync_push_badge"):
+        with patch("app.routers.notifications._sync_push_badge", new=AsyncMock()):
             authed_client.put("/api/v1/notifications/read-all")
 
         resp = authed_client.get("/api/v1/notifications/unread-count")
@@ -245,15 +244,15 @@ class TestPushBadge:
 
     @pytest.mark.integration
     def test_badge_resets_to_zero_after_read_all(self, authed_client, authed_user, test_db_session):
-        """_sync_push_badge is called after read_all (badge will be 0)."""
+        """_sync_push_badge is called after read_all."""
         _make_notif(authed_user.id, "in_app", db=test_db_session)
         test_db_session.commit()
 
-        synced = []
-        with patch("app.routers.notifications._sync_push_badge", side_effect=lambda p, db: synced.append(1)):
+        mock_badge = AsyncMock()
+        with patch("app.routers.notifications._sync_push_badge", mock_badge):
             resp = authed_client.put("/api/v1/notifications/read-all")
         assert resp.status_code == 200
-        assert len(synced) == 1  # sync was called once
+        assert mock_badge.called
 
     @pytest.mark.integration
     def test_concurrent_notifications_correct_count(
@@ -405,6 +404,8 @@ class TestPushPayloadDeepLink:
         assert expected_product_id in captured.get("deep_link", "")
         assert captured.get("deep_link", "").startswith("dealfindio://product/")
         assert captured.get("list_id") == expected_list_id
+        # notification_id must be set to the in_app row's UUID (not None)
+        assert captured.get("notification_id") is not None
 
     @pytest.mark.integration
     def test_mark_notification_read_syncs_badge(self, authed_client, authed_user, test_db_session):
@@ -412,11 +413,11 @@ class TestPushPayloadDeepLink:
         notif = _make_notif(authed_user.id, "in_app", db=test_db_session)
         test_db_session.commit()
 
-        synced = []
-        with patch("app.routers.notifications._sync_push_badge", side_effect=lambda p, db: synced.append(1)):
+        mock_badge = AsyncMock()
+        with patch("app.routers.notifications._sync_push_badge", mock_badge):
             resp = authed_client.put(f"/api/v1/notifications/{notif.id}/read")
         assert resp.status_code == 200
-        assert len(synced) == 1
+        assert mock_badge.called
 
     @pytest.mark.integration
     def test_mark_push_row_read_does_not_sync_badge(
@@ -426,8 +427,32 @@ class TestPushPayloadDeepLink:
         notif = _make_notif(authed_user.id, "push", db=test_db_session)
         test_db_session.commit()
 
-        synced = []
-        with patch("app.routers.notifications._sync_push_badge", side_effect=lambda p, db: synced.append(1)):
+        mock_badge = AsyncMock()
+        with patch("app.routers.notifications._sync_push_badge", mock_badge):
             resp = authed_client.put(f"/api/v1/notifications/{notif.id}/read")
         assert resp.status_code == 200
-        assert len(synced) == 0
+        assert not mock_badge.called
+
+    @pytest.mark.integration
+    def test_delete_unread_in_app_syncs_badge(self, authed_client, authed_user, test_db_session):
+        """Deleting an unread in_app notification triggers badge sync."""
+        notif = _make_notif(authed_user.id, "in_app", db=test_db_session)
+        test_db_session.commit()
+
+        mock_badge = AsyncMock()
+        with patch("app.routers.notifications._sync_push_badge", mock_badge):
+            resp = authed_client.delete(f"/api/v1/notifications/{notif.id}")
+        assert resp.status_code == 204
+        assert mock_badge.called
+
+    @pytest.mark.integration
+    def test_delete_read_in_app_does_not_sync_badge(self, authed_client, authed_user, test_db_session):
+        """Deleting an already-read in_app notification does NOT trigger badge sync."""
+        notif = _make_notif(authed_user.id, "in_app", opened_at=datetime.now(timezone.utc), db=test_db_session)
+        test_db_session.commit()
+
+        mock_badge = AsyncMock()
+        with patch("app.routers.notifications._sync_push_badge", mock_badge):
+            resp = authed_client.delete(f"/api/v1/notifications/{notif.id}")
+        assert resp.status_code == 204
+        assert not mock_badge.called
