@@ -159,28 +159,65 @@ class TestEmailSizeGuard:
         assert not any("clipped" in r.message for r in caplog.records)
 
 
-# ── 6–7: One-click unsubscribe endpoint ──────────────────────────────────────
+# ── 6–10: One-click unsubscribe endpoints ────────────────────────────────────
 
 
 class TestUnsubscribeEndpoint:
     @pytest.mark.integration
-    def test_valid_token_sets_preference_and_returns_200(
+    def test_get_shows_confirmation_page_and_does_not_mutate(
         self, authed_client, authed_user, test_db_session
     ):
-        """A valid signed unsubscribe token disables email prefs and returns 200 HTML."""
+        """GET renders a confirmation form — does NOT mutate preferences (scanner-safe)."""
         token = generate_unsubscribe_token(str(authed_user.id), "email_price_match")
+        original_pref = authed_user.notif_email_price_match
 
         resp = authed_client.get(f"/api/v1/notifications/unsubscribe?token={token}")
         assert resp.status_code == 200
-        assert "unsubscribed" in resp.text.lower() or "success" in resp.text.lower()
+        # Page must contain a POST form for human confirmation
+        assert 'method="POST"' in resp.text or 'method="post"' in resp.text
+
+        # Preferences MUST NOT have changed
+        test_db_session.refresh(authed_user)
+        assert authed_user.notif_email_price_match == original_pref
+
+    @pytest.mark.integration
+    def test_post_valid_token_unsubscribes_and_returns_200(
+        self, authed_client, authed_user, test_db_session
+    ):
+        """RFC 8058: POST with a valid token disables email prefs and returns 200."""
+        token = generate_unsubscribe_token(str(authed_user.id), "email_price_match")
+
+        resp = authed_client.post(f"/api/v1/notifications/unsubscribe?token={token}")
+        assert resp.status_code == 200
+        assert "unsubscribed" in resp.text.lower()
 
         test_db_session.refresh(authed_user)
         assert authed_user.notif_email_price_match is False
         assert authed_user.notif_email_pct_off is False
 
     @pytest.mark.integration
-    def test_invalid_token_returns_400(self, authed_client):
-        """A tampered or invalid token returns 400 with an error page."""
+    def test_post_invalid_token_returns_400(self, authed_client):
+        """POST with a tampered token returns 400 error page."""
+        resp = authed_client.post("/api/v1/notifications/unsubscribe?token=bad.token.here")
+        assert resp.status_code == 400
+        assert "invalid" in resp.text.lower() or "expired" in resp.text.lower()
+
+    @pytest.mark.integration
+    def test_post_is_idempotent(self, authed_client, authed_user, test_db_session):
+        """Repeated POST with the same token returns 200 both times (idempotent unsubscribe)."""
+        token = generate_unsubscribe_token(str(authed_user.id), "email_price_match")
+
+        resp1 = authed_client.post(f"/api/v1/notifications/unsubscribe?token={token}")
+        resp2 = authed_client.post(f"/api/v1/notifications/unsubscribe?token={token}")
+        assert resp1.status_code == 200
+        assert resp2.status_code == 200
+
+        test_db_session.refresh(authed_user)
+        assert authed_user.notif_email_price_match is False
+
+    @pytest.mark.integration
+    def test_get_invalid_token_returns_400(self, authed_client):
+        """GET with an invalid token returns 400 without showing the confirmation form."""
         resp = authed_client.get("/api/v1/notifications/unsubscribe?token=invalid.token.here")
         assert resp.status_code == 400
         assert "invalid" in resp.text.lower() or "expired" in resp.text.lower()

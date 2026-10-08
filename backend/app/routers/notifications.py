@@ -290,11 +290,34 @@ async def update_preferences(
 # ─── one-click unsubscribe (no auth) ─────────────────────────────────────────
 
 
+def _apply_unsubscribe(user_id: str, channel: str, db: Session) -> None:
+    """Idempotent: disable email prefs for the given channel. Safe to call multiple times."""
+    from uuid import UUID as _UUID
+
+    user_profile = db.execute(
+        select(UserProfile).where(UserProfile.id == _UUID(user_id))
+    ).scalar_one_or_none()
+    if not user_profile:
+        return
+    if channel == "email_price_match":
+        user_profile.notif_email_price_match = False
+        user_profile.notif_email_pct_off = False
+    elif channel == "email_weekly_digest":
+        user_profile.notif_email_weekly_digest = False
+    else:
+        user_profile.notif_email_price_match = False
+        user_profile.notif_email_pct_off = False
+        user_profile.notif_email_prediction = False
+        user_profile.notif_email_weekly_digest = False
+    db.commit()
+
+
 @router.get("/unsubscribe", response_class=HTMLResponse, include_in_schema=False)
-async def unsubscribe(
+async def unsubscribe_confirm(
     token: str = Query(...),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
+    """Non-mutating confirmation page — protects against email-scanner pre-fetch."""
     from app.services.email_sender import verify_unsubscribe_token
 
     result = verify_unsubscribe_token(token)
@@ -303,30 +326,27 @@ async def unsubscribe(
             content=_unsub_page("Invalid or expired unsubscribe link.", success=False),
             status_code=400,
         )
+    return HTMLResponse(content=_unsub_confirm_page(token))
 
+
+@router.post("/unsubscribe", response_class=HTMLResponse, include_in_schema=False)
+async def unsubscribe_execute(
+    token: str = Query(...),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    """RFC 8058 one-click POST endpoint. Gmail POSTs List-Unsubscribe=One-Click here."""
+    from app.services.email_sender import verify_unsubscribe_token
+
+    result = verify_unsubscribe_token(token)
+    if not result:
+        return HTMLResponse(
+            content=_unsub_page("Invalid or expired unsubscribe link.", success=False),
+            status_code=400,
+        )
     user_id, channel = result
     try:
-        from uuid import UUID as _UUID
-
-        user_profile = db.execute(
-            select(UserProfile).where(UserProfile.id == _UUID(user_id))
-        ).scalar_one_or_none()
-
-        if user_profile:
-            if channel == "email_price_match":
-                user_profile.notif_email_price_match = False
-                user_profile.notif_email_pct_off = False
-            elif channel == "email_weekly_digest":
-                user_profile.notif_email_weekly_digest = False
-            else:
-                user_profile.notif_email_price_match = False
-                user_profile.notif_email_pct_off = False
-                user_profile.notif_email_prediction = False
-                user_profile.notif_email_weekly_digest = False
-            db.commit()
-        return HTMLResponse(
-            content=_unsub_page("You've been unsubscribed successfully.", success=True)
-        )
+        _apply_unsubscribe(user_id, channel, db)
+        return HTMLResponse(content=_unsub_page("You've been unsubscribed successfully.", success=True))
     except Exception as e:
         logger.error(f"Unsubscribe failed: {e}")
         db.rollback()
@@ -348,6 +368,29 @@ def _unsub_page(message: str, *, success: bool) -> str:
     <h1 style="font-size:22px;font-weight:700;color:#111827;margin:16px 0 8px;">DealFindio</h1>
     <p style="font-size:16px;color:#374151;margin:0 0 24px;">{message}</p>
     <a href="/" style="display:inline-block;background:#4f46e5;color:#fff;padding:10px 24px;border-radius:8px;text-decoration:none;font-weight:600;">Go to App</a>
+  </div>
+</body>
+</html>"""
+
+
+def _unsub_confirm_page(token: str) -> str:
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><title>Unsubscribe — DealFindio</title></head>
+<body style="margin:0;padding:40px 16px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f3f4f6;text-align:center;">
+  <div style="max-width:480px;margin:0 auto;background:#fff;border-radius:12px;padding:40px;box-shadow:0 1px 3px rgba(0,0,0,.1);">
+    <div style="font-size:48px;color:#f59e0b;">!</div>
+    <h1 style="font-size:22px;font-weight:700;color:#111827;margin:16px 0 8px;">Unsubscribe from DealFindio?</h1>
+    <p style="font-size:15px;color:#374151;margin:0 0 24px;">You'll no longer receive deal alert emails for your watchlist.</p>
+    <form method="POST" action="/api/v1/notifications/unsubscribe?token={{token}}">
+      <button type="submit"
+        style="display:inline-block;background:#dc2626;color:#fff;font-weight:600;font-size:15px;padding:12px 28px;border-radius:8px;border:none;cursor:pointer;">
+        Yes, unsubscribe me
+      </button>
+    </form>
+    <p style="margin:20px 0 0;font-size:14px;">
+      <a href="/" style="color:#4f46e5;text-decoration:none;">No, keep my alerts</a>
+    </p>
   </div>
 </body>
 </html>"""

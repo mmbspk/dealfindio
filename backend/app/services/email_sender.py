@@ -60,14 +60,20 @@ def _base_url() -> str:
 
 
 def _send_email(to: str, subject: str, html: str, unsubscribe_url: str | None = None) -> str | None:
-    """Send email via Resend API. Returns message ID or None on failure."""
+    """Send email via Resend API. Returns message ID or None on failure.
+
+    Size check: logs a WARNING when HTML exceeds _EMAIL_CLIP_WARN_BYTES. This is
+    observability only — it does NOT prevent sending or reduce the payload. Use it
+    to detect templates approaching Gmail's 102 KB clipping threshold so they can
+    be optimised before users see truncated emails.
+    """
     if not _is_email_enabled():
         logger.debug("Email skipped: RESEND_API_KEY not configured")
         return None
 
     size = len(html.encode())
     if size > _EMAIL_CLIP_WARN_BYTES:
-        logger.warning(f"Email to {to} is {size} bytes and may be clipped by Gmail (>{_EMAIL_CLIP_WARN_BYTES})")
+        logger.warning(f"Email to {to} is {size} bytes; may be clipped by Gmail (threshold {_EMAIL_CLIP_WARN_BYTES})")
 
     payload: dict[str, Any] = {
         "from": f"{settings.EMAIL_FROM_NAME} <{settings.EMAIL_FROM_ADDRESS}>",
