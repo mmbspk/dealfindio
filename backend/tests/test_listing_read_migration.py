@@ -534,3 +534,262 @@ class TestGetListingEnrichmentMap:
 
         assert enrichment[p1.id]["external_image_url"] == "http://img/p1.jpg"
         assert enrichment[p2.id]["external_image_url"] == "http://img/p2.jpg"
+
+
+# ── I. No-listing in_stock compatibility (Blocker 1 fix) ──────────────────────
+
+
+class TestNoListingInStockCompatibility:
+    """Products with zero listings fall back to Product.in_stock for filter purposes."""
+
+    @pytest.mark.integration
+    def test_no_listing_in_stock_true_included_in_in_stock_filter(
+        self, test_client, test_db_session: Session
+    ):
+        """Product with no listing and Product.in_stock=True must appear in ?in_stock=true."""
+        p = _product(test_db_session, name="Legacy In Stock", in_stock=True, external_id=None, external_source=None)
+        test_db_session.commit()
+
+        resp = test_client.get("/api/v1/products/search?in_stock=true")
+        assert resp.status_code == 200
+        ids = [item["id"] for item in resp.json()]
+        assert str(p.id) in ids, "no-listing product with Product.in_stock=True must appear in ?in_stock=true"
+
+    @pytest.mark.integration
+    def test_no_listing_in_stock_true_excluded_from_out_of_stock_filter(
+        self, test_client, test_db_session: Session
+    ):
+        """Product with no listing and Product.in_stock=True must NOT appear in ?in_stock=false."""
+        p = _product(test_db_session, name="Legacy In Stock 2", in_stock=True, external_id=None, external_source=None)
+        test_db_session.commit()
+
+        resp = test_client.get("/api/v1/products/search?in_stock=false")
+        assert resp.status_code == 200
+        ids = [item["id"] for item in resp.json()]
+        assert str(p.id) not in ids, "no-listing product with Product.in_stock=True must NOT appear in ?in_stock=false"
+
+    @pytest.mark.integration
+    def test_no_listing_in_stock_false_included_in_out_of_stock_filter(
+        self, test_client, test_db_session: Session
+    ):
+        """Product with no listing and Product.in_stock=False must appear in ?in_stock=false."""
+        p = _product(test_db_session, name="Legacy Out of Stock", in_stock=False, external_id=None, external_source=None)
+        test_db_session.commit()
+
+        resp = test_client.get("/api/v1/products/search?in_stock=false")
+        assert resp.status_code == 200
+        ids = [item["id"] for item in resp.json()]
+        assert str(p.id) in ids, "no-listing product with Product.in_stock=False must appear in ?in_stock=false"
+
+    @pytest.mark.integration
+    def test_no_listing_in_stock_false_excluded_from_in_stock_filter(
+        self, test_client, test_db_session: Session
+    ):
+        """Product with no listing and Product.in_stock=False must NOT appear in ?in_stock=true."""
+        p = _product(test_db_session, name="Legacy Out of Stock 2", in_stock=False, external_id=None, external_source=None)
+        test_db_session.commit()
+
+        resp = test_client.get("/api/v1/products/search?in_stock=true")
+        assert resp.status_code == 200
+        ids = [item["id"] for item in resp.json()]
+        assert str(p.id) not in ids, "no-listing product with Product.in_stock=False must NOT appear in ?in_stock=true"
+
+    @pytest.mark.integration
+    def test_listing_stock_overrides_legacy_product_in_stock(
+        self, test_client, test_db_session: Session
+    ):
+        """Product.in_stock=True but listing.in_stock=False: listing wins in filter."""
+        p = _product(
+            test_db_session,
+            name="Legacy True Listing False",
+            in_stock=True,
+            external_id=None,
+            external_source=None,
+        )
+        _listing(test_db_session, p.id, chain="coles", external_id="LT-LF", in_stock=False)
+        test_db_session.commit()
+
+        resp_true = test_client.get("/api/v1/products/search?in_stock=true")
+        resp_false = test_client.get("/api/v1/products/search?in_stock=false")
+        assert resp_true.status_code == 200
+        assert resp_false.status_code == 200
+
+        ids_true = [item["id"] for item in resp_true.json()]
+        ids_false = [item["id"] for item in resp_false.json()]
+        assert str(p.id) not in ids_true, "listing.in_stock=False must override Product.in_stock=True"
+        assert str(p.id) in ids_false, "product with listing.in_stock=False must appear in ?in_stock=false"
+
+
+# ── J. Chain-specific deal image (Blocker 2 fix) ──────────────────────────────
+
+
+class TestDealChainSpecificImage:
+    """Deal image must come from the deal's own chain listing, not another chain."""
+
+    @pytest.mark.integration
+    def test_deal_image_is_chain_specific_not_other_chain(
+        self, test_client, test_db_session: Session
+    ):
+        """A Coles deal must use the Coles listing image, not the Woolworths image."""
+        p = _product(test_db_session, name="Chain Image Product", external_id=None, external_source=None, image_url=None)
+        _listing(
+            test_db_session,
+            p.id,
+            chain="coles",
+            external_id="CI-COLES",
+            external_image_url="http://img/coles.jpg",
+        )
+        _listing(
+            test_db_session,
+            p.id,
+            chain="woolworths",
+            external_id="CI-WW",
+            external_image_url="http://img/woolworths.jpg",
+        )
+        coles_store = _store(test_db_session, chain="coles")
+        _price_report(test_db_session, p.id, coles_store.id, is_on_sale=True)
+        test_db_session.commit()
+
+        resp = test_client.get("/api/v1/deals/?chain=coles")
+        assert resp.status_code == 200
+        items = resp.json()["items"]
+        deal = next((d for d in items if d["product_id"] == str(p.id)), None)
+        assert deal is not None, "deal not found in response"
+        assert deal["external_image_url"] == "http://img/coles.jpg", (
+            f"Coles deal must use Coles listing image, got: {deal['external_image_url']}"
+        )
+        assert "woolworths" not in (deal["external_image_url"] or ""), (
+            "Coles deal must not use Woolworths listing image"
+        )
+
+    @pytest.mark.integration
+    def test_deal_canonical_image_wins_over_chain_listing(
+        self, test_client, test_db_session: Session
+    ):
+        """Product.image_url (canonical) must win over chain listing image on deal card."""
+        p = _product(
+            test_db_session,
+            name="Canonical Image Product",
+            external_id=None,
+            external_source=None,
+            image_url="http://img/canonical.jpg",
+        )
+        _listing(
+            test_db_session,
+            p.id,
+            chain="coles",
+            external_id="CI-CANON",
+            external_image_url="http://img/coles-listing.jpg",
+        )
+        coles_store = _store(test_db_session, chain="coles")
+        _price_report(test_db_session, p.id, coles_store.id, is_on_sale=True)
+        test_db_session.commit()
+
+        resp = test_client.get("/api/v1/deals/?chain=coles")
+        assert resp.status_code == 200
+        items = resp.json()["items"]
+        deal = next((d for d in items if d["product_id"] == str(p.id)), None)
+        assert deal is not None
+        assert deal["image_url"] == "http://img/canonical.jpg", (
+            f"canonical product.image_url must win over chain listing image, got: {deal['image_url']}"
+        )
+        assert deal["external_image_url"] == "http://img/coles-listing.jpg"
+
+
+# ── K. Watchlist chain-specific image ─────────────────────────────────────────
+
+
+class TestWatchlistChainSpecificImage:
+    """Watchlist enrichment prefers current_chain listing image over cross-chain image."""
+
+    @pytest.mark.integration
+    def test_watchlist_enrich_uses_current_chain_listing_image(self, test_db_session: Session):
+        """_enrich_item with current_chain=coles uses coles listing image, not woolworths."""
+        from app.routers.watchlist import _enrich_item
+        from app.models import UserWatchlist, WatchlistList, UserProfile
+        from app.services.listing_helpers import (
+            get_listing_enrichment_map,
+            get_listing_enrichment_by_chain_map,
+        )
+
+        profile = UserProfile(firebase_uid=f"wl-test-{uuid4()}", email="wl-test@example.com")
+        test_db_session.add(profile)
+        test_db_session.flush()
+        wl_list = WatchlistList(user_id=profile.id, name="Test List")
+        test_db_session.add(wl_list)
+        test_db_session.flush()
+
+        p = _product(test_db_session, name="WL Chain Image", external_id=None, external_source=None, image_url=None)
+        _listing(test_db_session, p.id, chain="coles", external_id="WL-COLES", external_image_url="http://img/wl-coles.jpg")
+        _listing(test_db_session, p.id, chain="woolworths", external_id="WL-WW", external_image_url="http://img/wl-ww.jpg")
+        coles_store = _store(test_db_session, chain="coles")
+        _price_report(test_db_session, p.id, coles_store.id)
+
+        item = UserWatchlist(
+            user_id=profile.id,
+            list_id=wl_list.id,
+            product_id=p.id,
+            is_active=True,
+        )
+        test_db_session.add(item)
+        test_db_session.commit()
+
+        listing_enrichment = get_listing_enrichment_map(test_db_session, [p.id])
+        chain_listing_enrichment = get_listing_enrichment_by_chain_map(test_db_session, [p.id])
+        result = _enrich_item(
+            item,
+            test_db_session,
+            listing_enrichment=listing_enrichment,
+            chain_listing_enrichment=chain_listing_enrichment,
+        )
+
+        assert result.current_chain == "coles"
+        assert result.product_image_url == "http://img/wl-coles.jpg", (
+            f"watchlist must use current_chain=coles listing image, got: {result.product_image_url}"
+        )
+
+    @pytest.mark.integration
+    def test_watchlist_enrich_falls_back_to_product_level_image_when_no_chain(
+        self, test_db_session: Session
+    ):
+        """When current_chain is unknown (no price report), product-level listing image is used."""
+        from app.routers.watchlist import _enrich_item
+        from app.models import UserWatchlist, WatchlistList, UserProfile
+        from app.services.listing_helpers import (
+            get_listing_enrichment_map,
+            get_listing_enrichment_by_chain_map,
+        )
+
+        profile = UserProfile(firebase_uid=f"wl-fb-{uuid4()}", email="wl-fb@example.com")
+        test_db_session.add(profile)
+        test_db_session.flush()
+        wl_list = WatchlistList(user_id=profile.id, name="Fallback List")
+        test_db_session.add(wl_list)
+        test_db_session.flush()
+
+        p = _product(test_db_session, name="WL Fallback Image", external_id=None, external_source=None, image_url=None)
+        _listing(test_db_session, p.id, chain="woolworths", external_id="WL-FB-WW", external_image_url="http://img/wl-fb-ww.jpg")
+
+        item = UserWatchlist(
+            user_id=profile.id,
+            list_id=wl_list.id,
+            product_id=p.id,
+            is_active=True,
+        )
+        test_db_session.add(item)
+        test_db_session.commit()
+
+        listing_enrichment = get_listing_enrichment_map(test_db_session, [p.id])
+        chain_listing_enrichment = get_listing_enrichment_by_chain_map(test_db_session, [p.id])
+        result = _enrich_item(
+            item,
+            test_db_session,
+            listing_enrichment=listing_enrichment,
+            chain_listing_enrichment=chain_listing_enrichment,
+        )
+
+        assert result.current_chain is None
+        assert result.product_image_url == "http://img/wl-fb-ww.jpg", (
+            f"without current_chain, product-level listing image must be used, got: {result.product_image_url}"
+        )
+

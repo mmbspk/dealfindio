@@ -26,7 +26,7 @@ from app.schemas.product import (
     ProductResponse,
 )
 from app.services.geo import haversine_km
-from app.services.listing_helpers import get_listing_enrichment_map
+from app.services.listing_helpers import get_listing_enrichment_map, in_stock_filter_clause
 from app.services.search import search_products_by_gtin, search_products_ranked
 
 
@@ -270,24 +270,7 @@ async def search_products(
                     .exists()
                 )
             elif in_stock is not None:
-                if in_stock:
-                    stmt = stmt.where(
-                        select(ProductRetailerListing.id)
-                        .where(
-                            ProductRetailerListing.product_id == Product.id,
-                            ProductRetailerListing.in_stock == True,  # noqa: E712
-                        )
-                        .exists()
-                    )
-                else:
-                    stmt = stmt.where(
-                        ~select(ProductRetailerListing.id)
-                        .where(
-                            ProductRetailerListing.product_id == Product.id,
-                            ProductRetailerListing.in_stock == True,  # noqa: E712
-                        )
-                        .exists()
-                    )
+                stmt = stmt.where(in_stock_filter_clause(in_stock))
 
             if sort == "name":
                 stmt = stmt.order_by(asc(Product.name))

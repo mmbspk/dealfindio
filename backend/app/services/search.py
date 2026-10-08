@@ -27,6 +27,7 @@ from sqlalchemy import and_, case, func, literal, or_, select
 from sqlalchemy.orm import Session
 
 from app.models import PriceReport, Product, ProductRetailerListing, Store
+from app.services.listing_helpers import in_stock_filter_clause
 
 _TRGM_THRESHOLD = 0.15  # word_similarity floor — permissive for grocery name noise
 _CANDIDATE_POOL = 150  # candidates per lane before RRF fusion
@@ -162,24 +163,7 @@ def _base_filters(category, chain, in_stock) -> list:
             .exists()
         )
     elif in_stock is not None:
-        if in_stock:
-            f.append(
-                select(ProductRetailerListing.id)
-                .where(
-                    ProductRetailerListing.product_id == Product.id,
-                    ProductRetailerListing.in_stock == True,  # noqa: E712
-                )
-                .exists()
-            )
-        else:
-            f.append(
-                ~select(ProductRetailerListing.id)
-                .where(
-                    ProductRetailerListing.product_id == Product.id,
-                    ProductRetailerListing.in_stock == True,  # noqa: E712
-                )
-                .exists()
-            )
+        f.append(in_stock_filter_clause(in_stock))
     return f
 
 

@@ -34,7 +34,7 @@ from app.schemas.watchlist import (
     WatchlistListCreate,
     WatchlistListResponse,
 )
-from app.services.listing_helpers import get_listing_enrichment_map
+from app.services.listing_helpers import get_listing_enrichment_by_chain_map, get_listing_enrichment_map
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Watchlist"])
@@ -64,12 +64,14 @@ def _enrich_item(
     item: UserWatchlist,
     db: Session,
     listing_enrichment: dict | None = None,
+    chain_listing_enrichment: dict | None = None,
 ) -> WatchlistItemResponse:
     """Attach product metadata and latest price to a watchlist item.
 
-    listing_enrichment: pre-computed map from get_listing_enrichment_map.  If
-    None, the helper is called for this single product so callers that handle
-    one item at a time (add_item, update_item) still get listing-backed data.
+    listing_enrichment: pre-computed map from get_listing_enrichment_map.
+    chain_listing_enrichment: pre-computed map from get_listing_enrichment_by_chain_map.
+    When either is None, the helper is called for this single product so callers that
+    handle one item at a time (add_item, update_item) still get listing-backed data.
     """
     product = db.get(Product, item.product_id)
     current_price: float | None = None
@@ -79,6 +81,8 @@ def _enrich_item(
     if product:
         if listing_enrichment is None:
             listing_enrichment = get_listing_enrichment_map(db, [product.id])
+        if chain_listing_enrichment is None:
+            chain_listing_enrichment = get_listing_enrichment_by_chain_map(db, [product.id])
         latest = db.execute(
             select(PriceReport, Store)
             .join(Store, PriceReport.store_id == Store.id)
@@ -100,13 +104,22 @@ def _enrich_item(
             current_chain = store.chain
             is_on_sale = bool(pr.is_on_sale)
 
-    # Listing-backed image wins; fall back to Product field if no listing found
+    # Image hierarchy:
+    #   1. product.image_url (canonical self-hosted) — always wins
+    #   2. current_chain listing image — chain-specific, avoids cross-retailer leakage
+    #   3. product-level listing image — fallback when no price / chain unknown
+    #   4. product.external_image_url — legacy fallback until #49e drops legacy columns
     # TODO(#49e): remove Product fallback after #49e drops legacy columns
     ld = listing_enrichment.get(product.id) if product and listing_enrichment else None
+    chain_ld = (
+        chain_listing_enrichment.get((product.id, current_chain))
+        if chain_listing_enrichment and current_chain
+        else None
+    )
     listing_image = (
-        ld["external_image_url"]
-        if ld and ld["external_image_url"] is not None
-        else (product.external_image_url if product else None)
+        (chain_ld["external_image_url"] if chain_ld and chain_ld["external_image_url"] else None)
+        or (ld["external_image_url"] if ld and ld["external_image_url"] else None)
+        or (product.external_image_url if product else None)
     )
 
     return WatchlistItemResponse(
@@ -232,7 +245,16 @@ def list_items(
     )
     product_ids = [i.product_id for i in items]
     listing_enrichment = get_listing_enrichment_map(db, product_ids)
-    return [_enrich_item(i, db, listing_enrichment=listing_enrichment) for i in items]
+    chain_listing_enrichment = get_listing_enrichment_by_chain_map(db, product_ids)
+    return [
+        _enrich_item(
+            i,
+            db,
+            listing_enrichment=listing_enrichment,
+            chain_listing_enrichment=chain_listing_enrichment,
+        )
+        for i in items
+    ]
 
 
 @router.post("/{list_id}/items", response_model=WatchlistItemResponse, status_code=201)
