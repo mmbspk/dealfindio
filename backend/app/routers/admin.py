@@ -1348,11 +1348,7 @@ def _run_ai_dedup_stream(
         .where(ProductRetailerListing.product_id == Product.id)
         .exists()
     )
-    products = list(
-        db.execute(sa_select(Product).where(has_listing))
-        .scalars()
-        .all()
-    )
+    products = list(db.execute(sa_select(Product).where(has_listing)).scalars().all())
 
     by_chain: dict[str, list[Product]] = {}
     for p in products:

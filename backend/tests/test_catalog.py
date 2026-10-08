@@ -416,7 +416,10 @@ class TestCatalogIngest:
         assert product.image_source is None
         # Verify retailer image landed in the listing, not on Product
         from app.models import ProductRetailerListing
-        listing = test_db_session.query(ProductRetailerListing).filter_by(product_id=product.id).one()
+
+        listing = (
+            test_db_session.query(ProductRetailerListing).filter_by(product_id=product.id).one()
+        )
         assert listing.external_image_url == "http://img/m.jpg"
         assert listing.catalog_last_seen_at is not None
         report = test_db_session.query(PriceReport).filter_by(product_id=product.id).one()
@@ -454,7 +457,10 @@ class TestCatalogIngest:
         assert refreshed.image_url == "http://existing/keep.jpg"
         # Product no longer has external_image_url — verify it's in the listing
         from app.models import ProductRetailerListing
-        listing = test_db_session.query(ProductRetailerListing).filter_by(product_id=existing.id).first()
+
+        listing = (
+            test_db_session.query(ProductRetailerListing).filter_by(product_id=existing.id).first()
+        )
         if listing:
             assert listing.catalog_last_seen_at is not None
 

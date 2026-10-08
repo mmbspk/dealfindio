@@ -282,7 +282,11 @@ class TestListingOnlyWrite:
         product = test_db_session.query(Product).filter_by(name="ALDI Cheese 500g").one()
 
         # Product must NOT have any legacy retailer columns
-        assert not hasattr(product, "external_id") or product.__dict__.get("external_id") is None or True
+        assert (
+            not hasattr(product, "external_id")
+            or product.__dict__.get("external_id") is None
+            or True
+        )
         assert product.image_url is None  # no canonical image yet (enricher sets this)
 
         # Retailer metadata must be in the listing

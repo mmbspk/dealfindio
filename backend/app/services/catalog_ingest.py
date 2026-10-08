@@ -246,9 +246,7 @@ def _match_product(
         .exists()
     )
     candidates = list(
-        session.execute(select(Product).where(~has_listing_for_chain))
-        .scalars()
-        .all()
+        session.execute(select(Product).where(~has_listing_for_chain)).scalars().all()
     )
     if not candidates:
         return None, 0.0, None, ResolutionReason.NEW

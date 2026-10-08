@@ -459,12 +459,8 @@ class TestAdminAiFields:
         from app.models import Product
         from app.models.product_match import ProductMatchCandidate
 
-        a = Product(
-            id=uuid4(), name="Coke 1.25L", brand="Coca-Cola"
-        )
-        b = Product(
-            id=uuid4(), name="Coca Cola 1.25L", brand="Coca-Cola"
-        )
+        a = Product(id=uuid4(), name="Coke 1.25L", brand="Coca-Cola")
+        b = Product(id=uuid4(), name="Coca Cola 1.25L", brand="Coca-Cola")
         test_db_session.add_all([a, b])
         test_db_session.flush()
         cand = ProductMatchCandidate(

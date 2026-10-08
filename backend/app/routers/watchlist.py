@@ -118,9 +118,8 @@ def _enrich_item(
         else None
     )
     listing_image = (
-        (chain_ld["external_image_url"] if chain_ld and chain_ld["external_image_url"] else None)
-        or (ld["external_image_url"] if ld and ld["external_image_url"] else None)
-    )
+        chain_ld["external_image_url"] if chain_ld and chain_ld["external_image_url"] else None
+    ) or (ld["external_image_url"] if ld and ld["external_image_url"] else None)
 
     return WatchlistItemResponse(
         id=item.id,

@@ -139,9 +139,7 @@ class TestDecideCandidateApprove:
             name="Coca-Cola 1.25L",
             brand="Coca-Cola",
         )
-        drop = Product(
-            id=uuid4(), name="Coca Cola 1.25L", brand="Coca-Cola"
-        )
+        drop = Product(id=uuid4(), name="Coca Cola 1.25L", brand="Coca-Cola")
         session.add_all([store, keep, drop])
         session.flush()
 

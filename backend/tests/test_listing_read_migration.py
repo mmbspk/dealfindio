@@ -833,7 +833,9 @@ class TestPackageSizeSearchViaListing:
         resp = test_client.get("/api/v1/products/search?q=2L")
         assert resp.status_code == 200
         ids = [item["id"] for item in resp.json()]
-        assert ids.count(str(p.id)) == 1, "product must appear exactly once despite two matching listings"
+        assert (
+            ids.count(str(p.id)) == 1
+        ), "product must appear exactly once despite two matching listings"
 
     @pytest.mark.integration
     def test_product_without_matching_package_size_not_returned(
