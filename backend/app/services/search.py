@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 from sqlalchemy import and_, case, func, literal, or_, select
 from sqlalchemy.orm import Session
 
-from app.models import PriceReport, Product, Store
+from app.models import PriceReport, Product, ProductRetailerListing, Store
 
 _TRGM_THRESHOLD = 0.15  # word_similarity floor — permissive for grocery name noise
 _CANDIDATE_POOL = 150  # candidates per lane before RRF fusion
@@ -121,10 +121,65 @@ def _base_filters(category, chain, in_stock) -> list:
     f = []
     if category:
         f.append(Product.category == category)
-    if chain:
-        f.append(Product.external_source == f"catalog_{chain}")
-    if in_stock is not None:
-        f.append(Product.in_stock == in_stock)
+    if chain and in_stock is not None:
+        # Combined: chain AND in_stock must be satisfied by the same listing
+        if in_stock:
+            f.append(
+                select(ProductRetailerListing.id)
+                .where(
+                    ProductRetailerListing.product_id == Product.id,
+                    ProductRetailerListing.chain == chain,
+                    ProductRetailerListing.in_stock == True,  # noqa: E712
+                )
+                .exists()
+            )
+        else:
+            # Has a listing for this chain but none are in-stock at that chain
+            f.append(
+                select(ProductRetailerListing.id)
+                .where(
+                    ProductRetailerListing.product_id == Product.id,
+                    ProductRetailerListing.chain == chain,
+                )
+                .exists()
+            )
+            f.append(
+                ~select(ProductRetailerListing.id)
+                .where(
+                    ProductRetailerListing.product_id == Product.id,
+                    ProductRetailerListing.chain == chain,
+                    ProductRetailerListing.in_stock == True,  # noqa: E712
+                )
+                .exists()
+            )
+    elif chain:
+        f.append(
+            select(ProductRetailerListing.id)
+            .where(
+                ProductRetailerListing.product_id == Product.id,
+                ProductRetailerListing.chain == chain,
+            )
+            .exists()
+        )
+    elif in_stock is not None:
+        if in_stock:
+            f.append(
+                select(ProductRetailerListing.id)
+                .where(
+                    ProductRetailerListing.product_id == Product.id,
+                    ProductRetailerListing.in_stock == True,  # noqa: E712
+                )
+                .exists()
+            )
+        else:
+            f.append(
+                ~select(ProductRetailerListing.id)
+                .where(
+                    ProductRetailerListing.product_id == Product.id,
+                    ProductRetailerListing.in_stock == True,  # noqa: E712
+                )
+                .exists()
+            )
     return f
 
 
