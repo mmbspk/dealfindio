@@ -70,6 +70,44 @@ def _truncate(s: str, n: int) -> str:
     return s if len(s) <= n else s[: n - 1] + "…"
 
 
+_CHANNEL_PREF_MAP = {
+    "price_match": ("notif_push_price_match", "notif_email_price_match"),
+    "pct_off_match": ("notif_push_pct_off", "notif_email_pct_off"),
+    "flash_sale": ("notif_push_flash_sale", "notif_email_pct_off"),
+    "prediction_drop": ("notif_push_prediction", "notif_email_prediction"),
+}
+
+
+def _resolve_channels(
+    user: "UserProfile",
+    watchlist_item: "UserWatchlist",
+    trigger_type: str,
+    session,
+) -> tuple[bool, bool, bool]:
+    """Return (send_push, send_email, skip_all).
+
+    List channel_override takes precedence over user-level preferences.
+    None override = inherit user defaults.
+    skip_all=True only when channel_override="none"; callers must also suppress
+    in-app notifications in that case (the user opted out of all notifications
+    from this list).
+    """
+    if watchlist_item.list_id:
+        from app.models.watchlist_list import WatchlistList
+
+        lst = session.query(WatchlistList).filter_by(id=watchlist_item.list_id).first()
+        if lst and lst.channel_override is not None:
+            ov = lst.channel_override
+            if ov == "none":
+                return False, False, True
+            return ov in ("push", "both"), ov in ("email", "both"), False
+
+    push_attr, email_attr = _CHANNEL_PREF_MAP.get(
+        trigger_type, ("notif_push_price_match", "notif_email_price_match")
+    )
+    return getattr(user, push_attr, True), getattr(user, email_attr, False), False
+
+
 def _build_push_copy(
     trigger_type: str,
     product_name: str,
@@ -226,18 +264,12 @@ def check_watchlist_for_price(self, price_report_id: str) -> NotificationResult:
                 if not user:
                     continue
 
-                # Resolve per-user channel preferences
-                pref_map = {
-                    "price_match": ("notif_push_price_match", "notif_email_price_match"),
-                    "pct_off_match": ("notif_push_pct_off", "notif_email_pct_off"),
-                    "flash_sale": ("notif_push_flash_sale", "notif_email_pct_off"),
-                    "prediction_drop": ("notif_push_prediction", "notif_email_prediction"),
-                }
-                push_pref_attr, email_pref_attr = pref_map.get(
-                    trigger_type, ("notif_push_price_match", "notif_email_price_match")
+                # Resolve effective channel: list override > user defaults
+                send_push_notif, send_email_notif, skip_all = _resolve_channels(
+                    user, watchlist_item, trigger_type, session
                 )
-                send_push_notif = getattr(user, push_pref_attr, True)
-                send_email_notif = getattr(user, email_pref_attr, False)
+                if skip_all:
+                    continue  # channel_override="none" suppresses all channels incl. in-app
 
                 quiet = _in_quiet_hours(user)
                 if quiet:
@@ -477,7 +509,17 @@ def notify_prediction_drops(self) -> NotificationResult:
                     "prediction_drop", product_name, pred_aud, prediction.chain or "upcoming"
                 )
 
-                # Always log in-app
+                # Resolve effective channels: list override > user defaults
+                # Must happen before logging in-app so skip_all suppresses everything.
+                send_push, send_email, skip_all = _resolve_channels(
+                    user, watchlist_item, "prediction_drop", session
+                )
+                if skip_all:
+                    continue  # channel_override="none" suppresses all channels incl. in-app
+                if _in_quiet_hours(user):
+                    send_push = False
+
+                # Always log in-app (unless skip_all above)
                 _log_prediction_notification(
                     session,
                     user,
@@ -490,11 +532,7 @@ def notify_prediction_drops(self) -> NotificationResult:
                 )
 
                 # Push (in_app logged above so badge count is current)
-                if (
-                    getattr(user, "notif_push_prediction", True)
-                    and user.fcm_token
-                    and not _in_quiet_hours(user)
-                ):
+                if send_push and user.fcm_token:
                     badge = _get_unread_in_app_count(session, watchlist_item.user_id)
                     receipt = _send_push(
                         user,
@@ -526,7 +564,7 @@ def notify_prediction_drops(self) -> NotificationResult:
                         notifications_sent += 1
 
                 # Email
-                if getattr(user, "notif_email_prediction", False) and user.email:
+                if send_email and user.email:
                     from app.services.email_sender import send_price_alert_email
 
                     msg_id = send_price_alert_email(
@@ -635,7 +673,11 @@ def send_weekly_digest(self) -> dict:
         session = get_db_session()
         now = datetime.now(timezone.utc)
 
-        # Users who opted in to weekly digest and have email
+        # Design: notif_email_weekly_digest is the master on/off for the whole feature.
+        # channel_override on individual lists controls per-list suppression WITHIN the
+        # digest (lists with "none" or "push" are excluded); it does NOT override the
+        # global opt-in. A user who turned off the weekly digest entirely won't receive
+        # one regardless of any list-level override.
         users = (
             session.query(UserProfile)
             .filter(
@@ -702,6 +744,9 @@ def send_weekly_digest(self) -> dict:
                         if w.list_id
                         else None
                     )
+                    # Skip lists that suppress email notifications
+                    if lst and lst.channel_override in ("none", "push"):
+                        continue
                     deals.append(
                         {
                             "product_name": report.product.name,

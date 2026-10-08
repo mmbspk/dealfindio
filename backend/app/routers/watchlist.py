@@ -33,6 +33,7 @@ from app.schemas.watchlist import (
     WatchlistItemResponse,
     WatchlistListCreate,
     WatchlistListResponse,
+    WatchlistListUpdate,
 )
 from app.services.listing_helpers import (
     get_listing_enrichment_by_chain_map,
@@ -183,6 +184,7 @@ def list_watchlist_lists(
                 user_id=lst.user_id,
                 name=lst.name,
                 emoji=lst.emoji,
+                channel_override=lst.channel_override,
                 item_count=len(count),
                 created_at=lst.created_at,
             )
@@ -197,7 +199,12 @@ def create_watchlist_list(
     db: Session = Depends(get_db),
 ):
     profile = _require_profile(current_user)
-    lst = WatchlistList(user_id=profile.id, name=body.name, emoji=body.emoji)
+    lst = WatchlistList(
+        user_id=profile.id,
+        name=body.name,
+        emoji=body.emoji,
+        channel_override=body.channel_override,
+    )
     db.add(lst)
     db.commit()
     db.refresh(lst)
@@ -206,7 +213,52 @@ def create_watchlist_list(
         user_id=lst.user_id,
         name=lst.name,
         emoji=lst.emoji,
+        channel_override=lst.channel_override,
         item_count=0,
+        created_at=lst.created_at,
+    )
+
+
+@router.patch("/{list_id}", response_model=WatchlistListResponse)
+def update_watchlist_list(
+    list_id: UUID,
+    body: WatchlistListUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Update a watchlist list's name, emoji, or channel_override."""
+    profile = _require_profile(current_user)
+    lst = _require_list(list_id, profile.id, db)
+    if "name" in body.model_fields_set:
+        if body.name is None:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="name cannot be null; omit the field to leave it unchanged",
+            )
+        lst.name = body.name
+    if "emoji" in body.model_fields_set:
+        lst.emoji = body.emoji
+    if "channel_override" in body.model_fields_set:
+        lst.channel_override = body.channel_override
+    db.commit()
+    db.refresh(lst)
+    count = (
+        db.execute(
+            select(UserWatchlist).where(
+                UserWatchlist.list_id == lst.id,
+                UserWatchlist.is_active.is_(True),
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return WatchlistListResponse(
+        id=lst.id,
+        user_id=lst.user_id,
+        name=lst.name,
+        emoji=lst.emoji,
+        channel_override=lst.channel_override,
+        item_count=len(count),
         created_at=lst.created_at,
     )
 

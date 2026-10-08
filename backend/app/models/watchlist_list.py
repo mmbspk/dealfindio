@@ -21,6 +21,7 @@ class WatchlistList(Base):
     user_id: Mapped[UUID] = mapped_column(ForeignKey("user_profiles.id", ondelete="CASCADE"))
     name: Mapped[str] = mapped_column(String(100))
     emoji: Mapped[str | None] = mapped_column(String(10))
+    channel_override: Mapped[str | None] = mapped_column(String(10), nullable=True)
 
     items: Mapped[list["UserWatchlist"]] = relationship(  # noqa: F821
         back_populates="list",
