@@ -276,6 +276,26 @@ class TestChannelOverrideEndpoints:
         assert data["channel_override"] == "push"
         assert data["name"] == "Push Only"
 
+    @pytest.mark.integration
+    def test_patch_name_null_returns_422(
+        self, authed_client, authed_user, test_db_session
+    ):
+        """PATCH with explicit name: null must return 422, not a DB error."""
+        from app.models.watchlist_list import WatchlistList
+
+        lst = WatchlistList(id=uuid4(), user_id=authed_user.id, name="Original")
+        test_db_session.add(lst)
+        test_db_session.commit()
+
+        resp = authed_client.patch(
+            f"/api/v1/watchlists/{lst.id}",
+            json={"name": None},
+        )
+        assert resp.status_code == 422
+
+        test_db_session.refresh(lst)
+        assert lst.name == "Original"  # DB unchanged
+
 
 # ── Weekly digest preference inheritance ──────────────────────────────────────
 
@@ -290,20 +310,11 @@ class TestDigestPreferenceInheritance:
         opted-in users only. The global flag is the master on/off switch for
         the digest feature itself.
         """
-        from unittest.mock import MagicMock, patch
-
         from app.workers.notification_tasks import send_weekly_digest
 
-        # Build a fake user who has opted OUT of the weekly digest globally
-        # but has a list with channel_override="email".
-        user_id = uuid4()
-        list_id = uuid4()
-        fake_list = SimpleNamespace(
-            id=list_id, channel_override="email", name="Deals", emoji=None
-        )
-        # The user query filter (notif_email_weekly_digest==True) will return
-        # an empty set, so no email should be sent.
         session_mock = MagicMock()
+        # Worker queries users with notif_email_weekly_digest==True.
+        # Return empty list → no emails, regardless of any list override.
         session_mock.query.return_value.filter.return_value.all.return_value = []
 
         with (
@@ -313,33 +324,131 @@ class TestDigestPreferenceInheritance:
             ),
             patch("app.services.email_sender.send_weekly_digest_email") as mock_send,
         ):
-            send_weekly_digest.run()
+            send_weekly_digest.apply()
 
         mock_send.assert_not_called()
 
     @pytest.mark.integration
-    def test_digest_excludes_none_list_products(
-        self, authed_client, authed_user, test_db_session
-    ):
+    def test_digest_suppression_by_channel_override(self, test_db_session):
         """
-        Products from a list with channel_override='none' do not appear in the
-        digest even when the user has opted in globally. Verified via the list
-        GET endpoint confirming the override is stored correctly; the worker-level
-        suppression is covered by the unit test above.
-        """
-        from app.models.watchlist_list import WatchlistList
+        Runs the actual digest worker against the test DB and asserts that:
+          - "none"    list products are excluded (email AND push suppressed)
+          - "push"    list products are excluded (push only → no email digest)
+          - "email"   list products are included
+          - "both"    list products are included
+          - None      (inherit) list products are included (global prefs allow email)
 
-        suppressed = WatchlistList(
-            id=uuid4(), user_id=authed_user.id, name="Silent", channel_override="none"
+        This directly exercises the channel_override filtering inside
+        send_weekly_digest rather than checking only stored values.
+        """
+        from app.models import PriceReport, Product, Store, UserProfile, UserWatchlist
+        from app.models.watchlist_list import WatchlistList
+        from app.workers.notification_tasks import send_weekly_digest
+
+        # ── Create user with weekly digest opted in ─────────────────────────
+        user = UserProfile(
+            id=uuid4(),
+            firebase_uid="digest_suppression_uid",
+            email="digest_suppression@example.com",
+            notif_email_weekly_digest=True,
         )
-        allowed = WatchlistList(
-            id=uuid4(), user_id=authed_user.id, name="Active", channel_override=None
+        test_db_session.add(user)
+        test_db_session.flush()
+
+        # ── Create one list per override state ──────────────────────────────
+        list_none = WatchlistList(
+            id=uuid4(), user_id=user.id, name="None list", channel_override="none"
         )
-        test_db_session.add_all([suppressed, allowed])
+        list_push = WatchlistList(
+            id=uuid4(), user_id=user.id, name="Push list", channel_override="push"
+        )
+        list_email = WatchlistList(
+            id=uuid4(), user_id=user.id, name="Email list", channel_override="email"
+        )
+        list_both = WatchlistList(
+            id=uuid4(), user_id=user.id, name="Both list", channel_override="both"
+        )
+        list_inherit = WatchlistList(
+            id=uuid4(), user_id=user.id, name="Inherit list", channel_override=None
+        )
+        all_lists = [list_none, list_push, list_email, list_both, list_inherit]
+        test_db_session.add_all(all_lists)
+        test_db_session.flush()
+
+        # ── One product + on-sale price report per list ─────────────────────
+        store = Store(id=uuid4(), chain="coles", name="Coles Test")
+        test_db_session.add(store)
+        test_db_session.flush()
+
+        for i, lst in enumerate(all_lists):
+            product = Product(id=uuid4(), name=f"Digest Product {i}")
+            test_db_session.add(product)
+            test_db_session.flush()
+
+            report = PriceReport(
+                id=uuid4(),
+                product_id=product.id,
+                store_id=store.id,
+                price_cents=500,
+                was_price_cents=1000,
+                is_on_sale=True,
+                sale_pct_off=50.0,
+            )
+            test_db_session.add(report)
+
+            item = UserWatchlist(
+                id=uuid4(),
+                user_id=user.id,
+                list_id=lst.id,
+                product_id=product.id,
+                is_active=True,
+            )
+            test_db_session.add(item)
+
         test_db_session.commit()
 
-        resp = authed_client.get("/api/v1/watchlists/")
-        assert resp.status_code == 200
-        by_name = {lst["name"]: lst for lst in resp.json()}
-        assert by_name["Silent"]["channel_override"] == "none"
-        assert by_name["Active"]["channel_override"] is None
+        # ── Run the worker, capturing the deals sent to the email function ──
+        # Wrap test_db_session to prevent the worker from closing it.
+        session_spy = MagicMock(wraps=test_db_session)
+        session_spy.close = MagicMock()
+
+        captured_deals = []
+
+        def _capture(to, user_id, deals, **kwargs):
+            captured_deals.extend(deals)
+            return "test-msg-id"
+
+        with (
+            patch(
+                "app.workers.notification_tasks.get_db_session",
+                return_value=session_spy,
+            ),
+            patch(
+                "app.services.email_sender.send_weekly_digest_email",
+                side_effect=_capture,
+            ),
+        ):
+            send_weekly_digest.apply()
+
+        assert captured_deals, "Expected at least some deals to be sent"
+
+        captured_list_ids = {d["list_id"] for d in captured_deals}
+
+        # ── Suppressed ──────────────────────────────────────────────────────
+        assert str(list_none.id) not in captured_list_ids, (
+            "channel_override='none' list should be excluded from digest"
+        )
+        assert str(list_push.id) not in captured_list_ids, (
+            "channel_override='push' list should be excluded from email digest"
+        )
+
+        # ── Included ────────────────────────────────────────────────────────
+        assert str(list_email.id) in captured_list_ids, (
+            "channel_override='email' list should appear in digest"
+        )
+        assert str(list_both.id) in captured_list_ids, (
+            "channel_override='both' list should appear in digest"
+        )
+        assert str(list_inherit.id) in captured_list_ids, (
+            "channel_override=None (inherit) list should appear in digest"
+        )

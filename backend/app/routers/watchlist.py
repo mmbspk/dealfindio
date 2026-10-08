@@ -230,6 +230,11 @@ def update_watchlist_list(
     profile = _require_profile(current_user)
     lst = _require_list(list_id, profile.id, db)
     if "name" in body.model_fields_set:
+        if body.name is None:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="name cannot be null; omit the field to leave it unchanged",
+            )
         lst.name = body.name
     if "emoji" in body.model_fields_set:
         lst.emoji = body.emoji
