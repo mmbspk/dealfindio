@@ -11,6 +11,7 @@ without requiring login.
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
 from typing import Any
 
 import httpx
@@ -25,7 +26,8 @@ _RESEND_SEND_URL = "https://api.resend.com/emails"
 _UNSUBSCRIBE_SALT = "notif-unsubscribe"
 _UNSUBSCRIBE_MAX_AGE = 60 * 60 * 24 * 365  # 1 year
 _UNSUBSCRIBE_EMAIL = "unsubscribe@dealfindio.com.au"
-_EMAIL_CLIP_WARN_BYTES = 90_000  # Gmail clips at 102 KB; warn before that threshold
+_DIGEST_SIZE_BUDGET = 80_000    # Rebuild digest without images if body HTML > 80 KB
+_EMAIL_CLIP_WARN_BYTES = 90_000  # Log warning if full email HTML > 90 KB
 
 
 def _signer() -> URLSafeTimedSerializer:
@@ -62,19 +64,15 @@ def _base_url() -> str:
 def _send_email(to: str, subject: str, html: str, unsubscribe_url: str | None = None) -> str | None:
     """Send email via Resend API. Returns message ID or None on failure.
 
-    Size check: logs a WARNING when HTML exceeds _EMAIL_CLIP_WARN_BYTES. This is
-    observability only — it does NOT prevent sending or reduce the payload. Use it
-    to detect templates approaching Gmail's 102 KB clipping threshold so they can
-    be optimised before users see truncated emails.
+    Logs a WARNING when HTML exceeds _EMAIL_CLIP_WARN_BYTES (Gmail's 102 KB clipping
+    threshold) but still sends — this is observability only.
     """
     if not _is_email_enabled():
         logger.debug("Email skipped: RESEND_API_KEY not configured")
         return None
-
     size = len(html.encode())
     if size > _EMAIL_CLIP_WARN_BYTES:
         logger.warning(f"Email to {to} is {size} bytes; may be clipped by Gmail (threshold {_EMAIL_CLIP_WARN_BYTES})")
-
     payload: dict[str, Any] = {
         "from": f"{settings.EMAIL_FROM_NAME} <{settings.EMAIL_FROM_ADDRESS}>",
         "to": [to],
@@ -86,7 +84,6 @@ def _send_email(to: str, subject: str, html: str, unsubscribe_url: str | None = 
             "List-Unsubscribe": f"<{unsubscribe_url}>, <mailto:{_UNSUBSCRIBE_EMAIL}>",
             "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
         }
-
     try:
         resp = httpx.post(
             _RESEND_SEND_URL,
@@ -164,6 +161,95 @@ def _price_badge(price: float, was_price: float | None) -> str:
     )
 
 
+def _truncate(s: str, n: int) -> str:
+    return s if len(s) <= n else s[: n - 1] + "…"
+
+
+def _build_subject(
+    trigger_type: str,
+    product_name: str,
+    price: float,
+    pct_off: int | None = None,
+) -> str:
+    """Build email subject line guaranteed <= 50 chars for mobile preview."""
+    if trigger_type == "price_match":
+        return f"You hit your target — {_truncate(product_name, 17)} at ${price:.2f}"
+    if trigger_type == "pct_off_match":
+        pct = pct_off or 0
+        return f"{pct}% off: {_truncate(product_name, 38)}"
+    if trigger_type == "flash_sale":
+        pct = pct_off or 0
+        return f"Flash deal: {_truncate(product_name, 25)} {pct}% off"
+    if trigger_type == "prediction_drop":
+        return f"Good time to buy: {_truncate(product_name, 30)}"
+    return f"Deal alert: {_truncate(product_name, 32)}"
+
+
+def _product_card(
+    product_url: str,
+    product_name: str,
+    price: float,
+    was_price: float | None,
+    store_name: str,
+    image_url: str | None,
+) -> str:
+    """Mobile-first product card: CDN-linked thumbnail (never base64) + price badge + store."""
+    img_cell = ""
+    if image_url:
+        img_cell = (
+            f'<td width="80" style="vertical-align:top;padding-right:16px;">'
+            f'<img src="{image_url}" alt="" width="80" height="80"'
+            f' style="width:80px;height:80px;object-fit:contain;border-radius:8px;'
+            f'border:1px solid #e5e7eb;display:block;" /></td>'
+        )
+    return (
+        f'<a href="{product_url}" style="display:block;text-decoration:none;color:inherit;margin:0 0 20px;">'
+        f'<table width="100%" cellpadding="0" cellspacing="0" role="presentation"><tr>'
+        f"{img_cell}"
+        f'<td style="vertical-align:top;">'
+        f'<div style="font-size:15px;font-weight:700;color:#111827;margin:0 0 6px;line-height:1.4;">{product_name}</div>'
+        f'<div style="margin:0 0 8px;">{_price_badge(price, was_price)}</div>'
+        f'<p style="margin:0;font-size:13px;color:#6b7280;">at <strong style="color:#374151;">{store_name}</strong></p>'
+        f"</td></tr></table></a>"
+    )
+
+
+def _build_digest_content(
+    grouped: dict[str, list[dict[str, Any]]],
+    base_url: str,
+    *,
+    include_images: bool,
+) -> str:
+    """Render weekly digest body HTML grouped by list, optionally with product thumbnails."""
+    parts: list[str] = []
+    for _list_key, deals in grouped.items():
+        if not deals:
+            continue
+        first = deals[0]
+        list_name = first.get("list_name")
+        list_emoji = first.get("list_emoji") or ""
+        if list_name:
+            header_text = f"{list_emoji} {list_name}".strip()
+            parts.append(
+                f'<h3 style="font-size:16px;font-weight:700;color:#374151;margin:24px 0 12px;'
+                f'padding-bottom:8px;border-bottom:2px solid #4f46e5;">{header_text}</h3>'
+            )
+        for d in deals:
+            product_url = f"{base_url}/product/{d['product_id']}"
+            image_url = d.get("image_url") if include_images else None
+            parts.append(
+                _product_card(
+                    product_url,
+                    d["product_name"],
+                    d["price"],
+                    d.get("was_price"),
+                    d["store_name"],
+                    image_url,
+                )
+            )
+    return "\n".join(parts)
+
+
 # ─── Public API ───────────────────────────────────────────────────────────────
 
 
@@ -176,40 +262,36 @@ def send_price_alert_email(
     store_name: str,
     product_id: str,
     trigger_type: str,
+    image_url: str | None = None,
+    pct_off: int | None = None,
 ) -> str | None:
     """Send a price alert email. Returns Resend message ID or None."""
     if not _is_email_enabled():
         return None
 
     trigger_labels = {
-        "price_match": "Hit Your Target Price",
+        "price_match": "Target Price Hit",
         "pct_off_match": "Discount Alert",
-        "flash_sale": "Flash Sale",
-        "prediction_drop": "Predicted Price Drop",
+        "flash_sale": "Flash Deal",
+        "prediction_drop": "Good Time to Buy",
     }
     label = trigger_labels.get(trigger_type, "Price Alert")
     product_url = f"{_base_url()}/product/{product_id}"
     unsub_token = generate_unsubscribe_token(user_id, "email_price_match")
     unsub_url = f"{_base_url()}/api/v1/notifications/unsubscribe?token={unsub_token}"
 
+    subject = _build_subject(trigger_type, product_name, price, pct_off=pct_off)
+    card = _product_card(product_url, product_name, price, was_price, store_name, image_url)
+
     content = f"""
     <p style="margin:0 0 8px;font-size:13px;font-weight:600;color:#4f46e5;text-transform:uppercase;letter-spacing:0.5px;">{label}</p>
     <h2 style="margin:0 0 20px;font-size:20px;font-weight:700;color:#111827;line-height:1.3;">{product_name}</h2>
-    <div style="margin:0 0 20px;">{_price_badge(price, was_price)}</div>
-    <p style="margin:0 0 24px;font-size:15px;color:#6b7280;">
-      Available at <strong style="color:#374151;">{store_name}</strong>
-    </p>
-    <a href="{product_url}"
-       style="display:inline-block;background:#4f46e5;color:#fff;font-weight:600;font-size:15px;
-              padding:12px 28px;border-radius:8px;text-decoration:none;">
-      View Deal &rarr;
-    </a>
+    {card}
     <p style="margin:24px 0 0;font-size:13px;color:#9ca3af;">
       You're receiving this because you're watching this product on DealFindio.
     </p>
     """
     html = _html_wrapper(content, unsub_url)
-    subject = f"{label}: {product_name} is now ${price:.2f}"
     return _send_email(to, subject, html, unsubscribe_url=unsub_url)
 
 
@@ -220,7 +302,8 @@ def send_weekly_digest_email(
 ) -> str | None:
     """
     Send weekly deal digest. `deals` is a list of dicts with keys:
-    product_name, price, was_price, store_name, product_id, pct_off (optional).
+    product_name, price, was_price, store_name, product_id, pct_off (optional),
+    list_id (optional), list_name (optional), list_emoji (optional), image_url (optional).
     Returns Resend message ID or None.
     """
     if not _is_email_enabled() or not deals:
@@ -229,35 +312,29 @@ def send_weekly_digest_email(
     unsub_token = generate_unsubscribe_token(user_id, "email_weekly_digest")
     unsub_url = f"{_base_url()}/api/v1/notifications/unsubscribe?token={unsub_token}"
 
-    rows = ""
-    for d in deals[:5]:
-        pct = (
-            f' &nbsp;<span style="background:#fee2e2;color:#dc2626;font-size:11px;font-weight:700;padding:2px 6px;border-radius:10px;">-{d["pct_off"]}%</span>'
-            if d.get("pct_off")
-            else ""
-        )
-        rows += f"""
-        <tr>
-          <td style="padding:12px 0;border-bottom:1px solid #f3f4f6;">
-            <a href="{_base_url()}/product/{d['product_id']}" style="text-decoration:none;">
-              <span style="font-size:14px;font-weight:600;color:#111827;">{d['product_name']}</span>{pct}
-              <br>
-              <span style="font-size:13px;color:#059669;font-weight:700;">${d['price']:.2f}</span>
-              &nbsp;<span style="font-size:12px;color:#9ca3af;">{d['store_name']}</span>
-            </a>
-          </td>
-        </tr>"""
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for d in deals:
+        key = d.get("list_id") or "__other__"
+        grouped[key].append(d)
 
-    content = f"""
-    <p style="margin:0 0 8px;font-size:13px;font-weight:600;color:#4f46e5;text-transform:uppercase;letter-spacing:0.5px;">Weekly Deals Digest</p>
-    <h2 style="margin:0 0 20px;font-size:20px;font-weight:700;color:#111827;">Your watchlist deals this week</h2>
-    <table width="100%" cellpadding="0" cellspacing="0">{rows}</table>
-    <br>
-    <a href="{_base_url()}/watchlist"
-       style="display:inline-block;background:#4f46e5;color:#fff;font-weight:600;font-size:15px;
-              padding:12px 28px;border-radius:8px;text-decoration:none;">
-      View All Deals &rarr;
-    </a>
-    """
+    body_html = _build_digest_content(grouped, _base_url(), include_images=True)
+    if len(body_html.encode()) > _DIGEST_SIZE_BUDGET:
+        logger.warning(
+            f"Digest body {len(body_html.encode())} bytes exceeds {_DIGEST_SIZE_BUDGET}; "
+            f"rebuilding without images for to={to}"
+        )
+        body_html = _build_digest_content(grouped, _base_url(), include_images=False)
+
+    intro = (
+        '<h2 style="margin:0 0 20px;font-size:20px;font-weight:700;color:#111827;">'
+        "Your deals this week \U0001f6d2</h2>"
+    )
+    cta = (
+        f'<br><a href="{_base_url()}/watchlist"'
+        f' style="display:inline-block;background:#4f46e5;color:#fff;font-weight:600;'
+        f'font-size:15px;padding:12px 28px;border-radius:8px;text-decoration:none;">'
+        f"View All Deals &rarr;</a>"
+    )
+    content = intro + body_html + cta
     html = _html_wrapper(content, unsub_url)
-    return _send_email(to, "Your DealFindio Deals This Week", html, unsubscribe_url=unsub_url)
+    return _send_email(to, "Your deals this week \U0001f6d2", html, unsubscribe_url=unsub_url)

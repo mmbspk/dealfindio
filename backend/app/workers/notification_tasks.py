@@ -66,6 +66,32 @@ def _in_quiet_hours(user: UserProfile) -> bool:
         return False
 
 
+def _truncate(s: str, n: int) -> str:
+    return s if len(s) <= n else s[: n - 1] + "…"
+
+
+def _build_push_copy(
+    trigger_type: str,
+    product_name: str,
+    price_aud: float,
+    store_name: str,
+    pct_off: int | None = None,
+) -> tuple[str, str]:
+    """Return (title, body) for push notification. Body guaranteed <= 100 chars."""
+    p = _truncate(product_name, 45)
+    s = _truncate(store_name, 15)
+    pct = pct_off or 0
+    if trigger_type == "price_match":
+        return "Target price reached \U0001f3af", f"{p} hit ${price_aud:.2f} at {s}"
+    if trigger_type == "pct_off_match":
+        return f"{pct}% off now", f"{p} — save {pct}% at {s}"
+    if trigger_type == "flash_sale":
+        return f"Flash deal {pct}% off", f"{p} flash sale at {s}"
+    if trigger_type == "prediction_drop":
+        return "Good time to buy", f"{p} may drop soon — buy now?"
+    return "Deal found", f"{p} at ${price_aud:.2f} at {s}"
+
+
 def _send_push(user: UserProfile, title: str, body: str, data: dict, badge: int | None = None) -> str | None:
     """Send Expo push. Returns receipt_id or None. Synchronous (Celery task context)."""
     if not user.fcm_token:
@@ -225,20 +251,10 @@ def check_watchlist_for_price(self, price_report_id: str) -> NotificationResult:
                     price_report.was_price_cents / 100 if price_report.was_price_cents else None
                 )
 
-                if trigger_type == "flash_sale":
-                    title = f"Flash Sale: {product_name}"
-                    pct = round(price_report.sale_pct_off)
-                    body = f"{pct}% off — ${price_aud:.2f} at {store_name}"
-                elif trigger_type == "price_match":
-                    title = f"Price Drop: {product_name}"
-                    body = f"Now ${price_aud:.2f} at {store_name}"
-                else:
-                    pct = round(price_report.sale_pct_off or 0)
-                    title = f"Deal Found: {product_name}"
-                    body = f"{pct}% off — ${price_aud:.2f} at {store_name}"
-
-                if was_price_aud:
-                    body += f" (was ${was_price_aud:.2f})"
+                pct_int = round(price_report.sale_pct_off) if price_report.sale_pct_off else None
+                title, body = _build_push_copy(
+                    trigger_type, product_name, price_aud, store_name, pct_off=pct_int
+                )
 
                 push_receipt = None
                 email_msg_id = None
@@ -294,6 +310,9 @@ def check_watchlist_for_price(self, price_report_id: str) -> NotificationResult:
                 if send_email_notif and user.email:
                     from app.services.email_sender import send_price_alert_email
 
+                    img_url = getattr(price_report.product, "image_url", None) or getattr(
+                        price_report.product, "external_image_url", None
+                    )
                     email_msg_id = send_price_alert_email(
                         to=user.email,
                         user_id=str(user.id),
@@ -303,6 +322,8 @@ def check_watchlist_for_price(self, price_report_id: str) -> NotificationResult:
                         store_name=store_name,
                         product_id=str(price_report.product_id),
                         trigger_type=trigger_type,
+                        image_url=img_url,
+                        pct_off=pct_int,
                     )
                     if email_msg_id:
                         _log_notification(
@@ -454,11 +475,9 @@ def notify_prediction_drops(self) -> NotificationResult:
                     else str(watchlist_item.product_id)
                 )
                 pred_aud = prediction.predicted_price_cents / 100
-                week_str = prediction.prediction_week.strftime("%d %b")
-                chain_str = f" at {prediction.chain}" if prediction.chain else ""
-
-                title = f"Price drop predicted: {product_name}"
-                body = f"Expected ${pred_aud:.2f}{chain_str} week of {week_str}"
+                title, body = _build_push_copy(
+                    "prediction_drop", product_name, pred_aud, prediction.chain or "upcoming"
+                )
 
                 # Always log in-app
                 _log_prediction_notification(
@@ -645,6 +664,23 @@ def send_weekly_digest(self) -> dict:
 
                 product_ids = [w.product_id for w in watchlist_items]
 
+                # Build a map of product_id → (list_id, list_name, list_emoji)
+                from app.models.watchlist_list import WatchlistList
+
+                product_list_map: dict = {}
+                for w in watchlist_items:
+                    if w.product_id not in product_list_map:
+                        lst = (
+                            session.query(WatchlistList).filter_by(id=w.list_id).first()
+                            if w.list_id
+                            else None
+                        )
+                        product_list_map[w.product_id] = (
+                            str(w.list_id) if w.list_id else None,
+                            lst.name if lst else None,
+                            lst.emoji if lst else None,
+                        )
+
                 # Get best active price report per product (is_on_sale)
                 from sqlalchemy import desc
 
@@ -665,6 +701,12 @@ def send_weekly_digest(self) -> dict:
 
                     if report and report.product:
                         store = session.query(Store).filter_by(id=report.store_id).first()
+                        list_id, list_name, list_emoji = product_list_map.get(
+                            pid, (None, None, None)
+                        )
+                        img_url = getattr(report.product, "image_url", None) or getattr(
+                            report.product, "external_image_url", None
+                        )
                         deals.append(
                             {
                                 "product_name": report.product.name,
@@ -677,6 +719,10 @@ def send_weekly_digest(self) -> dict:
                                 "pct_off": round(report.sale_pct_off)
                                 if report.sale_pct_off
                                 else None,
+                                "list_id": list_id,
+                                "list_name": list_name,
+                                "list_emoji": list_emoji,
+                                "image_url": img_url,
                             }
                         )
 
@@ -699,7 +745,7 @@ def send_weekly_digest(self) -> dict:
                     notif = Notification(
                         user_id=user.id,
                         trigger_type="weekly_digest",
-                        message_title="Your DealFindio Deals This Week",
+                        message_title="Your deals this week",
                         message_body=f"{len(deals)} deals found on your watchlist",
                         channel="email",
                         email_message_id=msg_id,
