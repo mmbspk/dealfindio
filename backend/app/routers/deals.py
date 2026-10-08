@@ -18,6 +18,7 @@ from app.deps import get_db
 from app.models import PriceReport, Product, Store
 from app.services.config_store import get_runtime_typed
 from app.services.geo import haversine_km
+from app.services.listing_helpers import get_listing_enrichment_by_chain_map
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +89,10 @@ def _fetch_deals(
         .limit(max((offset + limit) * 4, 500))
     ).all()
 
+    # Batch-load listing-backed images per (product, chain) for all candidate products (#49c read migration)
+    row_product_ids = list({product.id for _, product, _ in rows})
+    chain_listing_map = get_listing_enrichment_by_chain_map(db, row_product_ids)
+
     # Collect all qualifying deals (respects geo filter + dedup), then paginate
     all_deals: list[dict] = []
     seen_products: set = set()
@@ -99,6 +104,16 @@ def _fetch_deals(
         if lat is not None and lon is not None and store.lat is not None and store.lon is not None:
             distance_km = haversine_km(lat, lon, store.lat, store.lon)
 
+        # Chain-specific image: Coles deal must not show a Woolworths listing image.
+        # Hierarchy: canonical product.image_url > chain listing image > legacy fallback
+        # TODO(#49e): remove Product fallback after #49e drops legacy columns
+        chain_ld = chain_listing_map.get((product.id, store.chain))
+        listing_image = (
+            chain_ld["external_image_url"]
+            if chain_ld and chain_ld["external_image_url"] is not None
+            else product.external_image_url
+        )
+
         seen_products.add(product.id)
         all_deals.append(
             {
@@ -107,8 +122,8 @@ def _fetch_deals(
                 "product_name": product.name,
                 "brand": product.brand,
                 "category": product.category,
-                "image_url": product.image_url or product.external_image_url,
-                "external_image_url": product.external_image_url,
+                "image_url": product.image_url or listing_image,
+                "external_image_url": listing_image,
                 "image_source": product.image_source,
                 "store_id": str(store.id),
                 "store_name": store.name,

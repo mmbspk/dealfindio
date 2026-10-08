@@ -16,7 +16,7 @@ from sqlalchemy import and_, asc, desc, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.deps import get_db
-from app.models import PricePrediction, PriceReport, Product, Store
+from app.models import PricePrediction, PriceReport, Product, ProductRetailerListing, Store
 from app.schemas.prediction import PricePredictionResponse
 from app.schemas.product import (
     PriceByChainResponse,
@@ -26,6 +26,7 @@ from app.schemas.product import (
     ProductResponse,
 )
 from app.services.geo import haversine_km
+from app.services.listing_helpers import get_listing_enrichment_map, in_stock_filter_clause
 from app.services.search import search_products_by_gtin, search_products_ranked
 
 
@@ -125,6 +126,8 @@ def _attach_prices(db: Session, products: list[Product]) -> list[ProductResponse
             "available_chains": sorted({r.chain for r in rows if r.chain}),
         }
 
+    listing_map = get_listing_enrichment_map(db, product_ids)
+
     results = []
     for p in products:
         data = ProductResponse.model_validate(p)
@@ -136,6 +139,22 @@ def _attach_prices(db: Session, products: list[Product]) -> list[ProductResponse
             data.discount_pct = price["discount_pct"]
             data.is_on_sale = price["is_on_sale"]
             data.available_chains = price["available_chains"]
+
+        # Override with listing-backed retailer metadata (#49c read migration)
+        ld = listing_map.get(p.id)
+        if ld:
+            data.in_stock = ld["any_in_stock"]
+            if ld["package_size_raw"] is not None:
+                data.package_size = ld["package_size_raw"]
+            listing_image = ld["external_image_url"]
+            if listing_image is not None:
+                data.external_image_url = listing_image
+                # Only replace image_url if canonical (self-hosted) image is absent
+                if not p.image_url:
+                    data.image_url = listing_image
+        # else: no listing → keep Product field values
+        # TODO(#49e): remove Product fallback after #49e drops legacy columns
+
         results.append(data)
     return results
 
@@ -211,10 +230,47 @@ async def search_products(
             stmt = select(Product)
             if category:
                 stmt = stmt.where(Product.category == category)
-            if chain:
-                stmt = stmt.where(Product.external_source == f"catalog_{chain}")
-            if in_stock is not None:
-                stmt = stmt.where(Product.in_stock == in_stock)
+            if chain and in_stock is not None:
+                # Combined: chain AND in_stock must be satisfied by the same listing
+                if in_stock:
+                    stmt = stmt.where(
+                        select(ProductRetailerListing.id)
+                        .where(
+                            ProductRetailerListing.product_id == Product.id,
+                            ProductRetailerListing.chain == chain,
+                            ProductRetailerListing.in_stock == True,  # noqa: E712
+                        )
+                        .exists()
+                    )
+                else:
+                    stmt = stmt.where(
+                        select(ProductRetailerListing.id)
+                        .where(
+                            ProductRetailerListing.product_id == Product.id,
+                            ProductRetailerListing.chain == chain,
+                        )
+                        .exists()
+                    )
+                    stmt = stmt.where(
+                        ~select(ProductRetailerListing.id)
+                        .where(
+                            ProductRetailerListing.product_id == Product.id,
+                            ProductRetailerListing.chain == chain,
+                            ProductRetailerListing.in_stock == True,  # noqa: E712
+                        )
+                        .exists()
+                    )
+            elif chain:
+                stmt = stmt.where(
+                    select(ProductRetailerListing.id)
+                    .where(
+                        ProductRetailerListing.product_id == Product.id,
+                        ProductRetailerListing.chain == chain,
+                    )
+                    .exists()
+                )
+            elif in_stock is not None:
+                stmt = stmt.where(in_stock_filter_clause(in_stock))
 
             if sort == "name":
                 stmt = stmt.order_by(asc(Product.name))
@@ -406,6 +462,20 @@ async def get_product(
                 float(best_price_row.sale_pct_off) if best_price_row.sale_pct_off else None
             )
             response.is_on_sale = any(pr.is_on_sale for pr, _ in price_reports)
+
+        # Override with listing-backed retailer metadata (#49c read migration)
+        ld = get_listing_enrichment_map(db, [product_id]).get(product_id)
+        if ld:
+            response.in_stock = ld["any_in_stock"]
+            if ld["package_size_raw"] is not None:
+                response.package_size = ld["package_size_raw"]
+            if ld["external_image_url"] is not None:
+                response.external_image_url = ld["external_image_url"]
+                if not product.image_url:
+                    response.image_url = ld["external_image_url"]
+        # else: no listing → keep Product field values
+        # TODO(#49e): remove Product fallback after #49e drops legacy columns
+
         return response
 
     except HTTPException:
@@ -578,6 +648,24 @@ async def get_product_stores(
 
         stores = []
         seen_store_ids: set = set()
+
+        # Pre-load best listing per chain for store URL building (#49c read migration)
+        listings_by_chain: dict[str, ProductRetailerListing] = {}
+        for lst in (
+            db.execute(
+                select(ProductRetailerListing)
+                .where(ProductRetailerListing.product_id == product_id)
+                .order_by(
+                    ProductRetailerListing.catalog_last_seen_at.desc().nulls_last(),
+                    ProductRetailerListing.id.asc(),
+                )
+            )
+            .scalars()
+            .all()
+        ):
+            if lst.chain not in listings_by_chain:
+                listings_by_chain[lst.chain] = lst
+
         for price_report, store in rows:
             if store.id in seen_store_ids:
                 continue
@@ -594,10 +682,20 @@ async def get_product_stores(
                 if distance_km > radius_km:
                     continue
 
-            store_source = f"catalog_{store.chain}"
-            store_external_id = (
-                product.external_id if product.external_source == store_source else None
-            )
+            listing = listings_by_chain.get(store.chain)
+            if listing:
+                store_url = _build_store_url(
+                    listing.external_source, listing.external_id, product.name
+                )
+            else:
+                # TODO(#49e): remove fallback after #49e drops legacy Product columns
+                store_url = _build_store_url(
+                    product.external_source,
+                    product.external_id
+                    if product.external_source == f"catalog_{store.chain}"
+                    else None,
+                    product.name,
+                )
             stores.append(
                 {
                     "id": str(store.id),
@@ -613,7 +711,7 @@ async def get_product_stores(
                     "is_on_sale": price_report.is_on_sale,
                     "discount_pct": price_report.sale_pct_off,
                     "distance_km": round(distance_km, 2) if distance_km is not None else None,
-                    "store_url": _build_store_url(store_source, store_external_id, product.name),
+                    "store_url": store_url,
                 }
             )
 
