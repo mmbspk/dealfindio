@@ -30,6 +30,7 @@ from sqlalchemy.orm import Session
 
 from app.models import PriceReport, Product, ProductRetailerListing, Store
 from app.services.category_normaliser import normalise_category
+from app.services.package_size import normalize_package_size
 from app.services.product_dedup import FuzzyMatcher, brands_conflict
 from scrapers.catalog_base import CatalogProduct
 
@@ -527,6 +528,7 @@ def ingest_catalog_product(
             category=normalise_category(cp.category),
             unit_price=cp.unit_price,
             unit_price_label=cp.unit_price_label,
+            package_size_norm=normalize_package_size(cp.package_size),
         )
         session.add(product)
         session.flush()
@@ -548,6 +550,11 @@ def ingest_catalog_product(
             updated = True
         if cp.unit_price_label and product.unit_price_label != cp.unit_price_label:
             product.unit_price_label = cp.unit_price_label
+            updated = True
+        # package_size_norm is always recomputed from the latest raw value (not fill-only).
+        new_norm = normalize_package_size(cp.package_size)
+        if new_norm != product.package_size_norm:
+            product.package_size_norm = new_norm
             updated = True
 
     # Upsert the retailer listing — sole source of retailer-specific metadata.

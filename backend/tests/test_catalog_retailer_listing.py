@@ -506,3 +506,69 @@ class TestGTINOverridesExistingListingEndToEnd:
         test_db_session.refresh(listing)
         assert listing.product_id == product.id
         assert not any("Reassigning listing" in r.message for r in caplog.records)
+
+
+# ── Story #50: package_size_norm ──────────────────────────────────────────────
+
+
+class TestPackageSizeNormOnIngest:
+    """Product.package_size_norm is populated and recomputed on ingest."""
+
+    @pytest.mark.integration
+    def test_new_product_gets_normalised_size(self, test_db_session: Session):
+        """Ingesting '1.5 L' writes package_size_norm = '1.5L' on the new product."""
+        cp = _cp("Oat Milk 1.5L", external_id="OM-1.5L", package_size="1.5 L")
+        ingest_catalog_products([cp], "coles", test_db_session)
+        test_db_session.commit()
+
+        product = test_db_session.execute(
+            select(Product).where(Product.name == "Oat Milk 1.5L")
+        ).scalar_one()
+        assert product.package_size_norm == "1.5L"
+
+    @pytest.mark.integration
+    def test_norm_recomputed_on_update(self, test_db_session: Session):
+        """Updating a product's scraper raw value recomputes package_size_norm."""
+        cp_first = _cp("Full Cream Milk", external_id="FCM-1", package_size="1000ml")
+        ingest_catalog_products([cp_first], "coles", test_db_session)
+        test_db_session.commit()
+
+        product = test_db_session.execute(
+            select(Product).where(Product.name == "Full Cream Milk")
+        ).scalar_one()
+        assert product.package_size_norm == "1L"
+
+        # Scraper now returns a different size string for the same SKU
+        cp_update = _cp("Full Cream Milk", external_id="FCM-1", package_size="2L")
+        ingest_catalog_products([cp_update], "coles", test_db_session)
+        test_db_session.commit()
+
+        test_db_session.refresh(product)
+        assert product.package_size_norm == "2L"
+
+    @pytest.mark.integration
+    def test_unparseable_raw_leaves_norm_null(self, test_db_session: Session):
+        """An unparseable package_size leaves package_size_norm as None."""
+        cp = _cp("Assorted Snacks", external_id="ASST-1", package_size="assorted")
+        ingest_catalog_products([cp], "coles", test_db_session)
+        test_db_session.commit()
+
+        product = test_db_session.execute(
+            select(Product).where(Product.name == "Assorted Snacks")
+        ).scalar_one()
+        assert product.package_size_norm is None
+
+    @pytest.mark.integration
+    def test_norm_in_api_response(self, test_client, test_db_session: Session):
+        """package_size_norm is present in the /products/search response."""
+        cp = _cp("Sparkling Water 375mL", external_id="SW-375", package_size="375mL")
+        ingest_catalog_products([cp], "coles", test_db_session)
+        test_db_session.commit()
+
+        resp = test_client.get("/api/v1/products/search?q=Sparkling+Water+375mL")
+        assert resp.status_code == 200
+        items = resp.json()
+        assert items, "expected at least one result"
+        item = next((i for i in items if i["name"] == "Sparkling Water 375mL"), None)
+        assert item is not None
+        assert item["package_size_norm"] == "375mL"
