@@ -13,11 +13,11 @@ Endpoints:
   GET  /unsubscribe?token=…      — one-click email unsubscribe (no auth)
 """
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Annotated
 from uuid import UUID
-import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import HTMLResponse
@@ -38,6 +38,10 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Notifications"])
 
 _IN_APP = "in_app"
+
+# Module-level set holds strong references to fire-and-forget badge tasks so the
+# GC cannot collect them before Expo responds.  Each task removes itself on completion.
+_badge_tasks: set[asyncio.Task] = set()
 
 
 # ─── helpers ─────────────────────────────────────────────────────────────────
@@ -60,16 +64,23 @@ def _unread_in_app_count(profile_id, db: Session) -> int:
     ).scalar_one()
 
 
+async def _fire_badge(token: str, badge: int) -> None:
+    """Background coroutine for silent badge-only Expo push — logs failures, never raises."""
+    try:
+        from app.services.push_sender import send_expo_badge_async
+        await send_expo_badge_async(token, badge)
+    except Exception as e:
+        logger.warning(f"Background badge sync failed for token {token[:20]}...: {e}")
+
+
 async def _sync_push_badge(profile: UserProfile, db: Session) -> None:
-    """Schedule a silent badge-only push as a background task — does not block the response."""
+    """Fire badge-only Expo push as a background task — does not block the response."""
     if not profile.fcm_token:
         return
-    from app.services.push_sender import send_expo_badge_async
-
     badge = _unread_in_app_count(profile.id, db)
-    task = asyncio.create_task(send_expo_badge_async(profile.fcm_token, badge))
-    # Keep a strong reference so GC doesn't collect it before Expo responds
-    task.add_done_callback(lambda t: None)
+    task = asyncio.create_task(_fire_badge(profile.fcm_token, badge))
+    _badge_tasks.add(task)
+    task.add_done_callback(_badge_tasks.discard)
 
 
 def _notif_to_response(notif: Notification) -> NotificationResponse:

@@ -14,7 +14,7 @@ Verifies:
 
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
@@ -22,7 +22,6 @@ import pytest
 from app.models import Notification, Product, Store, UserProfile
 from app.models.watchlist import UserWatchlist
 from app.models.watchlist_list import WatchlistList
-
 
 # ── fixtures ──────────────────────────────────────────────────────────────────
 
@@ -255,13 +254,13 @@ class TestPushBadge:
         assert mock_badge.called
 
     @pytest.mark.integration
-    def test_concurrent_notifications_correct_count(
+    def test_badge_increments_across_two_watchlist_entries_same_price_report(
         self, test_db_session, sample_product: Product, sample_store: Store
     ):
         """
-        Two sequential price matches via two distinct watchlist entries for the same
-        user produce badge counts of 1 then 2. The first entry's in_app row is NOT
-        deleted between runs, so the second run's badge query sees it.
+        A single task run matches two watchlist entries for the same price report.
+        The first entry's in_app row is committed before the second entry fires, so
+        badge counts accumulate sequentially: entry1 → badge=1, entry2 → badge=2.
         """
         from datetime import date
 
@@ -456,3 +455,40 @@ class TestPushPayloadDeepLink:
             resp = authed_client.delete(f"/api/v1/notifications/{notif.id}")
         assert resp.status_code == 204
         assert not mock_badge.called
+
+
+# ── 11: Badge task lifecycle ──────────────────────────────────────────────────
+
+
+class TestBadgeDispatch:
+    """Unit tests for _fire_badge lifecycle — strong-reference management and error handling."""
+
+    def test_fire_badge_calls_send_expo_badge_async(self):
+        """_fire_badge delegates to send_expo_badge_async with the correct token and badge."""
+        import asyncio
+
+        from app.routers import notifications as nr
+
+        sent = []
+
+        async def fake_send(token, badge):
+            sent.append((token, badge))
+            return True
+
+        with patch("app.services.push_sender.send_expo_badge_async", fake_send):
+            asyncio.run(nr._fire_badge("ExponentPushToken[test-001]", 3))
+
+        assert sent == [("ExponentPushToken[test-001]", 3)]
+
+    def test_fire_badge_does_not_propagate_expo_failure(self):
+        """Expo push failures are caught and logged — never re-raised to the caller."""
+        import asyncio
+
+        from app.routers import notifications as nr
+
+        async def failing_send(token, badge):
+            raise RuntimeError("Expo API error")
+
+        # Must complete without raising
+        with patch("app.services.push_sender.send_expo_badge_async", failing_send):
+            asyncio.run(nr._fire_badge("ExponentPushToken[test-001]", 5))
