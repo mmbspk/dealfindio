@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
+from html import escape as _html_escape
 from typing import Any
 
 import httpx
@@ -173,7 +174,10 @@ def _build_subject(
 ) -> str:
     """Build email subject line guaranteed <= 50 chars for mobile preview."""
     if trigger_type == "price_match":
-        return f"You hit your target — {_truncate(product_name, 17)} at ${price:.2f}"
+        price_str = f"${price:.2f}"
+        # "You hit your target — " (22 chars) + " at " (4 chars) = 26 fixed chars
+        budget = max(50 - 26 - len(price_str), 5)
+        return f"You hit your target — {_truncate(product_name, budget)} at {price_str}"
     if trigger_type == "pct_off_match":
         pct = pct_off or 0
         return f"{pct}% off: {_truncate(product_name, 38)}"
@@ -194,11 +198,14 @@ def _product_card(
     image_url: str | None,
 ) -> str:
     """Mobile-first product card: CDN-linked thumbnail (never base64) + price badge + store."""
+    safe_name = _html_escape(product_name)
+    safe_store = _html_escape(store_name)
     img_cell = ""
-    if image_url:
+    if image_url and image_url.startswith("https://"):
+        safe_img = _html_escape(image_url, quote=True)
         img_cell = (
             f'<td width="80" style="vertical-align:top;padding-right:16px;">'
-            f'<img src="{image_url}" alt="" width="80" height="80"'
+            f'<img src="{safe_img}" alt="" width="80" height="80"'
             f' style="width:80px;height:80px;object-fit:contain;border-radius:8px;'
             f'border:1px solid #e5e7eb;display:block;" /></td>'
         )
@@ -207,9 +214,9 @@ def _product_card(
         f'<table width="100%" cellpadding="0" cellspacing="0" role="presentation"><tr>'
         f"{img_cell}"
         f'<td style="vertical-align:top;">'
-        f'<div style="font-size:15px;font-weight:700;color:#111827;margin:0 0 6px;line-height:1.4;">{product_name}</div>'
+        f'<div style="font-size:15px;font-weight:700;color:#111827;margin:0 0 6px;line-height:1.4;">{safe_name}</div>'
         f'<div style="margin:0 0 8px;">{_price_badge(price, was_price)}</div>'
-        f'<p style="margin:0;font-size:13px;color:#6b7280;">at <strong style="color:#374151;">{store_name}</strong></p>'
+        f'<p style="margin:0;font-size:13px;color:#6b7280;">at <strong style="color:#374151;">{safe_store}</strong></p>'
         f"</td></tr></table></a>"
     )
 
@@ -229,7 +236,7 @@ def _build_digest_content(
         list_name = first.get("list_name")
         list_emoji = first.get("list_emoji") or ""
         if list_name:
-            header_text = f"{list_emoji} {list_name}".strip()
+            header_text = _html_escape(f"{list_emoji} {list_name}".strip())
             parts.append(
                 f'<h3 style="font-size:16px;font-weight:700;color:#374151;margin:24px 0 12px;'
                 f'padding-bottom:8px;border-bottom:2px solid #4f46e5;">{header_text}</h3>'
@@ -317,14 +324,6 @@ def send_weekly_digest_email(
         key = d.get("list_id") or "__other__"
         grouped[key].append(d)
 
-    body_html = _build_digest_content(grouped, _base_url(), include_images=True)
-    if len(body_html.encode()) > _DIGEST_SIZE_BUDGET:
-        logger.warning(
-            f"Digest body {len(body_html.encode())} bytes exceeds {_DIGEST_SIZE_BUDGET}; "
-            f"rebuilding without images for to={to}"
-        )
-        body_html = _build_digest_content(grouped, _base_url(), include_images=False)
-
     intro = (
         '<h2 style="margin:0 0 20px;font-size:20px;font-weight:700;color:#111827;">'
         "Your deals this week \U0001f6d2</h2>"
@@ -335,6 +334,15 @@ def send_weekly_digest_email(
         f'font-size:15px;padding:12px 28px;border-radius:8px;text-decoration:none;">'
         f"View All Deals &rarr;</a>"
     )
+
+    body_html = _build_digest_content(grouped, _base_url(), include_images=True)
+    if len((intro + body_html + cta).encode()) > _DIGEST_SIZE_BUDGET:
+        logger.warning(
+            f"Digest body {len(body_html.encode())} bytes exceeds {_DIGEST_SIZE_BUDGET}; "
+            f"rebuilding without images for to={to}"
+        )
+        body_html = _build_digest_content(grouped, _base_url(), include_images=False)
+
     content = intro + body_html + cta
     html = _html_wrapper(content, unsub_url)
     return _send_email(to, "Your deals this week \U0001f6d2", html, unsubscribe_url=unsub_url)

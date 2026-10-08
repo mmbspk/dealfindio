@@ -310,9 +310,7 @@ def check_watchlist_for_price(self, price_report_id: str) -> NotificationResult:
                 if send_email_notif and user.email:
                     from app.services.email_sender import send_price_alert_email
 
-                    img_url = getattr(price_report.product, "image_url", None) or getattr(
-                        price_report.product, "external_image_url", None
-                    )
+                    img_url = getattr(price_report.product, "image_url", None)
                     email_msg_id = send_price_alert_email(
                         to=user.email,
                         user_id=str(user.id),
@@ -662,32 +660,15 @@ def send_weekly_digest(self) -> dict:
                 if not watchlist_items:
                     continue
 
-                product_ids = [w.product_id for w in watchlist_items]
-
-                # Build a map of product_id → (list_id, list_name, list_emoji)
-                from app.models.watchlist_list import WatchlistList
-
-                product_list_map: dict = {}
-                for w in watchlist_items:
-                    if w.product_id not in product_list_map:
-                        lst = (
-                            session.query(WatchlistList).filter_by(id=w.list_id).first()
-                            if w.list_id
-                            else None
-                        )
-                        product_list_map[w.product_id] = (
-                            str(w.list_id) if w.list_id else None,
-                            lst.name if lst else None,
-                            lst.emoji if lst else None,
-                        )
-
-                # Get best active price report per product (is_on_sale)
+                # Fetch best on-sale PriceReport per unique product
                 from sqlalchemy import desc
 
                 from app.models import PriceReport, Product, Store
+                from app.models.watchlist_list import WatchlistList
 
-                deals = []
-                for pid in product_ids:
+                unique_product_ids = {w.product_id for w in watchlist_items}
+                best_report_map: dict = {}
+                for pid in unique_product_ids:
                     report = (
                         session.query(PriceReport)
                         .join(Product, PriceReport.product_id == Product.id)
@@ -698,33 +679,47 @@ def send_weekly_digest(self) -> dict:
                         .order_by(desc(PriceReport.sale_pct_off))
                         .first()
                     )
-
                     if report and report.product:
                         store = session.query(Store).filter_by(id=report.store_id).first()
-                        list_id, list_name, list_emoji = product_list_map.get(
-                            pid, (None, None, None)
-                        )
-                        img_url = getattr(report.product, "image_url", None) or getattr(
-                            report.product, "external_image_url", None
-                        )
-                        deals.append(
-                            {
-                                "product_name": report.product.name,
-                                "price": report.price_cents / 100,
-                                "was_price": report.was_price_cents / 100
-                                if report.was_price_cents
-                                else None,
-                                "store_name": store.name if store else "Store",
-                                "product_id": str(pid),
-                                "pct_off": round(report.sale_pct_off)
-                                if report.sale_pct_off
-                                else None,
-                                "list_id": list_id,
-                                "list_name": list_name,
-                                "list_emoji": list_emoji,
-                                "image_url": img_url,
-                            }
-                        )
+                        best_report_map[pid] = (report, store)
+
+                # One deal per (product, list) membership so each list section is populated.
+                # A product in two lists appears under both.
+                seen: set = set()
+                deals = []
+                for w in watchlist_items:
+                    pid = w.product_id
+                    if pid not in best_report_map:
+                        continue
+                    list_key = str(w.list_id) if w.list_id else None
+                    dedup = (str(pid), list_key)
+                    if dedup in seen:
+                        continue
+                    seen.add(dedup)
+                    report, store = best_report_map[pid]
+                    lst = (
+                        session.query(WatchlistList).filter_by(id=w.list_id).first()
+                        if w.list_id
+                        else None
+                    )
+                    deals.append(
+                        {
+                            "product_name": report.product.name,
+                            "price": report.price_cents / 100,
+                            "was_price": report.was_price_cents / 100
+                            if report.was_price_cents
+                            else None,
+                            "store_name": store.name if store else "Store",
+                            "product_id": str(pid),
+                            "pct_off": round(report.sale_pct_off)
+                            if report.sale_pct_off
+                            else None,
+                            "list_id": list_key,
+                            "list_name": lst.name if lst else None,
+                            "list_emoji": lst.emoji if lst else None,
+                            "image_url": getattr(report.product, "image_url", None),
+                        }
+                    )
 
                 if not deals:
                     continue
