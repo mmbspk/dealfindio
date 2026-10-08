@@ -705,11 +705,11 @@ class TestWatchlistChainSpecificImage:
     @pytest.mark.integration
     def test_watchlist_enrich_uses_current_chain_listing_image(self, test_db_session: Session):
         """_enrich_item with current_chain=coles uses coles listing image, not woolworths."""
+        from app.models import UserProfile, UserWatchlist, WatchlistList
         from app.routers.watchlist import _enrich_item
-        from app.models import UserWatchlist, WatchlistList, UserProfile
         from app.services.listing_helpers import (
-            get_listing_enrichment_map,
             get_listing_enrichment_by_chain_map,
+            get_listing_enrichment_map,
         )
 
         profile = UserProfile(firebase_uid=f"wl-test-{uuid4()}", email="wl-test@example.com")
@@ -753,11 +753,11 @@ class TestWatchlistChainSpecificImage:
         self, test_db_session: Session
     ):
         """When current_chain is unknown (no price report), product-level listing image is used."""
+        from app.models import UserProfile, UserWatchlist, WatchlistList
         from app.routers.watchlist import _enrich_item
-        from app.models import UserWatchlist, WatchlistList, UserProfile
         from app.services.listing_helpers import (
-            get_listing_enrichment_map,
             get_listing_enrichment_by_chain_map,
+            get_listing_enrichment_map,
         )
 
         profile = UserProfile(firebase_uid=f"wl-fb-{uuid4()}", email="wl-fb@example.com")

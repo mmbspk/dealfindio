@@ -34,7 +34,10 @@ from app.schemas.watchlist import (
     WatchlistListCreate,
     WatchlistListResponse,
 )
-from app.services.listing_helpers import get_listing_enrichment_by_chain_map, get_listing_enrichment_map
+from app.services.listing_helpers import (
+    get_listing_enrichment_by_chain_map,
+    get_listing_enrichment_map,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Watchlist"])
