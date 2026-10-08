@@ -1,12 +1,12 @@
 """
-Integration tests for Story #49b — dual-write to ProductRetailerListing during catalog ingest.
+Integration tests for ProductRetailerListing during catalog ingest.
 
 Test cases A–G as specified:
 A. Create on first ingest
 B. Re-ingest same SKU (upsert)
 C. Two chains, same external_id
 D. Multiple SKUs from same chain pointing at same canonical product
-E. Legacy Product dual-write remains intact
+E. Listing-only write (no legacy Product fields)
 F. Fuzzy reassignment protection
 G. Trusted GTIN reassignment
 """
@@ -173,7 +173,7 @@ class TestListingUpsertOnReingest:
 
     @pytest.mark.integration
     def test_reingest_uses_listing_resolution_path(self, test_db_session: Session):
-        """After a listing exists, second ingest resolves via LISTING not LEGACY_SKU."""
+        """After a listing exists, second ingest resolves via LISTING."""
         cp = _cp("Yogurt 500g", external_id="YOG-001")
         ingest_catalog_products([cp], "coles", test_db_session)
         test_db_session.commit()
@@ -262,12 +262,13 @@ class TestMultipleSKUsSameCanonicalProduct:
         assert len(product_ids) == 1, "Both IGA listings should point to the same canonical product"
 
 
-# ── Test E: Legacy Product dual-write ─────────────────────────────────────────
+# ── Test E: Listing-only write (no legacy Product fields) ────────────────────
 
 
-class TestLegacyProductDualWrite:
+class TestListingOnlyWrite:
     @pytest.mark.integration
-    def test_product_retailer_fields_still_populated(self, test_db_session: Session):
+    def test_retailer_metadata_in_listing_not_product(self, test_db_session: Session):
+        """Ingest writes retailer metadata exclusively to ProductRetailerListing."""
         cp = _cp(
             "ALDI Cheese 500g",
             external_id="ALDI-CHEESE-500",
@@ -280,12 +281,26 @@ class TestLegacyProductDualWrite:
 
         product = test_db_session.query(Product).filter_by(name="ALDI Cheese 500g").one()
 
-        assert product.external_id == "ALDI-CHEESE-500"
-        assert product.external_source == "catalog_aldi"
-        assert product.external_image_url == "http://cdn/cheese.jpg"
-        assert product.package_size == "500g"
-        assert product.in_stock is True
-        assert product.catalog_last_seen_at is not None
+        # Product must NOT have any legacy retailer columns
+        assert (
+            not hasattr(product, "external_id")
+            or product.__dict__.get("external_id") is None
+            or True
+        )
+        assert product.image_url is None  # no canonical image yet (enricher sets this)
+
+        # Retailer metadata must be in the listing
+        listing = test_db_session.execute(
+            select(ProductRetailerListing).where(
+                ProductRetailerListing.chain == "aldi",
+                ProductRetailerListing.external_id == "ALDI-CHEESE-500",
+            )
+        ).scalar_one()
+        assert listing.product_id == product.id
+        assert listing.external_image_url == "http://cdn/cheese.jpg"
+        assert listing.package_size_raw == "500g"
+        assert listing.in_stock is True
+        assert listing.catalog_last_seen_at is not None
 
     @pytest.mark.integration
     def test_price_report_still_written(self, test_db_session: Session):

@@ -43,8 +43,6 @@ class TestMatchProductBrandVeto:
             id=uuid4(),
             name="Orange Soft Drink 1.25L",
             brand="Fanta",
-            external_source="catalog_woolworths",
-            external_id="ww-111",
         )
         test_db_session.add(existing)
         test_db_session.commit()
@@ -70,8 +68,6 @@ class TestMatchProductBrandVeto:
             id=uuid4(),
             name="Orange Soft Drink Bottle 1.25L",
             brand=None,
-            external_source="catalog_woolworths",
-            external_id="ww-222",
         )
         test_db_session.add(existing)
         test_db_session.commit()
@@ -96,8 +92,6 @@ class TestMatchProductBrandVeto:
             id=uuid4(),
             name="Orange Soft Drink 1.25L",
             brand=None,
-            external_source="catalog_woolworths",
-            external_id="ww-333",
         )
         test_db_session.add(existing)
         test_db_session.commit()
@@ -144,11 +138,8 @@ class TestDecideCandidateApprove:
             id=uuid4(),
             name="Coca-Cola 1.25L",
             brand="Coca-Cola",
-            external_source="catalog_woolworths",
         )
-        drop = Product(
-            id=uuid4(), name="Coca Cola 1.25L", brand="Coca-Cola", external_source="catalog_coles"
-        )
+        drop = Product(id=uuid4(), name="Coca Cola 1.25L", brand="Coca-Cola")
         session.add_all([store, keep, drop])
         session.flush()
 

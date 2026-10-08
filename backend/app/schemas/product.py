@@ -41,7 +41,7 @@ class ProductResponse(BaseModel):
             self.image_url = self.external_image_url
         return self
 
-    in_stock: bool = Field(True, description="Whether the product is in stock")
+    in_stock: bool = Field(False, description="Whether the product is in stock")
 
     # Cheapest current price across all stores/chains (null if no price data yet)
     lowest_price_aud: float | None = Field(None, description="Cheapest current price in AUD")
