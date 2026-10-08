@@ -557,7 +557,6 @@ def ingest_catalog_product(
             category=normalise_category(cp.category),
             unit_price=cp.unit_price,
             unit_price_label=cp.unit_price_label,
-            package_size_norm=normalize_package_size(cp.package_size),
         )
         session.add(product)
         session.flush()
@@ -580,18 +579,14 @@ def ingest_catalog_product(
         if cp.unit_price_label and product.unit_price_label != cp.unit_price_label:
             product.unit_price_label = cp.unit_price_label
             updated = True
-        # package_size_norm is always recomputed from the latest raw value (not fill-only).
-        new_norm = normalize_package_size(cp.package_size)
-        if new_norm != product.package_size_norm:
-            product.package_size_norm = new_norm
-            updated = True
 
     # Upsert the retailer listing — sole source of retailer-specific metadata.
     # Happens after canonical product_id is confirmed and flushed.
     # Participates in the same savepoint as the Product write.
     _upsert_retailer_listing(session, cp, chain, product, resolution, now)
 
-    # Recompute canonical size from all listings (crawl-order independent).
+    # Derive canonical size from all listings: catalog_last_seen_at DESC NULLS LAST, id ASC.
+    # Picks the first parseable raw value — crawl-order independent.
     new_norm = recompute_product_package_size_norm(session, product.id)
     if new_norm != product.package_size_norm:
         product.package_size_norm = new_norm

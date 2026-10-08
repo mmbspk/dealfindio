@@ -572,8 +572,6 @@ class TestPackageSizeNormOnIngest:
         item = next((i for i in items if i["name"] == "Sparkling Water 375mL"), None)
         assert item is not None
         assert item["package_size_norm"] == "375mL"
-        assert item is not None
-        assert item["package_size_norm"] == "375mL"
 
 
 # ── Story #50 Tests A–E: canonical ordering (crawl-order independence) ─────────
@@ -753,6 +751,10 @@ class TestPackageSizeNormCanonicalOrdering:
         """
         Test E: two listings with identical catalog_last_seen_at.
         The one with the lower id (ASC) wins.
+
+        Both listings get DB-assigned UUIDs; we inspect which is lower AFTER the
+        flush so the assertion is data-driven and always correct regardless of
+        uuid4 ordering, while still verifying the id-ASC sort behaviour.
         """
         product = Product(id=uuid4(), name="Chips E")
         test_db_session.add(product)
@@ -760,9 +762,7 @@ class TestPackageSizeNormCanonicalOrdering:
 
         ts = datetime.now(timezone.utc)
 
-        # Insert in reverse order to verify id ordering, not insertion order.
-        # Both have the same timestamp; id ASC picks the first inserted (lower UUID).
-        listing_first = ProductRetailerListing(
+        listing_coles = ProductRetailerListing(
             product_id=product.id,
             chain="coles",
             external_id="CE-COLES",
@@ -773,10 +773,7 @@ class TestPackageSizeNormCanonicalOrdering:
             is_online_only=False,
             catalog_last_seen_at=ts,
         )
-        test_db_session.add(listing_first)
-        test_db_session.flush()
-
-        listing_second = ProductRetailerListing(
+        listing_ww = ProductRetailerListing(
             product_id=product.id,
             chain="woolworths",
             external_id="CE-WW",
@@ -787,11 +784,18 @@ class TestPackageSizeNormCanonicalOrdering:
             is_online_only=False,
             catalog_last_seen_at=ts,
         )
-        test_db_session.add(listing_second)
+        test_db_session.add_all([listing_coles, listing_ww])
+        test_db_session.flush()  # assigns .id to both
+
+        # Determine expected winner by id ordering (mirrors ORDER BY id ASC).
+        if listing_coles.id < listing_ww.id:
+            expected_norm = "200g"
+        else:
+            expected_norm = "250g"
+
         test_db_session.commit()
 
         from app.services.catalog_ingest import recompute_product_package_size_norm
 
         norm = recompute_product_package_size_norm(test_db_session, product.id)
-        # listing_first has lower id (flushed first), so "200g" wins
-        assert norm == "200g"
+        assert norm == expected_norm
