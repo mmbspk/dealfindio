@@ -89,6 +89,7 @@ def send_expo_push_sync(
     title: str,
     body: str,
     data: dict[str, Any] | None = None,
+    badge: int | None = None,
 ) -> tuple[bool, str | None]:
     """Synchronous wrapper for use in Celery tasks."""
     import asyncio
@@ -100,4 +101,47 @@ def send_expo_push_sync(
     except RuntimeError:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-    return loop.run_until_complete(send_expo_push(token, title, body, data))
+    return loop.run_until_complete(send_expo_push(token, title, body, data, badge=badge))
+
+
+def send_expo_badge_sync(token: str, badge: int) -> bool:
+    """Send a silent badge-only Expo push (synchronous wrapper for Celery tasks)."""
+    if not token or not is_expo_token(token):
+        return False
+    import asyncio
+
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_closed():
+            raise RuntimeError("loop closed")
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    try:
+        return loop.run_until_complete(send_expo_badge_async(token, badge))
+    except Exception as e:
+        logger.warning(f"Badge-only push failed for token {token[:20]}...: {e}")
+        return False
+
+
+async def send_expo_badge_async(token: str, badge: int) -> bool:
+    """Send a silent badge-only Expo push. Awaitable — safe to use with asyncio.create_task().
+
+    Does not block the event loop; intended for fire-and-forget badge sync from FastAPI routes.
+    """
+    if not token or not is_expo_token(token):
+        return False
+    payload: dict[str, Any] = {"to": token, "badge": badge}
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                _EXPO_PUSH_URL,
+                json=payload,
+                headers={"Accept": "application/json", "Content-Type": "application/json"},
+            )
+            resp.raise_for_status()
+            ticket = resp.json().get("data", {})
+            return ticket.get("status") == "ok"
+    except Exception as e:
+        logger.warning(f"Badge-only push failed for token {token[:20]}...: {e}")
+        return False

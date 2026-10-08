@@ -66,17 +66,30 @@ def _in_quiet_hours(user: UserProfile) -> bool:
         return False
 
 
-def _send_push(user: UserProfile, title: str, body: str, data: dict) -> str | None:
+def _send_push(user: UserProfile, title: str, body: str, data: dict, badge: int | None = None) -> str | None:
     """Send Expo push. Returns receipt_id or None. Synchronous (Celery task context)."""
     if not user.fcm_token:
         return None
     from app.services.push_sender import send_expo_push_sync
 
-    success, receipt_id = send_expo_push_sync(user.fcm_token, title, body, data)
+    success, receipt_id = send_expo_push_sync(user.fcm_token, title, body, data, badge=badge)
     if not success:
         # DeviceNotRegistered — clear stale token
         return None
     return receipt_id
+
+
+def _get_unread_in_app_count(session, user_id) -> int:
+    """Return the current unread in-app notification count for badge calculation."""
+    from sqlalchemy import func, select
+
+    return session.execute(
+        select(func.count()).where(
+            Notification.user_id == user_id,
+            Notification.channel == "in_app",
+            Notification.opened_at == None,  # noqa: E711 — SQLAlchemy IS NULL
+        )
+    ).scalar_one()
 
 
 @celery_app.task(
@@ -230,18 +243,37 @@ def check_watchlist_for_price(self, price_report_id: str) -> NotificationResult:
                 push_receipt = None
                 email_msg_id = None
 
-                # Send push
+                # Log in-app notification FIRST so the badge count includes this event
+                # when the push is dispatched moments later.
+                in_app_notif = _log_notification(
+                    session,
+                    user,
+                    watchlist_item,
+                    price_report_uuid,
+                    trigger_type,
+                    title,
+                    body,
+                    "in_app",
+                    is_delivered=True,
+                )
+
+                # Send push with badge = authoritative unread in_app count
                 if send_push_notif and user.fcm_token:
+                    badge = _get_unread_in_app_count(session, watchlist_item.user_id)
                     push_receipt = _send_push(
                         user,
                         title,
                         body,
                         {
                             "product_id": str(price_report.product_id),
+                            "list_id": str(watchlist_item.list_id) if watchlist_item.list_id else None,
+                            "notification_id": str(in_app_notif.id) if in_app_notif else None,
                             "store_id": str(price_report.store_id),
                             "price_cents": str(price_report.price_cents),
                             "trigger_type": trigger_type,
+                            "deep_link": f"dealfindio://product/{price_report.product_id}",
                         },
+                        badge=badge,
                     )
                     _log_notification(
                         session,
@@ -257,19 +289,6 @@ def check_watchlist_for_price(self, price_report_id: str) -> NotificationResult:
                     )
                     if push_receipt:
                         notifications_sent += 1
-
-                # Always log in-app notification (even if push/email off)
-                _log_notification(
-                    session,
-                    user,
-                    watchlist_item,
-                    price_report_uuid,
-                    trigger_type,
-                    title,
-                    body,
-                    "in_app",
-                    is_delivered=True,
-                )
 
                 # Send email
                 if send_email_notif and user.email:
@@ -332,7 +351,7 @@ def _log_notification(
     fcm_message_id: str | None = None,
     email_message_id: str | None = None,
     is_delivered: bool = False,
-) -> None:
+) -> Notification | None:
     try:
         notif = Notification(
             user_id=watchlist_item.user_id,
@@ -349,12 +368,14 @@ def _log_notification(
         )
         session.add(notif)
         session.commit()
+        return notif
     except Exception as e:
         logger.error(f"Failed to log {channel} notification: {e}")
         try:
             session.rollback()
         except Exception:
             pass
+        return None
 
 
 @celery_app.task(
@@ -451,23 +472,27 @@ def notify_prediction_drops(self) -> NotificationResult:
                     is_delivered=True,
                 )
 
-                # Push
+                # Push (in_app logged above so badge count is current)
                 if (
                     getattr(user, "notif_push_prediction", True)
                     and user.fcm_token
                     and not _in_quiet_hours(user)
                 ):
+                    badge = _get_unread_in_app_count(session, watchlist_item.user_id)
                     receipt = _send_push(
                         user,
                         title,
                         body,
                         {
                             "product_id": str(watchlist_item.product_id),
+                            "list_id": str(watchlist_item.list_id) if watchlist_item.list_id else None,
                             "predicted_price_cents": str(prediction.predicted_price_cents),
                             "prediction_week": prediction.prediction_week.isoformat(),
                             "chain": prediction.chain or "",
                             "trigger_type": "prediction_drop",
+                            "deep_link": f"dealfindio://product/{watchlist_item.product_id}",
                         },
+                        badge=badge,
                     )
                     _log_prediction_notification(
                         session,

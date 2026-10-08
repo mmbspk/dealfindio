@@ -2,17 +2,18 @@
 Notifications router.
 
 Endpoints:
-  GET  /                         — list notifications (paginated)
-  PUT  /{id}/read                — mark one read
+  GET  /                         — list notifications (paginated, default channel=in_app)
+  PUT  /{id}/read                — mark one read (in_app only; syncs push badge)
   DELETE /{id}                   — delete one
   POST /fcm-token                — register Expo push token
-  GET  /unread-count             — unread in-app notification count
-  PUT  /read-all                 — mark all in-app read
+  GET  /unread-count             — unread in-app notification count (channel=in_app only)
+  PUT  /read-all                 — mark all in-app read + sync push badge to 0
   GET  /preferences              — get notification preferences
   PUT  /preferences              — update notification preferences
   GET  /unsubscribe?token=…      — one-click email unsubscribe (no auth)
 """
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Annotated
@@ -36,6 +37,12 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Notifications"])
 
+_IN_APP = "in_app"
+
+# Module-level set holds strong references to fire-and-forget badge tasks so the
+# GC cannot collect them before Expo responds.  Each task removes itself on completion.
+_badge_tasks: set[asyncio.Task] = set()
+
 
 # ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -44,6 +51,36 @@ def _require_profile(current_user: User) -> UserProfile:
     if not current_user.profile:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User profile not found")
     return current_user.profile
+
+
+def _unread_in_app_count(profile_id, db: Session) -> int:
+    """Authoritative in-app unread count — the source of truth for the badge."""
+    return db.execute(
+        select(func.count()).where(
+            Notification.user_id == profile_id,
+            Notification.channel == _IN_APP,
+            Notification.opened_at.is_(None),
+        )
+    ).scalar_one()
+
+
+async def _fire_badge(token: str, badge: int) -> None:
+    """Background coroutine for silent badge-only Expo push — logs failures, never raises."""
+    try:
+        from app.services.push_sender import send_expo_badge_async
+        await send_expo_badge_async(token, badge)
+    except Exception as e:
+        logger.warning(f"Background badge sync failed for token {token[:20]}...: {e}")
+
+
+async def _sync_push_badge(profile: UserProfile, db: Session) -> None:
+    """Fire badge-only Expo push as a background task — does not block the response."""
+    if not profile.fcm_token:
+        return
+    badge = _unread_in_app_count(profile.id, db)
+    task = asyncio.create_task(_fire_badge(profile.fcm_token, badge))
+    _badge_tasks.add(task)
+    task.add_done_callback(_badge_tasks.discard)
 
 
 def _notif_to_response(notif: Notification) -> NotificationResponse:
@@ -72,18 +109,16 @@ def _notif_to_response(notif: Notification) -> NotificationResponse:
 async def list_notifications(
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
+    channel: Annotated[str | None, Query(description="Filter by channel (in_app/push/email). Defaults to in_app.")] = _IN_APP,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[NotificationResponse]:
     profile = _require_profile(current_user)
+    q = select(Notification).where(Notification.user_id == profile.id)
+    if channel:
+        q = q.where(Notification.channel == channel)
     notifications = (
-        db.execute(
-            select(Notification)
-            .where(Notification.user_id == profile.id)
-            .order_by(desc(Notification.sent_at))
-            .limit(limit)
-            .offset(offset)
-        )
+        db.execute(q.order_by(desc(Notification.sent_at)).limit(limit).offset(offset))
         .scalars()
         .all()
     )
@@ -96,12 +131,7 @@ async def unread_count(
     db: Session = Depends(get_db),
 ) -> UnreadCountResponse:
     profile = _require_profile(current_user)
-    count = db.execute(
-        select(func.count()).where(
-            Notification.user_id == profile.id,
-            Notification.opened_at == None,
-        )
-    ).scalar_one()
+    count = _unread_in_app_count(profile.id, db)
     return UnreadCountResponse(count=count)
 
 
@@ -114,10 +144,15 @@ async def read_all(
     now = datetime.now(timezone.utc)
     result = db.execute(
         update(Notification)
-        .where(Notification.user_id == profile.id, Notification.opened_at == None)
+        .where(
+            Notification.user_id == profile.id,
+            Notification.channel == _IN_APP,
+            Notification.opened_at.is_(None),
+        )
         .values(opened_at=now)
     )
     db.commit()
+    await _sync_push_badge(profile, db)
     return {"updated": result.rowcount}
 
 
@@ -138,6 +173,8 @@ async def mark_notification_read(
     notif.opened_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(notif)
+    if getattr(notif, "channel", _IN_APP) == _IN_APP:
+        await _sync_push_badge(profile, db)
     return _notif_to_response(notif)
 
 
@@ -155,8 +192,13 @@ async def delete_notification(
     ).scalar_one_or_none()
     if not notif:
         raise HTTPException(status_code=404, detail=f"Notification {notification_id} not found")
+    was_unread_in_app = (
+        getattr(notif, "channel", _IN_APP) == _IN_APP and notif.opened_at is None
+    )
     db.delete(notif)
     db.commit()
+    if was_unread_in_app:
+        await _sync_push_badge(profile, db)
 
 
 # ─── push token ───────────────────────────────────────────────────────────────
