@@ -254,12 +254,21 @@ def _trigram_lane(
     rows = session.execute(stmt).all()
 
     if not rows:
+        pkg_size_exists = (
+            select(ProductRetailerListing.id)
+            .where(
+                ProductRetailerListing.product_id == Product.id,
+                ProductRetailerListing.package_size_raw.ilike(f"%{normalised_q}%"),
+            )
+            .exists()
+        )
         stmt = (
             select(Product, literal(0.0).label("score"))
             .where(
                 and_(
                     Product.name.ilike(f"%{normalised_q}%")
-                    | Product.brand.ilike(f"%{normalised_q}%"),
+                    | Product.brand.ilike(f"%{normalised_q}%")
+                    | pkg_size_exists,
                     *filters,
                 )
             )
@@ -395,11 +404,24 @@ def search_products_ranked(
     filters = _base_filters(category, chain, in_stock)
 
     if not _is_postgres(session):
-        # SQLite (tests): plain ILIKE, no enrichment
+        # SQLite (tests): plain ILIKE + listing package_size_raw EXISTS, no enrichment
         on_sale = _on_sale_subquery()
+        pkg_size_exists_sq = (
+            select(ProductRetailerListing.id)
+            .where(
+                ProductRetailerListing.product_id == Product.id,
+                ProductRetailerListing.package_size_raw.ilike(f"%{q}%"),
+            )
+            .exists()
+        )
         stmt = (
             select(Product, literal(0.0).label("score"), on_sale.label("on_sale_flag"))
-            .where(and_(Product.name.ilike(f"%{q}%"), *filters))
+            .where(
+                and_(
+                    Product.name.ilike(f"%{q}%") | pkg_size_exists_sq,
+                    *filters,
+                )
+            )
             .order_by(on_sale.desc(), Product.name)
             .limit(_CANDIDATE_POOL)
         )

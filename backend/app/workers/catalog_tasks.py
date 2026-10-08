@@ -20,7 +20,6 @@ from typing import TypedDict
 from uuid import uuid4
 
 from celery.exceptions import SoftTimeLimitExceeded
-from sqlalchemy import select
 
 from app.config import get_settings
 from app.models import CatalogCrawlRun

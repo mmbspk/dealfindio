@@ -786,3 +786,71 @@ class TestWatchlistChainSpecificImage:
         assert (
             result.product_image_url == "http://img/wl-fb-ww.jpg"
         ), f"without current_chain, product-level listing image must be used, got: {result.product_image_url}"
+
+
+# ── package_size regression (Story #49e review fix) ──────────────────────────
+
+
+class TestPackageSizeSearchViaListing:
+    """package_size_raw on ProductRetailerListing must be searchable; no fan-out."""
+
+    @pytest.mark.integration
+    def test_package_size_in_listing_is_found_by_search(
+        self, test_client, test_db_session: Session
+    ):
+        """Product whose name/brand does NOT contain '2L' is found via listing.package_size_raw."""
+        p = _product(test_db_session, name="Full Cream Milk")
+        _listing(test_db_session, p.id, chain="coles", external_id="FCM-2L", package_size_raw="2L")
+        test_db_session.commit()
+
+        resp = test_client.get("/api/v1/products/search?q=2L")
+        assert resp.status_code == 200
+        ids = [item["id"] for item in resp.json()]
+        assert str(p.id) in ids, "product must be found via listing.package_size_raw"
+
+    @pytest.mark.integration
+    def test_package_size_search_no_fan_out_with_multiple_listings(
+        self, test_client, test_db_session: Session
+    ):
+        """Product with two listings both matching package_size appears exactly once."""
+        p = _product(test_db_session, name="Oat Milk")
+        _listing(
+            test_db_session,
+            p.id,
+            chain="coles",
+            external_id="OM-2L-A",
+            package_size_raw="2L",
+        )
+        _listing(
+            test_db_session,
+            p.id,
+            chain="woolworths",
+            external_id="OM-2L-B",
+            package_size_raw="2L",
+        )
+        test_db_session.commit()
+
+        resp = test_client.get("/api/v1/products/search?q=2L")
+        assert resp.status_code == 200
+        ids = [item["id"] for item in resp.json()]
+        assert ids.count(str(p.id)) == 1, "product must appear exactly once despite two matching listings"
+
+    @pytest.mark.integration
+    def test_product_without_matching_package_size_not_returned(
+        self, test_client, test_db_session: Session
+    ):
+        """Product with package_size_raw='500g' must NOT appear in ?q=2L search."""
+        p = _product(test_db_session, name="Almond Milk")
+        _listing(
+            test_db_session,
+            p.id,
+            chain="coles",
+            external_id="AM-500G",
+            package_size_raw="500g",
+        )
+        test_db_session.commit()
+
+        resp = test_client.get("/api/v1/products/search?q=2L")
+        assert resp.status_code == 200
+        ids = [item["id"] for item in resp.json()]
+        assert str(p.id) not in ids, "product with 500g listing must not appear in 2L search"

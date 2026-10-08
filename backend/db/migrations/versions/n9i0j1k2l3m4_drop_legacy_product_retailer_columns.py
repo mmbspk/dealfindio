@@ -5,7 +5,7 @@ the #49 migration and are no longer needed now that ProductRetailerListing
 is the sole authoritative source of retailer metadata.
 
 Revision ID: n9i0j1k2l3m4
-Revises: m8h9i0j1k2l3
+Revises: m8h9i0j1k2l3, f66f8b6ede4b
 Create Date: 2026-10-08
 """
 from __future__ import annotations
@@ -14,7 +14,9 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "n9i0j1k2l3m4"
-down_revision = "m8h9i0j1k2l3"
+# Merges both live heads: the main #49 chain (m8h9i0j1k2l3) and the
+# off-image-review branch (f66f8b6ede4b) that diverged from j5e6f7a8b9c0.
+down_revision = ("m8h9i0j1k2l3", "f66f8b6ede4b")
 branch_labels = None
 depends_on = None
 

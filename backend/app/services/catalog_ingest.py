@@ -8,9 +8,9 @@ and carry richer product metadata (image, brand, category, in-stock, SKU). This
 module is the sync upsert path for that.
 
 Matching strategy (in priority order):
-  1. by durable ProductRetailerListing(chain, external_id) — most stable once established;
-  2. by GTIN, if present;
-  3. by normalized name.
+  1. by GTIN, if present — globally unique; outranks all other signals;
+  2. by durable ProductRetailerListing(chain, external_id) — most stable once established;
+  3. by normalized name (fuzzy); cross-chain dedup only, NOT trusted for listing reassignment.
 On create, only canonical product metadata is written; retailer-specific metadata
 goes exclusively to ``ProductRetailerListing``. On update, we fill only missing
 canonical fields (never clobber a human/OFF-sourced image with a null). A
