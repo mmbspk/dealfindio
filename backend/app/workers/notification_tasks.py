@@ -83,11 +83,14 @@ def _resolve_channels(
     watchlist_item: "UserWatchlist",
     trigger_type: str,
     session,
-) -> tuple[bool, bool]:
-    """Return (send_push, send_email) for this watchlist item and trigger type.
+) -> tuple[bool, bool, bool]:
+    """Return (send_push, send_email, skip_all).
 
     List channel_override takes precedence over user-level preferences.
     None override = inherit user defaults.
+    skip_all=True only when channel_override="none"; callers must also suppress
+    in-app notifications in that case (the user opted out of all notifications
+    from this list).
     """
     if watchlist_item.list_id:
         from app.models.watchlist_list import WatchlistList
@@ -96,13 +99,13 @@ def _resolve_channels(
         if lst and lst.channel_override is not None:
             ov = lst.channel_override
             if ov == "none":
-                return False, False
-            return ov in ("push", "both"), ov in ("email", "both")
+                return False, False, True
+            return ov in ("push", "both"), ov in ("email", "both"), False
 
     push_attr, email_attr = _CHANNEL_PREF_MAP.get(
         trigger_type, ("notif_push_price_match", "notif_email_price_match")
     )
-    return getattr(user, push_attr, True), getattr(user, email_attr, False)
+    return getattr(user, push_attr, True), getattr(user, email_attr, False), False
 
 
 def _build_push_copy(
@@ -262,9 +265,11 @@ def check_watchlist_for_price(self, price_report_id: str) -> NotificationResult:
                     continue
 
                 # Resolve effective channel: list override > user defaults
-                send_push_notif, send_email_notif = _resolve_channels(
+                send_push_notif, send_email_notif, skip_all = _resolve_channels(
                     user, watchlist_item, trigger_type, session
                 )
+                if skip_all:
+                    continue  # channel_override="none" suppresses all channels incl. in-app
 
                 quiet = _in_quiet_hours(user)
                 if quiet:
@@ -504,7 +509,17 @@ def notify_prediction_drops(self) -> NotificationResult:
                     "prediction_drop", product_name, pred_aud, prediction.chain or "upcoming"
                 )
 
-                # Always log in-app
+                # Resolve effective channels: list override > user defaults
+                # Must happen before logging in-app so skip_all suppresses everything.
+                send_push, send_email, skip_all = _resolve_channels(
+                    user, watchlist_item, "prediction_drop", session
+                )
+                if skip_all:
+                    continue  # channel_override="none" suppresses all channels incl. in-app
+                if _in_quiet_hours(user):
+                    send_push = False
+
+                # Always log in-app (unless skip_all above)
                 _log_prediction_notification(
                     session,
                     user,
@@ -515,13 +530,6 @@ def notify_prediction_drops(self) -> NotificationResult:
                     "in_app",
                     is_delivered=True,
                 )
-
-                # Resolve effective channels: list override > user defaults
-                send_push, send_email = _resolve_channels(
-                    user, watchlist_item, "prediction_drop", session
-                )
-                if _in_quiet_hours(user):
-                    send_push = False
 
                 # Push (in_app logged above so badge count is current)
                 if send_push and user.fcm_token:
@@ -665,7 +673,11 @@ def send_weekly_digest(self) -> dict:
         session = get_db_session()
         now = datetime.now(timezone.utc)
 
-        # Users who opted in to weekly digest and have email
+        # Design: notif_email_weekly_digest is the master on/off for the whole feature.
+        # channel_override on individual lists controls per-list suppression WITHIN the
+        # digest (lists with "none" or "push" are excluded); it does NOT override the
+        # global opt-in. A user who turned off the weekly digest entirely won't receive
+        # one regardless of any list-level override.
         users = (
             session.query(UserProfile)
             .filter(
