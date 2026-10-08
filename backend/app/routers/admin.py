@@ -709,6 +709,113 @@ def cancel_catalog_crawl(
     return {"chain": chain, "status": "cancelled", "task_id": run.celery_task_id}
 
 
+# ── Listing backfill & coverage ───────────────────────────────────────────────
+
+
+class BackfillTriggerResponse(BaseModel):
+    task_id: str
+    message: str
+
+
+class ListingCoverageRow(BaseModel):
+    chain: str
+    eligible: int
+    correctly_mapped: int
+    missing: int
+    conflicted: int
+    coverage_pct: float
+    ready_for_read_migration: bool
+
+
+def _get_listing_coverage(db: Session) -> list[ListingCoverageRow]:
+    """Compute per-chain listing coverage with explicit conflict visibility.
+
+    Each eligible Product row falls into exactly one bucket:
+    - correctly_mapped: listing exists and listing.product_id == product.id
+    - missing:          no listing exists for (chain, external_id)
+    - conflicted:       listing exists but listing.product_id != product.id
+
+    coverage_pct = correctly_mapped / eligible * 100
+
+    #49c read-migration gate:
+      ready_for_read_migration = (coverage_pct == 100 AND conflicted == 0)
+    Conflicted identities are NOT counted as covered.
+    """
+    rows = db.execute(
+        text(
+            """
+            SELECT
+                p.external_source,
+                COUNT(*) AS eligible,
+                COUNT(CASE WHEN prl.id IS NOT NULL
+                                AND prl.product_id = p.id   THEN 1 END) AS correctly_mapped,
+                COUNT(CASE WHEN prl.id IS NULL              THEN 1 END) AS missing,
+                COUNT(CASE WHEN prl.id IS NOT NULL
+                                AND prl.product_id != p.id  THEN 1 END) AS conflicted,
+                ROUND(
+                    COUNT(CASE WHEN prl.id IS NOT NULL
+                                    AND prl.product_id = p.id THEN 1 END)
+                    * 100.0 / NULLIF(COUNT(*), 0),
+                    1
+                ) AS coverage_pct
+            FROM products p
+            LEFT JOIN product_retailer_listings prl
+              ON prl.chain = REPLACE(p.external_source, 'catalog_', '')
+             AND prl.external_id = p.external_id
+            WHERE p.external_source LIKE 'catalog_%'
+              AND p.external_id IS NOT NULL
+            GROUP BY p.external_source
+            ORDER BY eligible DESC
+            """
+        )
+    ).fetchall()
+
+    return [
+        ListingCoverageRow(
+            chain=r[0].removeprefix("catalog_"),
+            eligible=r[1],
+            correctly_mapped=r[2],
+            missing=r[3],
+            conflicted=r[4],
+            coverage_pct=float(r[5] or 0),
+            ready_for_read_migration=(r[2] == r[1] and r[4] == 0),
+        )
+        for r in rows
+    ]
+
+
+@router.post("/listings/backfill", response_model=BackfillTriggerResponse)
+def trigger_listing_backfill(
+    _admin=Depends(require_admin),
+) -> BackfillTriggerResponse:
+    """Enqueue the idempotent ProductRetailerListing backfill task.
+
+    The task creates listing rows for all historical Products with a catalog
+    SKU but no existing listing. Safe to call multiple times.
+    """
+    from app.workers.catalog_tasks import backfill_retailer_listings
+
+    task = backfill_retailer_listings.apply_async(queue="catalog")
+    return BackfillTriggerResponse(
+        task_id=task.id,
+        message="Backfill task enqueued. Poll /catalog/progress/{task_id} for status.",
+    )
+
+
+@router.get("/listings/coverage", response_model=list[ListingCoverageRow])
+def get_listing_coverage(
+    db: Session = Depends(get_db),
+    _admin=Depends(require_admin),
+) -> list[ListingCoverageRow]:
+    """Per-chain listing coverage with explicit conflict counts.
+
+    #49c read-migration is safe when every chain reports:
+      coverage_pct == 100  AND  conflicted == 0
+    (equivalently: ready_for_read_migration == true for all expected chains)
+    """
+    return _get_listing_coverage(db)
+
+
 class ConfigEntry(BaseModel):
     key: str
     label: str

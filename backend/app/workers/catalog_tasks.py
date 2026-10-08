@@ -20,6 +20,8 @@ from typing import TypedDict
 from uuid import uuid4
 
 from celery.exceptions import SoftTimeLimitExceeded
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.config import get_settings
 from app.models import CatalogCrawlRun
@@ -405,3 +407,198 @@ def run_all_catalog_crawls(self, mode: str = "delta") -> list[str]:
         queued.append(task.id)
         logger.info("Queued %s catalog %s crawl: %s", chain, mode, task.id)
     return queued
+
+
+# ── Listing backfill ──────────────────────────────────────────────────────────
+
+_BACKFILL_BATCH = 1000
+
+
+class BackfillResult(TypedDict):
+    total_eligible: int
+    created: int
+    already_exists: int
+    conflict_skipped: int
+
+
+def _try_create_listing(
+    session, product, chain: str, external_id: str, counts: BackfillResult
+) -> None:
+    """Insert one ProductRetailerListing inside a savepoint.
+
+    If a concurrent transaction inserts the same (chain, external_id) between
+    the caller's initial SELECT check and this INSERT, the UNIQUE constraint
+    fires. The savepoint is rolled back automatically and we recover by
+    reloading the winning row, applying the same conflict semantics as the
+    normal pre-check path.
+    """
+    from app.models import ProductRetailerListing
+
+    new_listing = ProductRetailerListing(
+        product_id=product.id,
+        chain=chain,
+        external_id=external_id,
+        external_source=product.external_source,
+        external_name=product.name or None,
+        external_brand=product.brand or None,
+        external_category=None,
+        external_image_url=product.external_image_url or None,
+        external_url=None,
+        package_size_raw=product.package_size or None,
+        in_stock=product.in_stock,
+        is_online_only=product.is_online_only,
+        catalog_last_seen_at=product.catalog_last_seen_at,
+    )
+    try:
+        with session.begin_nested():
+            session.add(new_listing)
+            session.flush()
+        counts["created"] += 1
+    except IntegrityError:
+        # Savepoint was rolled back automatically. Expunge the failed object so
+        # autoflush does not retry it, then reload the row that won the race.
+        try:
+            session.expunge(new_listing)
+        except Exception:
+            pass  # already removed by SQLAlchemy savepoint rollback machinery
+
+        with session.no_autoflush:
+            won = session.execute(
+                select(ProductRetailerListing).where(
+                    ProductRetailerListing.chain == chain,
+                    ProductRetailerListing.external_id == external_id,
+                )
+            ).scalar_one_or_none()
+
+        if won is None:
+            logger.error(
+                "Backfill: IntegrityError but no row found after recovery for %s/%s",
+                chain,
+                external_id,
+            )
+        elif won.product_id == product.id:
+            counts["already_exists"] += 1
+        else:
+            logger.warning(
+                "Backfill conflict: listing %s/%s -> product=%s, "
+                "product row wants product=%s; skipping",
+                chain,
+                external_id,
+                won.product_id,
+                product.id,
+            )
+            counts["conflict_skipped"] += 1
+
+
+def _do_backfill(session) -> BackfillResult:
+    """Idempotent backfill of ProductRetailerListing from existing Product rows.
+
+    For every Product with external_source='catalog_<chain>' and a non-null
+    external_id, ensure a ProductRetailerListing row exists:
+    - creates one if none exists for (chain, external_id)
+    - skips if the row already points at the same product_id
+    - logs WARNING and skips if the row points at a *different* product_id
+      (an established mapping is never overwritten by a backfill)
+
+    Each insert is wrapped in a savepoint so a concurrent dual-write winning
+    the race does not abort the whole batch — see _try_create_listing().
+
+    Processed in batches so the function is safe to run on a large dataset.
+    """
+    from app.models import Product, ProductRetailerListing
+
+    counts: BackfillResult = {
+        "total_eligible": 0,
+        "created": 0,
+        "already_exists": 0,
+        "conflict_skipped": 0,
+    }
+
+    offset = 0
+    while True:
+        batch = (
+            session.execute(
+                select(Product)
+                .where(
+                    Product.external_source.like("catalog_%"),
+                    Product.external_id.isnot(None),
+                )
+                .order_by(Product.id)
+                .limit(_BACKFILL_BATCH)
+                .offset(offset)
+            )
+            .scalars()
+            .all()
+        )
+        if not batch:
+            break
+
+        counts["total_eligible"] += len(batch)
+
+        for product in batch:
+            chain = product.external_source.removeprefix("catalog_")
+            external_id = product.external_id
+
+            existing = session.execute(
+                select(ProductRetailerListing).where(
+                    ProductRetailerListing.chain == chain,
+                    ProductRetailerListing.external_id == external_id,
+                )
+            ).scalar_one_or_none()
+
+            if existing is not None:
+                if existing.product_id == product.id:
+                    counts["already_exists"] += 1
+                else:
+                    logger.warning(
+                        "Backfill conflict: listing %s/%s -> product=%s, "
+                        "product row wants product=%s; skipping",
+                        chain,
+                        external_id,
+                        existing.product_id,
+                        product.id,
+                    )
+                    counts["conflict_skipped"] += 1
+                continue
+
+            _try_create_listing(session, product, chain, external_id, counts)
+
+        session.commit()
+        offset += len(batch)
+        logger.info(
+            "Backfill progress: offset=%d created=%d already_exists=%d conflict_skipped=%d",
+            offset,
+            counts["created"],
+            counts["already_exists"],
+            counts["conflict_skipped"],
+        )
+
+    logger.info(
+        "Backfill complete: total_eligible=%d created=%d already_exists=%d conflict_skipped=%d",
+        counts["total_eligible"],
+        counts["created"],
+        counts["already_exists"],
+        counts["conflict_skipped"],
+    )
+    return counts
+
+
+@celery_app.task(
+    bind=True,
+    name="app.workers.catalog_tasks.backfill_retailer_listings",
+    queue="catalog",
+    base=CallbackTask,
+    time_limit=7200,
+    max_retries=0,
+)
+def backfill_retailer_listings(self) -> BackfillResult:
+    """Backfill ProductRetailerListing rows for all historical catalog Products.
+
+    Idempotent: safe to run multiple times. Existing correct rows are skipped;
+    existing conflicting rows are logged and skipped without modification.
+    """
+    session = get_db_session()
+    try:
+        return _do_backfill(session)
+    finally:
+        session.close()
