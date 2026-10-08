@@ -382,7 +382,7 @@ def _unsub_confirm_page(token: str) -> str:
     <div style="font-size:48px;color:#f59e0b;">!</div>
     <h1 style="font-size:22px;font-weight:700;color:#111827;margin:16px 0 8px;">Unsubscribe from DealFindio?</h1>
     <p style="font-size:15px;color:#374151;margin:0 0 24px;">You'll no longer receive deal alert emails for your watchlist.</p>
-    <form method="POST" action="/api/v1/notifications/unsubscribe?token={{token}}">
+    <form method="POST" action="/api/v1/notifications/unsubscribe?token={token}">
       <button type="submit"
         style="display:inline-block;background:#dc2626;color:#fff;font-weight:600;font-size:15px;padding:12px 28px;border-radius:8px;border:none;cursor:pointer;">
         Yes, unsubscribe me
