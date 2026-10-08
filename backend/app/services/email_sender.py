@@ -14,6 +14,7 @@ import logging
 from collections import defaultdict
 from html import escape as _html_escape
 from typing import Any
+from urllib.parse import urlparse as _urlparse
 
 import httpx
 from itsdangerous import BadSignature, URLSafeTimedSerializer
@@ -201,14 +202,20 @@ def _product_card(
     safe_name = _html_escape(product_name)
     safe_store = _html_escape(store_name)
     img_cell = ""
-    if image_url and image_url.startswith("https://"):
-        safe_img = _html_escape(image_url, quote=True)
-        img_cell = (
-            f'<td width="80" style="vertical-align:top;padding-right:16px;">'
-            f'<img src="{safe_img}" alt="" width="80" height="80"'
-            f' style="width:80px;height:80px;object-fit:contain;border-radius:8px;'
-            f'border:1px solid #e5e7eb;display:block;" /></td>'
-        )
+    if image_url:
+        try:
+            _p = _urlparse(image_url)
+            _safe = _p.scheme == "https" and bool(_p.netloc)
+        except Exception:
+            _safe = False
+        if _safe:
+            safe_img = _html_escape(image_url, quote=True)
+            img_cell = (
+                f'<td width="80" style="vertical-align:top;padding-right:16px;">'
+                f'<img src="{safe_img}" alt="" width="80" height="80"'
+                f' style="width:80px;height:80px;object-fit:contain;border-radius:8px;'
+                f'border:1px solid #e5e7eb;display:block;" /></td>'
+            )
     return (
         f'<a href="{product_url}" style="display:block;text-decoration:none;color:inherit;margin:0 0 20px;">'
         f'<table width="100%" cellpadding="0" cellspacing="0" role="presentation"><tr>'
@@ -292,7 +299,7 @@ def send_price_alert_email(
 
     content = f"""
     <p style="margin:0 0 8px;font-size:13px;font-weight:600;color:#4f46e5;text-transform:uppercase;letter-spacing:0.5px;">{label}</p>
-    <h2 style="margin:0 0 20px;font-size:20px;font-weight:700;color:#111827;line-height:1.3;">{product_name}</h2>
+    <h2 style="margin:0 0 20px;font-size:20px;font-weight:700;color:#111827;line-height:1.3;">{_html_escape(product_name)}</h2>
     {card}
     <p style="margin:24px 0 0;font-size:13px;color:#9ca3af;">
       You're receiving this because you're watching this product on DealFindio.
@@ -318,31 +325,42 @@ def send_weekly_digest_email(
 
     unsub_token = generate_unsubscribe_token(user_id, "email_weekly_digest")
     unsub_url = f"{_base_url()}/api/v1/notifications/unsubscribe?token={unsub_token}"
-
-    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for d in deals:
-        key = d.get("list_id") or "__other__"
-        grouped[key].append(d)
+    base = _base_url()
 
     intro = (
         '<h2 style="margin:0 0 20px;font-size:20px;font-weight:700;color:#111827;">'
         "Your deals this week \U0001f6d2</h2>"
     )
     cta = (
-        f'<br><a href="{_base_url()}/watchlist"'
+        f'<br><a href="{base}/watchlist"'
         f' style="display:inline-block;background:#4f46e5;color:#fff;font-weight:600;'
         f'font-size:15px;padding:12px 28px;border-radius:8px;text-decoration:none;">'
         f"View All Deals &rarr;</a>"
     )
 
-    body_html = _build_digest_content(grouped, _base_url(), include_images=True)
-    if len((intro + body_html + cta).encode()) > _DIGEST_SIZE_BUDGET:
+    def _assemble(deal_list: list[dict[str, Any]], include_images: bool) -> str:
+        g: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for d in deal_list:
+            g[d.get("list_id") or "__other__"].append(d)
+        body = _build_digest_content(g, base, include_images=include_images)
+        return _html_wrapper(intro + body + cta, unsub_url)
+
+    # Phase 1: full HTML with images
+    html = _assemble(deals, include_images=True)
+    if len(html.encode()) > _DIGEST_SIZE_BUDGET:
         logger.warning(
-            f"Digest body {len(body_html.encode())} bytes exceeds {_DIGEST_SIZE_BUDGET}; "
+            f"Digest ({len(html.encode())} bytes) exceeds {_DIGEST_SIZE_BUDGET}; "
             f"rebuilding without images for to={to}"
         )
-        body_html = _build_digest_content(grouped, _base_url(), include_images=False)
+        # Phase 2: strip images
+        html = _assemble(deals, include_images=False)
+        if len(html.encode()) > _DIGEST_SIZE_BUDGET:
+            # Phase 3: trim lowest-priority deals one by one until it fits
+            trimmed = list(deals)
+            while len(trimmed) > 1:
+                trimmed.pop()
+                html = _assemble(trimmed, include_images=False)
+                if len(html.encode()) <= _DIGEST_SIZE_BUDGET:
+                    break
 
-    content = intro + body_html + cta
-    html = _html_wrapper(content, unsub_url)
     return _send_email(to, "Your deals this week \U0001f6d2", html, unsubscribe_url=unsub_url)
