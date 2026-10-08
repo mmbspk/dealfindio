@@ -20,7 +20,20 @@ import {
 } from 'react-native'
 import { useRouter } from 'expo-router'
 import apiClient from '@/api/client'
-import type { WatchlistItem, WatchlistList } from '@/types'
+import type { ChannelOverride, WatchlistItem, WatchlistList } from '@/types'
+
+const CHANNEL_OPTIONS: Array<{
+  value: ChannelOverride
+  icon: string
+  label: string
+  description: string
+}> = [
+  { value: null,    icon: '⚙️', label: 'Account default',  description: 'Use your account notification settings' },
+  { value: 'push',  icon: '🔔', label: 'Push only',        description: 'Push alerts, no emails for this list'  },
+  { value: 'email', icon: '✉️', label: 'Email only',       description: 'Email alerts, no push for this list'   },
+  { value: 'both',  icon: '📲', label: 'Push + Email',     description: 'Both push and email alerts'            },
+  { value: 'none',  icon: '🔕', label: 'Silent',           description: 'No alerts for products in this list'  },
+]
 
 export default function WatchlistScreen() {
   const router = useRouter()
@@ -38,6 +51,10 @@ export default function WatchlistScreen() {
   const [newName, setNewName] = useState('')
   const [newEmoji, setNewEmoji] = useState('')
   const [creatingList, setCreatingList] = useState(false)
+
+  // Channel picker
+  const [showChannelPicker, setShowChannelPicker] = useState(false)
+  const [channelSaving, setChannelSaving] = useState(false)
 
   const loadLists = useCallback(async () => {
     setLoading(true)
@@ -167,6 +184,30 @@ export default function WatchlistScreen() {
     }
   }
 
+  async function updateChannelOverride(override: ChannelOverride) {
+    if (!activeListId) return
+    const prev = lists.find(l => l.id === activeListId)?.channel_override ?? null
+    // Optimistic update
+    setLists(cur => cur.map(l =>
+      l.id === activeListId ? { ...l, channel_override: override } : l
+    ))
+    setShowChannelPicker(false)
+    setChannelSaving(true)
+    try {
+      await apiClient.patch<WatchlistList>(`/api/v1/watchlist/${activeListId}`, {
+        channel_override: override,
+      })
+    } catch {
+      // Revert on failure
+      setLists(cur => cur.map(l =>
+        l.id === activeListId ? { ...l, channel_override: prev } : l
+      ))
+      Alert.alert('Error', 'Could not update notification settings. Please try again.')
+    } finally {
+      setChannelSaving(false)
+    }
+  }
+
   function renderItem({ item }: { item: WatchlistItem }) {
     const isDeleting = deletingItemId === item.product_id
     return (
@@ -292,12 +333,27 @@ export default function WatchlistScreen() {
       {/* Active list header */}
       {activeList && (
         <View style={styles.listHeader}>
-          <Text style={styles.listTitle}>
-            {activeList.emoji ? `${activeList.emoji}  ` : ''}{activeList.name}
-          </Text>
-          <Text style={styles.listCount}>
-            {activeList.item_count} item{activeList.item_count !== 1 ? 's' : ''}
-          </Text>
+          <View style={styles.listHeaderLeft}>
+            <Text style={styles.listTitle}>
+              {activeList.emoji ? `${activeList.emoji}  ` : ''}{activeList.name}
+            </Text>
+            <Text style={styles.listCount}>
+              {activeList.item_count} item{activeList.item_count !== 1 ? 's' : ''}
+            </Text>
+          </View>
+          <TouchableOpacity
+            onPress={() => setShowChannelPicker(true)}
+            style={styles.channelBtn}
+            accessibilityLabel="Notification channel settings"
+            accessibilityHint="Open notification channel picker for this list"
+          >
+            {channelSaving
+              ? <ActivityIndicator size="small" color="#176f50" />
+              : <Text style={styles.channelBtnIcon}>
+                  {activeList.channel_override === 'none' ? '🔕' : '🔔'}
+                </Text>
+            }
+          </TouchableOpacity>
         </View>
       )}
 
@@ -365,6 +421,52 @@ export default function WatchlistScreen() {
           </View>
         </KeyboardAvoidingView>
       </Modal>
+
+      {/* Channel picker modal */}
+      <Modal
+        visible={showChannelPicker}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowChannelPicker(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <TouchableOpacity
+            style={styles.modalBackdropTouch}
+            activeOpacity={1}
+            onPress={() => setShowChannelPicker(false)}
+          />
+          <View style={styles.modalSheet}>
+            <Text style={styles.modalTitle}>Notifications for this list</Text>
+            <Text style={styles.channelSubtitle}>
+              Override your account defaults for "{activeList?.name ?? 'this list'}".
+            </Text>
+            {CHANNEL_OPTIONS.map(opt => {
+              const current = activeList?.channel_override ?? null
+              const isSelected = current === opt.value
+              return (
+                <TouchableOpacity
+                  key={String(opt.value)}
+                  onPress={() => void updateChannelOverride(opt.value)}
+                  style={[styles.channelOption, isSelected && styles.channelOptionSelected]}
+                  accessibilityRole="radio"
+                  accessibilityState={{ checked: isSelected }}
+                  accessibilityLabel={opt.label}
+                  accessibilityHint={opt.description}
+                >
+                  <Text style={styles.channelOptionIcon}>{opt.icon}</Text>
+                  <View style={styles.channelOptionText}>
+                    <Text style={[styles.channelOptionLabel, isSelected && styles.channelOptionLabelSelected]}>
+                      {opt.label}
+                    </Text>
+                    <Text style={styles.channelOptionDesc}>{opt.description}</Text>
+                  </View>
+                  {isSelected && <Text style={styles.channelCheck}>✓</Text>}
+                </TouchableOpacity>
+              )
+            })}
+          </View>
+        </View>
+      </Modal>
     </View>
   )
 }
@@ -414,13 +516,22 @@ const styles = StyleSheet.create({
   listHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingTop: 14,
     paddingBottom: 6,
   },
+  listHeaderLeft: { flex: 1, gap: 2 },
   listTitle: { fontSize: 18, fontWeight: '700', color: '#122923' },
   listCount: { fontSize: 13, color: '#71877b' },
+  channelBtn: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 8,
+  },
+  channelBtnIcon: { fontSize: 20 },
 
   // Items
   list: { padding: 12, paddingBottom: 32 },
@@ -508,4 +619,35 @@ const styles = StyleSheet.create({
   },
   createBtnDisabled: { opacity: 0.45 },
   createBtnText: { color: '#fff', fontSize: 16, fontWeight: '600' },
+
+  // Channel picker
+  channelSubtitle: {
+    fontSize: 13,
+    color: '#5d7469',
+    marginBottom: 8,
+    marginTop: -6,
+  },
+  channelOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 13,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#dce5dd',
+    marginBottom: 8,
+    backgroundColor: '#fff',
+    minHeight: 44,
+  },
+  channelOptionSelected: {
+    borderColor: '#164b40',
+    backgroundColor: '#edf2e9',
+  },
+  channelOptionIcon: { fontSize: 20, width: 28, textAlign: 'center' },
+  channelOptionText: { flex: 1 },
+  channelOptionLabel: { fontSize: 15, fontWeight: '600', color: '#122923' },
+  channelOptionLabelSelected: { color: '#164b40' },
+  channelOptionDesc: { fontSize: 12, color: '#71877b', marginTop: 1 },
+  channelCheck: { fontSize: 18, color: '#164b40', fontWeight: '700', marginLeft: 4 },
 })
