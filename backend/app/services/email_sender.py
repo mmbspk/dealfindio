@@ -24,6 +24,8 @@ settings = get_settings()
 _RESEND_SEND_URL = "https://api.resend.com/emails"
 _UNSUBSCRIBE_SALT = "notif-unsubscribe"
 _UNSUBSCRIBE_MAX_AGE = 60 * 60 * 24 * 365  # 1 year
+_UNSUBSCRIBE_EMAIL = "unsubscribe@dealfindio.com.au"
+_EMAIL_CLIP_WARN_BYTES = 90_000  # Gmail clips at 102 KB; warn before that threshold
 
 
 def _signer() -> URLSafeTimedSerializer:
@@ -57,21 +59,33 @@ def _base_url() -> str:
     return settings.APP_BASE_URL.rstrip("/")
 
 
-def _send_email(to: str, subject: str, html: str) -> str | None:
+def _send_email(to: str, subject: str, html: str, unsubscribe_url: str | None = None) -> str | None:
     """Send email via Resend API. Returns message ID or None on failure."""
     if not _is_email_enabled():
         logger.debug("Email skipped: RESEND_API_KEY not configured")
         return None
+
+    size = len(html.encode())
+    if size > _EMAIL_CLIP_WARN_BYTES:
+        logger.warning(f"Email to {to} is {size} bytes and may be clipped by Gmail (>{_EMAIL_CLIP_WARN_BYTES})")
+
+    payload: dict[str, Any] = {
+        "from": f"{settings.EMAIL_FROM_NAME} <{settings.EMAIL_FROM_ADDRESS}>",
+        "to": [to],
+        "subject": subject,
+        "html": html,
+    }
+    if unsubscribe_url:
+        payload["headers"] = {
+            "List-Unsubscribe": f"<{unsubscribe_url}>, <mailto:{_UNSUBSCRIBE_EMAIL}>",
+            "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+        }
+
     try:
         resp = httpx.post(
             _RESEND_SEND_URL,
             headers=_resend_headers(),
-            json={
-                "from": f"{settings.EMAIL_FROM_NAME} <{settings.EMAIL_FROM_ADDRESS}>",
-                "to": [to],
-                "subject": subject,
-                "html": html,
-            },
+            json=payload,
             timeout=10.0,
         )
         resp.raise_for_status()
@@ -190,7 +204,7 @@ def send_price_alert_email(
     """
     html = _html_wrapper(content, unsub_url)
     subject = f"{label}: {product_name} is now ${price:.2f}"
-    return _send_email(to, subject, html)
+    return _send_email(to, subject, html, unsubscribe_url=unsub_url)
 
 
 def send_weekly_digest_email(
@@ -240,4 +254,4 @@ def send_weekly_digest_email(
     </a>
     """
     html = _html_wrapper(content, unsub_url)
-    return _send_email(to, "Your DealFindio Deals This Week", html)
+    return _send_email(to, "Your DealFindio Deals This Week", html, unsubscribe_url=unsub_url)
