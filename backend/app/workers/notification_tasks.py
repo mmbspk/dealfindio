@@ -66,17 +66,96 @@ def _in_quiet_hours(user: UserProfile) -> bool:
         return False
 
 
-def _send_push(user: UserProfile, title: str, body: str, data: dict) -> str | None:
+def _truncate(s: str, n: int) -> str:
+    return s if len(s) <= n else s[: n - 1] + "…"
+
+
+_CHANNEL_PREF_MAP = {
+    "price_match": ("notif_push_price_match", "notif_email_price_match"),
+    "pct_off_match": ("notif_push_pct_off", "notif_email_pct_off"),
+    "flash_sale": ("notif_push_flash_sale", "notif_email_pct_off"),
+    "prediction_drop": ("notif_push_prediction", "notif_email_prediction"),
+}
+
+
+def _resolve_channels(
+    user: "UserProfile",
+    watchlist_item: "UserWatchlist",
+    trigger_type: str,
+    session,
+) -> tuple[bool, bool, bool]:
+    """Return (send_push, send_email, skip_all).
+
+    List channel_override takes precedence over user-level preferences.
+    None override = inherit user defaults.
+    skip_all=True only when channel_override="none"; callers must also suppress
+    in-app notifications in that case (the user opted out of all notifications
+    from this list).
+    """
+    if watchlist_item.list_id:
+        from app.models.watchlist_list import WatchlistList
+
+        lst = session.query(WatchlistList).filter_by(id=watchlist_item.list_id).first()
+        if lst and lst.channel_override is not None:
+            ov = lst.channel_override
+            if ov == "none":
+                return False, False, True
+            return ov in ("push", "both"), ov in ("email", "both"), False
+
+    push_attr, email_attr = _CHANNEL_PREF_MAP.get(
+        trigger_type, ("notif_push_price_match", "notif_email_price_match")
+    )
+    return getattr(user, push_attr, True), getattr(user, email_attr, False), False
+
+
+def _build_push_copy(
+    trigger_type: str,
+    product_name: str,
+    price_aud: float,
+    store_name: str,
+    pct_off: int | None = None,
+) -> tuple[str, str]:
+    """Return (title, body) for push notification. Body guaranteed <= 100 chars."""
+    p = _truncate(product_name, 45)
+    s = _truncate(store_name, 15)
+    pct = pct_off or 0
+    if trigger_type == "price_match":
+        return "Target price reached \U0001f3af", f"{p} hit ${price_aud:.2f} at {s}"
+    if trigger_type == "pct_off_match":
+        return f"{pct}% off now", f"{p} — save {pct}% at {s}"
+    if trigger_type == "flash_sale":
+        return f"Flash deal {pct}% off", f"{p} flash sale at {s}"
+    if trigger_type == "prediction_drop":
+        return "Good time to buy", f"{p} may drop soon — buy now?"
+    return "Deal found", f"{p} at ${price_aud:.2f} at {s}"
+
+
+def _send_push(
+    user: UserProfile, title: str, body: str, data: dict, badge: int | None = None
+) -> str | None:
     """Send Expo push. Returns receipt_id or None. Synchronous (Celery task context)."""
     if not user.fcm_token:
         return None
     from app.services.push_sender import send_expo_push_sync
 
-    success, receipt_id = send_expo_push_sync(user.fcm_token, title, body, data)
+    success, receipt_id = send_expo_push_sync(user.fcm_token, title, body, data, badge=badge)
     if not success:
         # DeviceNotRegistered — clear stale token
         return None
     return receipt_id
+
+
+def _get_unread_in_app_count(session, user_id) -> int:
+    """Return the current unread in-app notification count for badge calculation."""
+    from sqlalchemy import func, select
+
+    return session.execute(
+        select(func.count()).where(
+            Notification.user_id == user_id,
+            Notification.channel == "in_app",
+            Notification.opened_at == None,  # noqa: E711 — SQLAlchemy IS NULL
+        )
+    ).scalar_one()
 
 
 @celery_app.task(
@@ -187,18 +266,12 @@ def check_watchlist_for_price(self, price_report_id: str) -> NotificationResult:
                 if not user:
                     continue
 
-                # Resolve per-user channel preferences
-                pref_map = {
-                    "price_match": ("notif_push_price_match", "notif_email_price_match"),
-                    "pct_off_match": ("notif_push_pct_off", "notif_email_pct_off"),
-                    "flash_sale": ("notif_push_flash_sale", "notif_email_pct_off"),
-                    "prediction_drop": ("notif_push_prediction", "notif_email_prediction"),
-                }
-                push_pref_attr, email_pref_attr = pref_map.get(
-                    trigger_type, ("notif_push_price_match", "notif_email_price_match")
+                # Resolve effective channel: list override > user defaults
+                send_push_notif, send_email_notif, skip_all = _resolve_channels(
+                    user, watchlist_item, trigger_type, session
                 )
-                send_push_notif = getattr(user, push_pref_attr, True)
-                send_email_notif = getattr(user, email_pref_attr, False)
+                if skip_all:
+                    continue  # channel_override="none" suppresses all channels incl. in-app
 
                 quiet = _in_quiet_hours(user)
                 if quiet:
@@ -212,36 +285,47 @@ def check_watchlist_for_price(self, price_report_id: str) -> NotificationResult:
                     price_report.was_price_cents / 100 if price_report.was_price_cents else None
                 )
 
-                if trigger_type == "flash_sale":
-                    title = f"Flash Sale: {product_name}"
-                    pct = round(price_report.sale_pct_off)
-                    body = f"{pct}% off — ${price_aud:.2f} at {store_name}"
-                elif trigger_type == "price_match":
-                    title = f"Price Drop: {product_name}"
-                    body = f"Now ${price_aud:.2f} at {store_name}"
-                else:
-                    pct = round(price_report.sale_pct_off or 0)
-                    title = f"Deal Found: {product_name}"
-                    body = f"{pct}% off — ${price_aud:.2f} at {store_name}"
-
-                if was_price_aud:
-                    body += f" (was ${was_price_aud:.2f})"
+                pct_int = round(price_report.sale_pct_off) if price_report.sale_pct_off else None
+                title, body = _build_push_copy(
+                    trigger_type, product_name, price_aud, store_name, pct_off=pct_int
+                )
 
                 push_receipt = None
                 email_msg_id = None
 
-                # Send push
+                # Log in-app notification FIRST so the badge count includes this event
+                # when the push is dispatched moments later.
+                in_app_notif = _log_notification(
+                    session,
+                    user,
+                    watchlist_item,
+                    price_report_uuid,
+                    trigger_type,
+                    title,
+                    body,
+                    "in_app",
+                    is_delivered=True,
+                )
+
+                # Send push with badge = authoritative unread in_app count
                 if send_push_notif and user.fcm_token:
+                    badge = _get_unread_in_app_count(session, watchlist_item.user_id)
                     push_receipt = _send_push(
                         user,
                         title,
                         body,
                         {
                             "product_id": str(price_report.product_id),
+                            "list_id": str(watchlist_item.list_id)
+                            if watchlist_item.list_id
+                            else None,
+                            "notification_id": str(in_app_notif.id) if in_app_notif else None,
                             "store_id": str(price_report.store_id),
                             "price_cents": str(price_report.price_cents),
                             "trigger_type": trigger_type,
+                            "deep_link": f"dealfindio://product/{price_report.product_id}",
                         },
+                        badge=badge,
                     )
                     _log_notification(
                         session,
@@ -258,23 +342,11 @@ def check_watchlist_for_price(self, price_report_id: str) -> NotificationResult:
                     if push_receipt:
                         notifications_sent += 1
 
-                # Always log in-app notification (even if push/email off)
-                _log_notification(
-                    session,
-                    user,
-                    watchlist_item,
-                    price_report_uuid,
-                    trigger_type,
-                    title,
-                    body,
-                    "in_app",
-                    is_delivered=True,
-                )
-
                 # Send email
                 if send_email_notif and user.email:
                     from app.services.email_sender import send_price_alert_email
 
+                    img_url = getattr(price_report.product, "image_url", None)
                     email_msg_id = send_price_alert_email(
                         to=user.email,
                         user_id=str(user.id),
@@ -284,6 +356,8 @@ def check_watchlist_for_price(self, price_report_id: str) -> NotificationResult:
                         store_name=store_name,
                         product_id=str(price_report.product_id),
                         trigger_type=trigger_type,
+                        image_url=img_url,
+                        pct_off=pct_int,
                     )
                     if email_msg_id:
                         _log_notification(
@@ -332,7 +406,7 @@ def _log_notification(
     fcm_message_id: str | None = None,
     email_message_id: str | None = None,
     is_delivered: bool = False,
-) -> None:
+) -> Notification | None:
     try:
         notif = Notification(
             user_id=watchlist_item.user_id,
@@ -349,12 +423,14 @@ def _log_notification(
         )
         session.add(notif)
         session.commit()
+        return notif
     except Exception as e:
         logger.error(f"Failed to log {channel} notification: {e}")
         try:
             session.rollback()
         except Exception:
             pass
+        return None
 
 
 @celery_app.task(
@@ -433,13 +509,21 @@ def notify_prediction_drops(self) -> NotificationResult:
                     else str(watchlist_item.product_id)
                 )
                 pred_aud = prediction.predicted_price_cents / 100
-                week_str = prediction.prediction_week.strftime("%d %b")
-                chain_str = f" at {prediction.chain}" if prediction.chain else ""
+                title, body = _build_push_copy(
+                    "prediction_drop", product_name, pred_aud, prediction.chain or "upcoming"
+                )
 
-                title = f"Price drop predicted: {product_name}"
-                body = f"Expected ${pred_aud:.2f}{chain_str} week of {week_str}"
+                # Resolve effective channels: list override > user defaults
+                # Must happen before logging in-app so skip_all suppresses everything.
+                send_push, send_email, skip_all = _resolve_channels(
+                    user, watchlist_item, "prediction_drop", session
+                )
+                if skip_all:
+                    continue  # channel_override="none" suppresses all channels incl. in-app
+                if _in_quiet_hours(user):
+                    send_push = False
 
-                # Always log in-app
+                # Always log in-app (unless skip_all above)
                 _log_prediction_notification(
                     session,
                     user,
@@ -451,23 +535,25 @@ def notify_prediction_drops(self) -> NotificationResult:
                     is_delivered=True,
                 )
 
-                # Push
-                if (
-                    getattr(user, "notif_push_prediction", True)
-                    and user.fcm_token
-                    and not _in_quiet_hours(user)
-                ):
+                # Push (in_app logged above so badge count is current)
+                if send_push and user.fcm_token:
+                    badge = _get_unread_in_app_count(session, watchlist_item.user_id)
                     receipt = _send_push(
                         user,
                         title,
                         body,
                         {
                             "product_id": str(watchlist_item.product_id),
+                            "list_id": str(watchlist_item.list_id)
+                            if watchlist_item.list_id
+                            else None,
                             "predicted_price_cents": str(prediction.predicted_price_cents),
                             "prediction_week": prediction.prediction_week.isoformat(),
                             "chain": prediction.chain or "",
                             "trigger_type": "prediction_drop",
+                            "deep_link": f"dealfindio://product/{watchlist_item.product_id}",
                         },
+                        badge=badge,
                     )
                     _log_prediction_notification(
                         session,
@@ -484,7 +570,7 @@ def notify_prediction_drops(self) -> NotificationResult:
                         notifications_sent += 1
 
                 # Email
-                if getattr(user, "notif_email_prediction", False) and user.email:
+                if send_email and user.email:
                     from app.services.email_sender import send_price_alert_email
 
                     msg_id = send_price_alert_email(
@@ -593,7 +679,11 @@ def send_weekly_digest(self) -> dict:
         session = get_db_session()
         now = datetime.now(timezone.utc)
 
-        # Users who opted in to weekly digest and have email
+        # Design: notif_email_weekly_digest is the master on/off for the whole feature.
+        # channel_override on individual lists controls per-list suppression WITHIN the
+        # digest (lists with "none" or "push" are excluded); it does NOT override the
+        # global opt-in. A user who turned off the weekly digest entirely won't receive
+        # one regardless of any list-level override.
         users = (
             session.query(UserProfile)
             .filter(
@@ -618,15 +708,15 @@ def send_weekly_digest(self) -> dict:
                 if not watchlist_items:
                     continue
 
-                product_ids = [w.product_id for w in watchlist_items]
-
-                # Get best active price report per product (is_on_sale)
+                # Fetch best on-sale PriceReport per unique product
                 from sqlalchemy import desc
 
                 from app.models import PriceReport, Product, Store
+                from app.models.watchlist_list import WatchlistList
 
-                deals = []
-                for pid in product_ids:
+                unique_product_ids = {w.product_id for w in watchlist_items}
+                best_report_map: dict = {}
+                for pid in unique_product_ids:
                     report = (
                         session.query(PriceReport)
                         .join(Product, PriceReport.product_id == Product.id)
@@ -637,23 +727,48 @@ def send_weekly_digest(self) -> dict:
                         .order_by(desc(PriceReport.sale_pct_off))
                         .first()
                     )
-
                     if report and report.product:
                         store = session.query(Store).filter_by(id=report.store_id).first()
-                        deals.append(
-                            {
-                                "product_name": report.product.name,
-                                "price": report.price_cents / 100,
-                                "was_price": report.was_price_cents / 100
-                                if report.was_price_cents
-                                else None,
-                                "store_name": store.name if store else "Store",
-                                "product_id": str(pid),
-                                "pct_off": round(report.sale_pct_off)
-                                if report.sale_pct_off
-                                else None,
-                            }
-                        )
+                        best_report_map[pid] = (report, store)
+
+                # One deal per (product, list) membership so each list section is populated.
+                # A product in two lists appears under both.
+                seen: set = set()
+                deals = []
+                for w in watchlist_items:
+                    pid = w.product_id
+                    if pid not in best_report_map:
+                        continue
+                    list_key = str(w.list_id) if w.list_id else None
+                    dedup = (str(pid), list_key)
+                    if dedup in seen:
+                        continue
+                    seen.add(dedup)
+                    report, store = best_report_map[pid]
+                    lst = (
+                        session.query(WatchlistList).filter_by(id=w.list_id).first()
+                        if w.list_id
+                        else None
+                    )
+                    # Skip lists that suppress email notifications
+                    if lst and lst.channel_override in ("none", "push"):
+                        continue
+                    deals.append(
+                        {
+                            "product_name": report.product.name,
+                            "price": report.price_cents / 100,
+                            "was_price": report.was_price_cents / 100
+                            if report.was_price_cents
+                            else None,
+                            "store_name": store.name if store else "Store",
+                            "product_id": str(pid),
+                            "pct_off": round(report.sale_pct_off) if report.sale_pct_off else None,
+                            "list_id": list_key,
+                            "list_name": lst.name if lst else None,
+                            "list_emoji": lst.emoji if lst else None,
+                            "image_url": getattr(report.product, "image_url", None),
+                        }
+                    )
 
                 if not deals:
                     continue
@@ -674,7 +789,7 @@ def send_weekly_digest(self) -> dict:
                     notif = Notification(
                         user_id=user.id,
                         trigger_type="weekly_digest",
-                        message_title="Your DealFindio Deals This Week",
+                        message_title="Your deals this week",
                         message_body=f"{len(deals)} deals found on your watchlist",
                         channel="email",
                         email_message_id=msg_id,

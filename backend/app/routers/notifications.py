@@ -2,17 +2,18 @@
 Notifications router.
 
 Endpoints:
-  GET  /                         — list notifications (paginated)
-  PUT  /{id}/read                — mark one read
+  GET  /                         — list notifications (paginated, default channel=in_app)
+  PUT  /{id}/read                — mark one read (in_app only; syncs push badge)
   DELETE /{id}                   — delete one
   POST /fcm-token                — register Expo push token
-  GET  /unread-count             — unread in-app notification count
-  PUT  /read-all                 — mark all in-app read
+  GET  /unread-count             — unread in-app notification count (channel=in_app only)
+  PUT  /read-all                 — mark all in-app read + sync push badge to 0
   GET  /preferences              — get notification preferences
   PUT  /preferences              — update notification preferences
   GET  /unsubscribe?token=…      — one-click email unsubscribe (no auth)
 """
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Annotated
@@ -36,6 +37,12 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Notifications"])
 
+_IN_APP = "in_app"
+
+# Module-level set holds strong references to fire-and-forget badge tasks so the
+# GC cannot collect them before Expo responds.  Each task removes itself on completion.
+_badge_tasks: set[asyncio.Task] = set()
+
 
 # ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -44,6 +51,37 @@ def _require_profile(current_user: User) -> UserProfile:
     if not current_user.profile:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User profile not found")
     return current_user.profile
+
+
+def _unread_in_app_count(profile_id, db: Session) -> int:
+    """Authoritative in-app unread count — the source of truth for the badge."""
+    return db.execute(
+        select(func.count()).where(
+            Notification.user_id == profile_id,
+            Notification.channel == _IN_APP,
+            Notification.opened_at.is_(None),
+        )
+    ).scalar_one()
+
+
+async def _fire_badge(token: str, badge: int) -> None:
+    """Background coroutine for silent badge-only Expo push — logs failures, never raises."""
+    try:
+        from app.services.push_sender import send_expo_badge_async
+
+        await send_expo_badge_async(token, badge)
+    except Exception as e:
+        logger.warning(f"Background badge sync failed for token {token[:20]}...: {e}")
+
+
+async def _sync_push_badge(profile: UserProfile, db: Session) -> None:
+    """Fire badge-only Expo push as a background task — does not block the response."""
+    if not profile.fcm_token:
+        return
+    badge = _unread_in_app_count(profile.id, db)
+    task = asyncio.create_task(_fire_badge(profile.fcm_token, badge))
+    _badge_tasks.add(task)
+    task.add_done_callback(_badge_tasks.discard)
 
 
 def _notif_to_response(notif: Notification) -> NotificationResponse:
@@ -72,18 +110,18 @@ def _notif_to_response(notif: Notification) -> NotificationResponse:
 async def list_notifications(
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
+    channel: Annotated[
+        str | None, Query(description="Filter by channel (in_app/push/email). Defaults to in_app.")
+    ] = _IN_APP,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[NotificationResponse]:
     profile = _require_profile(current_user)
+    q = select(Notification).where(Notification.user_id == profile.id)
+    if channel:
+        q = q.where(Notification.channel == channel)
     notifications = (
-        db.execute(
-            select(Notification)
-            .where(Notification.user_id == profile.id)
-            .order_by(desc(Notification.sent_at))
-            .limit(limit)
-            .offset(offset)
-        )
+        db.execute(q.order_by(desc(Notification.sent_at)).limit(limit).offset(offset))
         .scalars()
         .all()
     )
@@ -96,12 +134,7 @@ async def unread_count(
     db: Session = Depends(get_db),
 ) -> UnreadCountResponse:
     profile = _require_profile(current_user)
-    count = db.execute(
-        select(func.count()).where(
-            Notification.user_id == profile.id,
-            Notification.opened_at == None,
-        )
-    ).scalar_one()
+    count = _unread_in_app_count(profile.id, db)
     return UnreadCountResponse(count=count)
 
 
@@ -114,10 +147,15 @@ async def read_all(
     now = datetime.now(timezone.utc)
     result = db.execute(
         update(Notification)
-        .where(Notification.user_id == profile.id, Notification.opened_at == None)
+        .where(
+            Notification.user_id == profile.id,
+            Notification.channel == _IN_APP,
+            Notification.opened_at.is_(None),
+        )
         .values(opened_at=now)
     )
     db.commit()
+    await _sync_push_badge(profile, db)
     return {"updated": result.rowcount}
 
 
@@ -138,6 +176,8 @@ async def mark_notification_read(
     notif.opened_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(notif)
+    if getattr(notif, "channel", _IN_APP) == _IN_APP:
+        await _sync_push_badge(profile, db)
     return _notif_to_response(notif)
 
 
@@ -155,8 +195,11 @@ async def delete_notification(
     ).scalar_one_or_none()
     if not notif:
         raise HTTPException(status_code=404, detail=f"Notification {notification_id} not found")
+    was_unread_in_app = getattr(notif, "channel", _IN_APP) == _IN_APP and notif.opened_at is None
     db.delete(notif)
     db.commit()
+    if was_unread_in_app:
+        await _sync_push_badge(profile, db)
 
 
 # ─── push token ───────────────────────────────────────────────────────────────
@@ -248,11 +291,34 @@ async def update_preferences(
 # ─── one-click unsubscribe (no auth) ─────────────────────────────────────────
 
 
+def _apply_unsubscribe(user_id: str, channel: str, db: Session) -> None:
+    """Idempotent: disable email prefs for the given channel. Safe to call multiple times."""
+    from uuid import UUID as _UUID
+
+    user_profile = db.execute(
+        select(UserProfile).where(UserProfile.id == _UUID(user_id))
+    ).scalar_one_or_none()
+    if not user_profile:
+        return
+    if channel == "email_price_match":
+        user_profile.notif_email_price_match = False
+        user_profile.notif_email_pct_off = False
+    elif channel == "email_weekly_digest":
+        user_profile.notif_email_weekly_digest = False
+    else:
+        user_profile.notif_email_price_match = False
+        user_profile.notif_email_pct_off = False
+        user_profile.notif_email_prediction = False
+        user_profile.notif_email_weekly_digest = False
+    db.commit()
+
+
 @router.get("/unsubscribe", response_class=HTMLResponse, include_in_schema=False)
-async def unsubscribe(
+async def unsubscribe_confirm(
     token: str = Query(...),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
+    """Non-mutating confirmation page — protects against email-scanner pre-fetch."""
     from app.services.email_sender import verify_unsubscribe_token
 
     result = verify_unsubscribe_token(token)
@@ -261,27 +327,26 @@ async def unsubscribe(
             content=_unsub_page("Invalid or expired unsubscribe link.", success=False),
             status_code=400,
         )
+    return HTMLResponse(content=_unsub_confirm_page(token))
 
+
+@router.post("/unsubscribe", response_class=HTMLResponse, include_in_schema=False)
+async def unsubscribe_execute(
+    token: str = Query(...),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    """RFC 8058 one-click POST endpoint. Gmail POSTs List-Unsubscribe=One-Click here."""
+    from app.services.email_sender import verify_unsubscribe_token
+
+    result = verify_unsubscribe_token(token)
+    if not result:
+        return HTMLResponse(
+            content=_unsub_page("Invalid or expired unsubscribe link.", success=False),
+            status_code=400,
+        )
     user_id, channel = result
     try:
-        from uuid import UUID as _UUID
-
-        user_profile = db.execute(
-            select(UserProfile).where(UserProfile.id == _UUID(user_id))
-        ).scalar_one_or_none()
-
-        if user_profile:
-            if channel == "email_price_match":
-                user_profile.notif_email_price_match = False
-                user_profile.notif_email_pct_off = False
-            elif channel == "email_weekly_digest":
-                user_profile.notif_email_weekly_digest = False
-            else:
-                user_profile.notif_email_price_match = False
-                user_profile.notif_email_pct_off = False
-                user_profile.notif_email_prediction = False
-                user_profile.notif_email_weekly_digest = False
-            db.commit()
+        _apply_unsubscribe(user_id, channel, db)
         return HTMLResponse(
             content=_unsub_page("You've been unsubscribed successfully.", success=True)
         )
@@ -306,6 +371,29 @@ def _unsub_page(message: str, *, success: bool) -> str:
     <h1 style="font-size:22px;font-weight:700;color:#111827;margin:16px 0 8px;">DealFindio</h1>
     <p style="font-size:16px;color:#374151;margin:0 0 24px;">{message}</p>
     <a href="/" style="display:inline-block;background:#4f46e5;color:#fff;padding:10px 24px;border-radius:8px;text-decoration:none;font-weight:600;">Go to App</a>
+  </div>
+</body>
+</html>"""
+
+
+def _unsub_confirm_page(token: str) -> str:
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><title>Unsubscribe — DealFindio</title></head>
+<body style="margin:0;padding:40px 16px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f3f4f6;text-align:center;">
+  <div style="max-width:480px;margin:0 auto;background:#fff;border-radius:12px;padding:40px;box-shadow:0 1px 3px rgba(0,0,0,.1);">
+    <div style="font-size:48px;color:#f59e0b;">!</div>
+    <h1 style="font-size:22px;font-weight:700;color:#111827;margin:16px 0 8px;">Unsubscribe from DealFindio?</h1>
+    <p style="font-size:15px;color:#374151;margin:0 0 24px;">You'll no longer receive deal alert emails for your watchlist.</p>
+    <form method="POST" action="/api/v1/notifications/unsubscribe?token={token}">
+      <button type="submit"
+        style="display:inline-block;background:#dc2626;color:#fff;font-weight:600;font-size:15px;padding:12px 28px;border-radius:8px;border:none;cursor:pointer;">
+        Yes, unsubscribe me
+      </button>
+    </form>
+    <p style="margin:20px 0 0;font-size:14px;">
+      <a href="/" style="color:#4f46e5;text-decoration:none;">No, keep my alerts</a>
+    </p>
   </div>
 </body>
 </html>"""

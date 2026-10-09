@@ -1,16 +1,28 @@
 """Watchlist schemas — lists and items."""
 
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
 
 # ── Lists ────────────────────────────────────────────────────────────────────
 
+ChannelOverride = Literal["push", "email", "both", "none"] | None
+
 
 class WatchlistListCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     emoji: str | None = Field(None, max_length=10)
+    channel_override: ChannelOverride = None
+
+
+class WatchlistListUpdate(BaseModel):
+    """Partial update for a watchlist list. Only provided fields are changed."""
+
+    name: str | None = Field(None, min_length=1, max_length=100)
+    emoji: str | None = None
+    channel_override: ChannelOverride = None
 
 
 class WatchlistListResponse(BaseModel):
@@ -18,6 +30,7 @@ class WatchlistListResponse(BaseModel):
     user_id: UUID
     name: str
     emoji: str | None = None
+    channel_override: ChannelOverride = None
     item_count: int = 0
     created_at: datetime
 

@@ -43,11 +43,14 @@ export interface PriceReport {
   created_at: string
 }
 
+export type ChannelOverride = 'push' | 'email' | 'both' | 'none' | null
+
 export interface WatchlistList {
   id: string
   user_id: string
   name: string
   emoji: string | null
+  channel_override: ChannelOverride
   item_count: number
   created_at: string
 }
