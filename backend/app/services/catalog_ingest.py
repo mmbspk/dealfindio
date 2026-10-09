@@ -29,7 +29,7 @@ from sqlalchemy import desc, or_, select
 from sqlalchemy.orm import Session
 
 from app.models import PriceReport, Product, ProductRetailerListing, Store
-from app.services.category_normaliser import normalise_category
+from app.services.category_normaliser import CANONICAL_CATEGORIES, normalise_category
 from app.services.package_size import normalize_package_size
 from app.services.product_dedup import FuzzyMatcher, brands_conflict
 from scrapers.catalog_base import CatalogProduct
@@ -621,10 +621,23 @@ def ingest_catalog_product(
         product.package_size_norm = new_norm
         if not created:
             updated = True
-    if new_category != product.category:
-        product.category = new_category
-        if not created:
-            updated = True
+
+    # Transitional compatibility: listing canonical wins when present.
+    # When listings have no canonical evidence yet (all external_category NULL),
+    # do NOT erase a valid existing canonical — instead normalize/clear invalids.
+    if new_category is not None:
+        if new_category != product.category:
+            product.category = new_category
+            if not created:
+                updated = True
+    elif product.category not in CANONICAL_CATEGORIES:
+        # Existing value is invalid (non-canonical raw string or None);
+        # normalize it — never allow an unknown raw string to remain.
+        normalised = normalise_category(product.category)
+        if normalised != product.category:
+            product.category = normalised
+            if not created:
+                updated = True
 
     # Record the observed shelf price.
     was = cp.was_price_cents

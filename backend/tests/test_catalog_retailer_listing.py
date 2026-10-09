@@ -1035,17 +1035,165 @@ class TestCategoryNormOnIngest:
         cat = recompute_product_category(test_db_session, product.id)
         assert cat == "Health & Beauty"
 
+    @pytest.mark.integration
+    def test_H_existing_canonical_preserved_when_listing_has_no_category(
+        self, test_db_session: Session
+    ):
+        """Scenario 6/H. Existing Product.category='Pantry' is preserved when a new
+        listing ingest has no recognisable external_category (transitional compat rule).
+        """
+        chain = "woolworths"
+        # First ingest: listing has a known category → product.category = "Pantry"
+        cp_first = _cp(
+            "Oat Biscuits 250g",
+            external_id="WW-BISCUIT-H",
+            category="Pantry",
+        )
+        ingest_catalog_products([cp_first], chain, test_db_session)
+        test_db_session.commit()
+
+        from app.models import ProductRetailerListing
+
+        listing = test_db_session.execute(
+            select(ProductRetailerListing).where(
+                ProductRetailerListing.external_id == "WW-BISCUIT-H"
+            )
+        ).scalar_one()
+        product = test_db_session.get(Product, listing.product_id)
+        assert product.category == "Pantry"
+
+        # Corrupt the listing's external_category to NULL (simulates pre-column-backfill)
+        listing.external_category = None
+        test_db_session.commit()
+
+        # Second ingest: unknown category → listing has unknown external_category
+        # With the transitional rule, valid existing canonical must be preserved.
+        cp_second = _cp(
+            "Oat Biscuits 250g",
+            external_id="WW-BISCUIT-H",
+            category="Unknown New Section",  # unknown → normalise_category returns None
+        )
+        ingest_catalog_products([cp_second], chain, test_db_session)
+        test_db_session.commit()
+
+        test_db_session.refresh(product)
+        # listing.external_category was updated to "Unknown New Section" by _refresh_listing_metadata.
+        # recompute returns None (no canonical listing evidence).
+        # Transitional rule: valid canonical "Pantry" must NOT be erased.
+        assert product.category == "Pantry"
+
+    @pytest.mark.integration
+    def test_I_listing_canonical_takes_authority_once_populated(self, test_db_session: Session):
+        """Scenario 7/I. Once a recognized listing category appears, it overrides
+        the product's previous canonical category.
+        """
+        chain = "coles"
+        # First ingest: unknown category → product.category = None
+        cp_first = _cp(
+            "Almond Milk 1L",
+            external_id="COLES-ALMILK-I",
+            category=None,
+        )
+        ingest_catalog_products([cp_first], chain, test_db_session)
+        test_db_session.commit()
+
+        from app.models import ProductRetailerListing
+
+        listing = test_db_session.execute(
+            select(ProductRetailerListing).where(
+                ProductRetailerListing.external_id == "COLES-ALMILK-I"
+            )
+        ).scalar_one()
+        product = test_db_session.get(Product, listing.product_id)
+        assert product.category is None
+
+        # Second ingest: recognized category → listing canonical now takes authority
+        cp_second = _cp(
+            "Almond Milk 1L",
+            external_id="COLES-ALMILK-I",
+            category="Dairy, Eggs & Fridge",
+        )
+        ingest_catalog_products([cp_second], chain, test_db_session)
+        test_db_session.commit()
+
+        test_db_session.refresh(product)
+        assert product.category == "Dairy, Eggs & Fridge"
+
 
 # ── Backfill / repair tests ───────────────────────────────────────────────────
 
 
 class TestCategoryRepairMigration:
-    """Unit tests for _derive_categories_from_listing_rows in q2l3m4n5o6p7.
+    """Tests for the migration helpers in q2l3m4n5o6p7.
 
-    Rows passed to the helper are pre-ordered by
-    (product_id, catalog_last_seen_at DESC NULLS LAST, id ASC) — exactly as
-    the SQL query in upgrade() emits them.
+    Covers both _apply_fallback_category (two-tier resolution: listing wins;
+    otherwise normalise current product.category) and
+    _derive_categories_from_listing_rows (listing-side pure helper).
     """
+
+    # ── _apply_fallback_category — two-tier resolution ────────────────────────
+
+    @pytest.mark.unit
+    def test_no_listing_valid_canonical_preserved(self):
+        """Scenario 1: no listing data + product.category='Pantry' → Pantry."""
+        from db.migrations.versions.q2l3m4n5o6p7_repair_product_category import (
+            _apply_fallback_category,
+        )
+
+        assert _apply_fallback_category(None, "Pantry") == "Pantry"
+
+    @pytest.mark.unit
+    def test_no_listing_invalid_remapped(self):
+        """Scenario 2: no listing data + product.category='Health & Dietary' → Health & Beauty."""
+        from db.migrations.versions.q2l3m4n5o6p7_repair_product_category import (
+            _apply_fallback_category,
+        )
+
+        assert _apply_fallback_category(None, "Health & Dietary") == "Health & Beauty"
+
+    @pytest.mark.unit
+    def test_no_listing_promo_cleared(self):
+        """Scenario 3: no listing data + product.category='Halloween' → NULL."""
+        from db.migrations.versions.q2l3m4n5o6p7_repair_product_category import (
+            _apply_fallback_category,
+        )
+
+        assert _apply_fallback_category(None, "Halloween") is None
+
+    @pytest.mark.unit
+    def test_listing_wins_over_existing_canonical(self):
+        """Scenario 4: listing category='Frozen' overrides product.category='Pantry'."""
+        from db.migrations.versions.q2l3m4n5o6p7_repair_product_category import (
+            _apply_fallback_category,
+        )
+
+        assert _apply_fallback_category("Frozen", "Pantry") == "Frozen"
+
+    @pytest.mark.unit
+    def test_apply_fallback_all_results_canonical_or_none(self):
+        """Scenario 9: every non-None result from _apply_fallback_category is canonical."""
+        from db.migrations.versions.q2l3m4n5o6p7_repair_product_category import (
+            _CANONICAL_SET,
+            _apply_fallback_category,
+        )
+
+        cases = [
+            (None, "Pantry"),
+            (None, "Health & Dietary"),
+            (None, "Halloween"),
+            (None, None),
+            ("Frozen", "Pantry"),
+            ("Baby", None),
+            (None, "> GROCERIES"),
+        ]
+        for listing_cat, current_cat in cases:
+            result = _apply_fallback_category(listing_cat, current_cat)
+            assert result is None or result in _CANONICAL_SET, (
+                f"_apply_fallback_category({listing_cat!r}, {current_cat!r}) = {result!r} "
+                f"not in canonical set"
+            )
+
+    # ── _derive_categories_from_listing_rows — listing-side helper ────────────
 
     @pytest.mark.unit
     def test_oldest_valid_listing_used_when_newest_unknown(self):
@@ -1086,11 +1234,7 @@ class TestCategoryRepairMigration:
         )
 
         pid = uuid4()
-        rows = [
-            (pid, "Unknown A"),
-            (pid, None),
-            (pid, "Unknown B"),
-        ]
+        rows = [(pid, "Unknown A"), (pid, None), (pid, "Unknown B")]
         result = _derive_categories_from_listing_rows(rows)
         assert pid not in result
 
@@ -1102,8 +1246,6 @@ class TestCategoryRepairMigration:
         )
 
         pid = uuid4()
-        # Two listings with equal catalog_last_seen_at; lower id comes first per id ASC.
-        # Lower id has external_category "Frozen" → that should win.
         rows = [
             (pid, "Frozen"),  # lower id (id ASC → first)
             (pid, "Pantry"),  # higher id

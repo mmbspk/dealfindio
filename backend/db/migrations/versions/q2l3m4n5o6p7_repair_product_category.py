@@ -1,31 +1,34 @@
-"""Repair Product.category from ProductRetailerListing.external_category.
+"""Repair Product.category — listing-derived canonical with legacy fallback.
 
 Before this migration, ``normalise_category()`` had a verbatim fallback that
 returned the raw root string for unknown retailer categories.  This caused
 promotional/seasonal labels and unmapped retailer department names to leak
 into ``products.category``.
 
-This migration rebuilds ``Product.category`` from the canonical source of
-truth — ``ProductRetailerListing.external_category`` — using the same
-deterministic ordering rule as the runtime ``recompute_product_category()``:
+This migration applies a two-tier resolution rule per product:
 
-    catalog_last_seen_at DESC NULLS LAST, id ASC
+1. **Listing-derived canonical** — ``ProductRetailerListing.external_category``
+   ordered by ``catalog_last_seen_at DESC NULLS LAST, id ASC``.  If any
+   listing row maps to a canonical value, that wins unconditionally.
 
-The first listing per product whose ``external_category`` normalises to a
-canonical value becomes the new ``Product.category``.  Products with no
-listing rows, or no listing rows whose category maps to a canonical value,
-are set to NULL.
+2. **Legacy fallback** — if no listing row yields a canonical category (either
+   because ``external_category`` is NULL or maps to None), the existing
+   ``products.category`` value is normalised through the frozen map.  This
+   preserves valid canonical values (e.g. "Pantry" stays "Pantry") while
+   clearing or remapping invalid ones (e.g. "Health & Dietary" → "Health &
+   Beauty", "Halloween" → NULL).
+
+The fallback is a transitional measure for the period before scrapers have
+re-crawled and populated ``external_category``.  Once listing coverage is
+complete the runtime ``recompute_product_category()`` becomes authoritative.
 
 NOTE on external_category population
 -------------------------------------
-As of Story #85, all ``product_retailer_listings.external_category`` rows are
-NULL because the ProductRetailerListing architecture was introduced before
-scrapers were updated to populate the column.  As a result this migration
-sets ``category = NULL`` for every product.  This is the correct outcome:
-the new architecture's invariant is "canonical category comes from listings;
-if listings have no category data, the product has no canonical category."
-When scrapers begin populating ``external_category``, the next ingest run
-will call ``recompute_product_category()`` and restore canonical values.
+As of Story #85, all ``product_retailer_listings.external_category`` rows
+were NULL because the column (added in p1k2l3m4n5o6) predates the last full
+crawl run.  All five scrapers do extract category and will populate the column
+on their next crawl.  Until then, the fallback preserves existing canonical
+data so no useful category information is lost.
 
 Revision ID: q2l3m4n5o6p7
 Revises: p1k2l3m4n5o6
@@ -204,6 +207,26 @@ def _frozen_normalise(raw: Optional[str]) -> Optional[str]:
     return None
 
 
+def _apply_fallback_category(
+    listing_cat: Optional[str],
+    current_cat: Optional[str],
+) -> Optional[str]:
+    """Two-tier resolution: listing canonical wins; otherwise normalise current.
+
+    Args:
+        listing_cat: Best canonical derived from listings for this product,
+            or None when no listing row yields a canonical value.
+        current_cat: Current products.category value (may be canonical,
+            invalid, or NULL).
+
+    Returns:
+        The new canonical category, or None.
+    """
+    if listing_cat is not None:
+        return listing_cat
+    return _frozen_normalise(current_cat)
+
+
 def _derive_categories_from_listing_rows(
     rows: list[tuple],
 ) -> dict:
@@ -255,7 +278,8 @@ def upgrade() -> None:
     unchanged = 0
 
     for product_id, current_category in product_rows:
-        new_category = listing_categories.get(product_id)
+        listing_cat = listing_categories.get(product_id)
+        new_category = _apply_fallback_category(listing_cat, current_category)
         if new_category != current_category:
             updates.append({"id": product_id, "cat": new_category})
             changed += 1
@@ -278,8 +302,9 @@ def upgrade() -> None:
     invalid_count = sum(r[1] for r in post_rows if r[0] is not None and r[0] not in _CANONICAL_SET)
 
     print(
-        f"[q2l3m4n5o6p7] listing-backed category repair: "
+        f"[q2l3m4n5o6p7] category repair (listing+fallback): "
         f"{changed} changed, {unchanged} unchanged | "
+        f"listing-derived: {len(listing_categories)} | "
         f"post-repair: {canonical_count} canonical, {null_count} NULL, "
         f"{invalid_count} invalid"
     )
