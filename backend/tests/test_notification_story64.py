@@ -160,7 +160,7 @@ class TestChannelOverrideEndpoints:
         test_db_session.add_all([lst_none, lst_normal])
         test_db_session.commit()
 
-        resp = authed_client.get("/api/v1/watchlists/")
+        resp = authed_client.get("/api/v1/watchlist/")
         assert resp.status_code == 200
         by_name = {lst["name"]: lst for lst in resp.json()}
         assert by_name["Suppressed"]["channel_override"] == "none"
@@ -178,7 +178,7 @@ class TestChannelOverrideEndpoints:
         test_db_session.commit()
 
         resp = authed_client.patch(
-            f"/api/v1/watchlists/{lst.id}",
+            f"/api/v1/watchlist/{lst.id}",
             json={"channel_override": "email"},
         )
         assert resp.status_code == 200
@@ -201,7 +201,7 @@ class TestChannelOverrideEndpoints:
         test_db_session.commit()
 
         resp = authed_client.patch(
-            f"/api/v1/watchlists/{lst.id}",
+            f"/api/v1/watchlist/{lst.id}",
             json={"channel_override": None},
         )
         assert resp.status_code == 200
@@ -227,7 +227,7 @@ class TestChannelOverrideEndpoints:
         test_db_session.commit()
 
         authed_client.patch(
-            f"/api/v1/watchlists/{lst.id}",
+            f"/api/v1/watchlist/{lst.id}",
             json={"channel_override": "both"},
         )
 
@@ -257,7 +257,7 @@ class TestChannelOverrideEndpoints:
         test_db_session.commit()
 
         resp = authed_client.patch(
-            f"/api/v1/watchlists/{other_list.id}",
+            f"/api/v1/watchlist/{other_list.id}",
             json={"channel_override": "none"},
         )
         assert resp.status_code == 404
@@ -268,7 +268,7 @@ class TestChannelOverrideEndpoints:
     ):
         """POST /watchlists/ accepts and stores channel_override on creation."""
         resp = authed_client.post(
-            "/api/v1/watchlists/",
+            "/api/v1/watchlist/",
             json={"name": "Push Only", "emoji": "📲", "channel_override": "push"},
         )
         assert resp.status_code == 201
@@ -288,7 +288,7 @@ class TestChannelOverrideEndpoints:
         test_db_session.commit()
 
         resp = authed_client.patch(
-            f"/api/v1/watchlists/{lst.id}",
+            f"/api/v1/watchlist/{lst.id}",
             json={"name": None},
         )
         assert resp.status_code == 422
@@ -393,6 +393,7 @@ class TestDigestPreferenceInheritance:
                 was_price_cents=1000,
                 is_on_sale=True,
                 sale_pct_off=50.0,
+                source="catalog_coles",
             )
             test_db_session.add(report)
 
