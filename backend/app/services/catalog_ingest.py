@@ -30,6 +30,7 @@ from sqlalchemy.orm import Session
 
 from app.models import PriceReport, Product, ProductRetailerListing, Store
 from app.services.category_normaliser import normalise_category
+from app.services.package_size import normalize_package_size
 from app.services.product_dedup import FuzzyMatcher, brands_conflict
 from scrapers.catalog_base import CatalogProduct
 
@@ -503,6 +504,35 @@ def _refresh_listing_metadata(
     listing.catalog_last_seen_at = now
 
 
+def recompute_product_package_size_norm(session: Session, product_id) -> str | None:
+    """Return canonical package_size_norm for a product from its listings.
+
+    Queries all listings ordered by catalog_last_seen_at DESC NULLS LAST, id ASC,
+    and returns the first normalized value that is not None.  This makes the
+    canonical size crawl-order independent.
+    """
+    rows = (
+        session.execute(
+            select(ProductRetailerListing.package_size_raw)
+            .where(
+                ProductRetailerListing.product_id == product_id,
+                ProductRetailerListing.package_size_raw.isnot(None),
+            )
+            .order_by(
+                ProductRetailerListing.catalog_last_seen_at.desc().nulls_last(),
+                ProductRetailerListing.id.asc(),
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for raw in rows:
+        norm = normalize_package_size(raw)
+        if norm is not None:
+            return norm
+    return None
+
+
 def ingest_catalog_product(
     cp: CatalogProduct,
     chain: str,
@@ -554,6 +584,14 @@ def ingest_catalog_product(
     # Happens after canonical product_id is confirmed and flushed.
     # Participates in the same savepoint as the Product write.
     _upsert_retailer_listing(session, cp, chain, product, resolution, now)
+
+    # Derive canonical size from all listings: catalog_last_seen_at DESC NULLS LAST, id ASC.
+    # Picks the first parseable raw value — crawl-order independent.
+    new_norm = recompute_product_package_size_norm(session, product.id)
+    if new_norm != product.package_size_norm:
+        product.package_size_norm = new_norm
+        if not created:
+            updated = True
 
     # Record the observed shelf price.
     was = cp.was_price_cents

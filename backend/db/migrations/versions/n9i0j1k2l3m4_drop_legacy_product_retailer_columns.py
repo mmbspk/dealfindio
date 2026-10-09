@@ -35,9 +35,16 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.add_column("products", sa.Column("catalog_last_seen_at", sa.DateTime(timezone=True), nullable=True))
-    op.add_column("products", sa.Column("is_online_only", sa.Boolean(), server_default="false", nullable=False))
-    op.add_column("products", sa.Column("in_stock", sa.Boolean(), server_default="true", nullable=False))
+    op.add_column(
+        "products", sa.Column("catalog_last_seen_at", sa.DateTime(timezone=True), nullable=True)
+    )
+    op.add_column(
+        "products",
+        sa.Column("is_online_only", sa.Boolean(), server_default="false", nullable=False),
+    )
+    op.add_column(
+        "products", sa.Column("in_stock", sa.Boolean(), server_default="true", nullable=False)
+    )
     op.add_column("products", sa.Column("package_size", sa.String(100), nullable=True))
     op.add_column("products", sa.Column("external_image_url", sa.String(500), nullable=True))
     op.add_column("products", sa.Column("external_source", sa.String(50), nullable=True))

@@ -47,6 +47,9 @@ class Product(Base):
     unit_size: Mapped[float | None]
     unit_price: Mapped[float | None]  # comparable price per standard unit (e.g. per 100g)
     unit_price_label: Mapped[str | None] = mapped_column(String(50))  # e.g. "100g", "100ml", "ea"
+    package_size_norm: Mapped[str | None] = mapped_column(
+        String(50)
+    )  # normalised e.g. "375mL", "1.5L"
     image_url: Mapped[str | None] = mapped_column(String(500))
     image_source: Mapped[str | None] = mapped_column(String(50))
     image_enriched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

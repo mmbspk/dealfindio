@@ -506,3 +506,296 @@ class TestGTINOverridesExistingListingEndToEnd:
         test_db_session.refresh(listing)
         assert listing.product_id == product.id
         assert not any("Reassigning listing" in r.message for r in caplog.records)
+
+
+# ── Story #50: package_size_norm ──────────────────────────────────────────────
+
+
+class TestPackageSizeNormOnIngest:
+    """Product.package_size_norm is populated and recomputed on ingest."""
+
+    @pytest.mark.integration
+    def test_new_product_gets_normalised_size(self, test_db_session: Session):
+        """Ingesting '1.5 L' writes package_size_norm = '1.5L' on the new product."""
+        cp = _cp("Oat Milk 1.5L", external_id="OM-1.5L", package_size="1.5 L")
+        ingest_catalog_products([cp], "coles", test_db_session)
+        test_db_session.commit()
+
+        product = test_db_session.execute(
+            select(Product).where(Product.name == "Oat Milk 1.5L")
+        ).scalar_one()
+        assert product.package_size_norm == "1.5L"
+
+    @pytest.mark.integration
+    def test_norm_recomputed_on_update(self, test_db_session: Session):
+        """Updating a product's scraper raw value recomputes package_size_norm."""
+        cp_first = _cp("Full Cream Milk", external_id="FCM-1", package_size="1000ml")
+        ingest_catalog_products([cp_first], "coles", test_db_session)
+        test_db_session.commit()
+
+        product = test_db_session.execute(
+            select(Product).where(Product.name == "Full Cream Milk")
+        ).scalar_one()
+        assert product.package_size_norm == "1L"
+
+        # Scraper now returns a different size string for the same SKU
+        cp_update = _cp("Full Cream Milk", external_id="FCM-1", package_size="2L")
+        ingest_catalog_products([cp_update], "coles", test_db_session)
+        test_db_session.commit()
+
+        test_db_session.refresh(product)
+        assert product.package_size_norm == "2L"
+
+    @pytest.mark.integration
+    def test_unparseable_raw_leaves_norm_null(self, test_db_session: Session):
+        """An unparseable package_size leaves package_size_norm as None."""
+        cp = _cp("Assorted Snacks", external_id="ASST-1", package_size="assorted")
+        ingest_catalog_products([cp], "coles", test_db_session)
+        test_db_session.commit()
+
+        product = test_db_session.execute(
+            select(Product).where(Product.name == "Assorted Snacks")
+        ).scalar_one()
+        assert product.package_size_norm is None
+
+    @pytest.mark.integration
+    def test_norm_in_api_response(self, test_client, test_db_session: Session):
+        """package_size_norm is present in the /products/search response."""
+        cp = _cp("Sparkling Water 375mL", external_id="SW-375", package_size="375mL")
+        ingest_catalog_products([cp], "coles", test_db_session)
+        test_db_session.commit()
+
+        resp = test_client.get("/api/v1/products/search?q=Sparkling+Water+375mL")
+        assert resp.status_code == 200
+        items = resp.json()
+        assert items, "expected at least one result"
+        item = next((i for i in items if i["name"] == "Sparkling Water 375mL"), None)
+        assert item is not None
+        assert item["package_size_norm"] == "375mL"
+
+
+# ── Story #50 Tests A–E: canonical ordering (crawl-order independence) ─────────
+
+
+class TestPackageSizeNormCanonicalOrdering:
+    """
+    package_size_norm must be derived deterministically from all listings,
+    not from a single crawl's raw value.
+
+    Canonical rule: catalog_last_seen_at DESC NULLS LAST, id ASC.
+    Pick the first listing in that order whose package_size_raw normalizes
+    to a non-None value.
+    """
+
+    @pytest.mark.integration
+    def test_A_later_null_does_not_erase_valid_norm(self, test_db_session: Session):
+        """
+        Test A: Coles crawl supplies valid size; Woolworths crawl supplies null.
+        canonical must remain the valid value regardless of which crawl is newer.
+        """
+        # Coles ingest with a parseable size
+        cp_coles = _cp("Apple Juice 2L", external_id="AJ-COLES", package_size="2L")
+        ingest_catalog_products([cp_coles], "coles", test_db_session)
+        test_db_session.commit()
+
+        product = test_db_session.execute(
+            select(Product).where(Product.name == "Apple Juice 2L")
+        ).scalar_one()
+        assert product.package_size_norm == "2L"
+
+        # Woolworths ingest for the SAME product (same name → fuzzy match), no size
+        cp_ww = _cp("Apple Juice 2L", external_id="AJ-WW", package_size=None)
+        ingest_catalog_products([cp_ww], "woolworths", test_db_session)
+        test_db_session.commit()
+
+        test_db_session.refresh(product)
+        # The null listing must not erase the valid canonical
+        assert product.package_size_norm == "2L"
+
+    @pytest.mark.integration
+    def test_B_older_parseable_beats_newer_unparseable(self, test_db_session: Session):
+        """
+        Test B: newer listing has unparseable raw; older listing has parseable raw.
+        Parseable listing wins even though it is older.
+        """
+        from datetime import timedelta
+
+        past = datetime.now(timezone.utc) - timedelta(days=7)
+        future = datetime.now(timezone.utc)
+
+        product = Product(id=uuid4(), name="Bread 700g B")
+        test_db_session.add(product)
+        test_db_session.flush()
+
+        # Older listing — parseable
+        older = ProductRetailerListing(
+            product_id=product.id,
+            chain="coles",
+            external_id="BR-COLES-B",
+            external_source="catalog_coles",
+            external_name="Bread 700g B",
+            package_size_raw="700g",
+            in_stock=True,
+            is_online_only=False,
+            catalog_last_seen_at=past,
+        )
+        # Newer listing — unparseable
+        newer = ProductRetailerListing(
+            product_id=product.id,
+            chain="woolworths",
+            external_id="BR-WW-B",
+            external_source="catalog_woolworths",
+            external_name="Bread 700g B",
+            package_size_raw="assorted",
+            in_stock=True,
+            is_online_only=False,
+            catalog_last_seen_at=future,
+        )
+        test_db_session.add_all([older, newer])
+        test_db_session.commit()
+
+        from app.services.catalog_ingest import recompute_product_package_size_norm
+
+        norm = recompute_product_package_size_norm(test_db_session, product.id)
+        # newer is "assorted" (None), older is "700g" → canonical = "700g"
+        assert norm == "700g"
+
+    @pytest.mark.integration
+    def test_C_equivalent_raw_formats_produce_stable_canonical(self, test_db_session: Session):
+        """
+        Test C: two listings use different raw representations of the same size.
+        Canonical must always resolve to the same normalized form.
+        """
+        product = Product(id=uuid4(), name="Milk 1L C")
+        test_db_session.add(product)
+        test_db_session.flush()
+
+        now = datetime.now(timezone.utc)
+        listing_a = ProductRetailerListing(
+            product_id=product.id,
+            chain="coles",
+            external_id="MILK-C-COLES",
+            external_source="catalog_coles",
+            external_name="Milk 1L C",
+            package_size_raw="1000ml",
+            in_stock=True,
+            is_online_only=False,
+            catalog_last_seen_at=now,
+        )
+        listing_b = ProductRetailerListing(
+            product_id=product.id,
+            chain="woolworths",
+            external_id="MILK-C-WW",
+            external_source="catalog_woolworths",
+            external_name="Milk 1L C",
+            package_size_raw="1 L",
+            in_stock=True,
+            is_online_only=False,
+            catalog_last_seen_at=now,
+        )
+        test_db_session.add_all([listing_a, listing_b])
+        test_db_session.commit()
+
+        from app.services.catalog_ingest import recompute_product_package_size_norm
+
+        norm = recompute_product_package_size_norm(test_db_session, product.id)
+        assert norm == "1L"
+
+    @pytest.mark.integration
+    def test_D_conflicting_parseable_listings_newest_wins(self, test_db_session: Session):
+        """
+        Test D: two parseable listings with different sizes.
+        The one with the newer catalog_last_seen_at wins.
+        """
+        from datetime import timedelta
+
+        product = Product(id=uuid4(), name="Juice D")
+        test_db_session.add(product)
+        test_db_session.flush()
+
+        old_ts = datetime.now(timezone.utc) - timedelta(days=3)
+        new_ts = datetime.now(timezone.utc)
+
+        older = ProductRetailerListing(
+            product_id=product.id,
+            chain="coles",
+            external_id="JD-COLES",
+            external_source="catalog_coles",
+            external_name="Juice D",
+            package_size_raw="1L",
+            in_stock=True,
+            is_online_only=False,
+            catalog_last_seen_at=old_ts,
+        )
+        newer = ProductRetailerListing(
+            product_id=product.id,
+            chain="woolworths",
+            external_id="JD-WW",
+            external_source="catalog_woolworths",
+            external_name="Juice D",
+            package_size_raw="1.5L",
+            in_stock=True,
+            is_online_only=False,
+            catalog_last_seen_at=new_ts,
+        )
+        test_db_session.add_all([older, newer])
+        test_db_session.commit()
+
+        from app.services.catalog_ingest import recompute_product_package_size_norm
+
+        norm = recompute_product_package_size_norm(test_db_session, product.id)
+        assert norm == "1.5L"
+
+    @pytest.mark.integration
+    def test_E_equal_timestamps_id_is_tiebreaker(self, test_db_session: Session):
+        """
+        Test E: two listings with identical catalog_last_seen_at.
+        The one with the lower id (ASC) wins.
+
+        Both listings get DB-assigned UUIDs; we inspect which is lower AFTER the
+        flush so the assertion is data-driven and always correct regardless of
+        uuid4 ordering, while still verifying the id-ASC sort behaviour.
+        """
+        product = Product(id=uuid4(), name="Chips E")
+        test_db_session.add(product)
+        test_db_session.flush()
+
+        ts = datetime.now(timezone.utc)
+
+        listing_coles = ProductRetailerListing(
+            product_id=product.id,
+            chain="coles",
+            external_id="CE-COLES",
+            external_source="catalog_coles",
+            external_name="Chips E",
+            package_size_raw="200g",
+            in_stock=True,
+            is_online_only=False,
+            catalog_last_seen_at=ts,
+        )
+        listing_ww = ProductRetailerListing(
+            product_id=product.id,
+            chain="woolworths",
+            external_id="CE-WW",
+            external_source="catalog_woolworths",
+            external_name="Chips E",
+            package_size_raw="250g",
+            in_stock=True,
+            is_online_only=False,
+            catalog_last_seen_at=ts,
+        )
+        test_db_session.add_all([listing_coles, listing_ww])
+        test_db_session.flush()  # assigns .id to both
+
+        # Determine expected winner by id ordering (mirrors ORDER BY id ASC).
+        if listing_coles.id < listing_ww.id:
+            expected_norm = "200g"
+        else:
+            expected_norm = "250g"
+
+        test_db_session.commit()
+
+        from app.services.catalog_ingest import recompute_product_package_size_norm
+
+        norm = recompute_product_package_size_norm(test_db_session, product.id)
+        assert norm == expected_norm
