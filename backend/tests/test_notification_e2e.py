@@ -25,7 +25,6 @@ from app.models import Notification, PriceReport, Product, Store, UserProfile, U
 from app.models.watchlist_list import WatchlistList
 from app.workers import notification_tasks
 
-
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 
