@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.price_report import PriceReport
 from app.models.product import Product
+from app.models.product_retailer_listing import ProductRetailerListing
 from app.models.store import Store
 
 logger = logging.getLogger(__name__)
@@ -552,19 +553,20 @@ async def ingest_scraped_price(
         # Step 1: Resolve product
         product = None
 
-        # Priority 1: store's own product ID — matches what the catalog scraper stored
+        # Priority 1: durable listing lookup by store's own product ID
         if store_product_id:
-            external_source = f"catalog_{chain}"
-            stmt = (
-                select(Product)
+            listing_stmt = (
+                select(ProductRetailerListing)
                 .where(
-                    Product.external_source == external_source,
-                    Product.external_id == str(store_product_id),
+                    ProductRetailerListing.chain == chain,
+                    ProductRetailerListing.external_id == str(store_product_id),
                 )
                 .limit(1)
             )
-            result = await session.execute(stmt)
-            product = result.scalar_one_or_none()
+            listing_result = await session.execute(listing_stmt)
+            listing = listing_result.scalar_one_or_none()
+            if listing:
+                product = await session.get(Product, listing.product_id)
 
         # Priority 2: real GTIN barcode lookup
         if not product and gtin:

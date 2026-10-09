@@ -105,13 +105,12 @@ def _fetch_deals(
             distance_km = haversine_km(lat, lon, store.lat, store.lon)
 
         # Chain-specific image: Coles deal must not show a Woolworths listing image.
-        # Hierarchy: canonical product.image_url > chain listing image > legacy fallback
-        # TODO(#49e): remove Product fallback after #49e drops legacy columns
+        # Hierarchy: canonical product.image_url > chain listing image
         chain_ld = chain_listing_map.get((product.id, store.chain))
         listing_image = (
             chain_ld["external_image_url"]
             if chain_ld and chain_ld["external_image_url"] is not None
-            else product.external_image_url
+            else None
         )
 
         seen_products.add(product.id)

@@ -838,7 +838,6 @@ class TestImageReviewAPI:
             name="Test Product",
             brand="TestBrand",
             image_url=None,
-            external_image_url="http://retailer.com/img.jpg",
             off_image_url="http://localhost:8010/media/products/test/img.jpg",
             off_image_score=88.0,
             off_image_off_code="1234567890",

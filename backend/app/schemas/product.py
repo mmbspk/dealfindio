@@ -23,6 +23,9 @@ class ProductResponse(BaseModel):
     package_size: str | None = Field(
         None, description="Raw package size string e.g. '2L', '375mL 24 Pack'"
     )
+    package_size_norm: str | None = Field(
+        None, description="Canonical normalized size e.g. '375mL', '1.5L', '500g', '24x375mL'"
+    )
     unit_price: float | None = Field(None, description="Comparable unit price e.g. 1.50 per 100g")
     unit_price_label: str | None = Field(
         None, description="Unit label for unit_price e.g. '100g', '100ml', 'ea'"
@@ -41,7 +44,7 @@ class ProductResponse(BaseModel):
             self.image_url = self.external_image_url
         return self
 
-    in_stock: bool = Field(True, description="Whether the product is in stock")
+    in_stock: bool = Field(False, description="Whether the product is in stock")
 
     # Cheapest current price across all stores/chains (null if no price data yet)
     lowest_price_aud: float | None = Field(None, description="Cheapest current price in AUD")

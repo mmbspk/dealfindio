@@ -35,24 +35,12 @@ from app.services.listing_helpers import get_listing_enrichment_map
 def _product(
     db: Session,
     name: str = "Test Product",
-    external_source: str | None = "catalog_coles",
-    external_id: str | None = "SKU-001",
-    external_image_url: str | None = None,
     image_url: str | None = None,
-    package_size: str | None = None,
-    in_stock: bool = True,
-    is_online_only: bool = False,
 ) -> Product:
     p = Product(
         id=uuid4(),
         name=name,
-        external_source=external_source,
-        external_id=external_id,
-        external_image_url=external_image_url,
         image_url=image_url,
-        package_size=package_size,
-        in_stock=in_stock,
-        is_online_only=is_online_only,
     )
     db.add(p)
     db.flush()
@@ -129,7 +117,7 @@ class TestListingBackedMetadata:
     @pytest.mark.integration
     def test_attach_prices_overrides_in_stock_from_listing(self, test_db_session: Session):
         """Product.in_stock=True but listing.in_stock=False → response.in_stock=False."""
-        p = _product(test_db_session, in_stock=True)
+        p = _product(test_db_session)
         _listing(test_db_session, p.id, in_stock=False)
         test_db_session.commit()
 
@@ -141,7 +129,7 @@ class TestListingBackedMetadata:
     @pytest.mark.integration
     def test_attach_prices_overrides_package_size_from_listing(self, test_db_session: Session):
         """listing.package_size_raw wins over Product.package_size."""
-        p = _product(test_db_session, package_size="OLD 1L")
+        p = _product(test_db_session)
         _listing(test_db_session, p.id, package_size_raw="NEW 2L")
         test_db_session.commit()
 
@@ -152,7 +140,7 @@ class TestListingBackedMetadata:
     @pytest.mark.integration
     def test_attach_prices_overrides_image_from_listing(self, test_db_session: Session):
         """listing.external_image_url wins over Product.external_image_url."""
-        p = _product(test_db_session, external_image_url="http://old/img.jpg")
+        p = _product(test_db_session)
         _listing(test_db_session, p.id, external_image_url="http://listing/img.jpg")
         test_db_session.commit()
 
@@ -163,7 +151,7 @@ class TestListingBackedMetadata:
     @pytest.mark.integration
     def test_any_in_stock_true_when_one_listing_in_stock(self, test_db_session: Session):
         """Product with two listings (one in, one out) → any_in_stock=True."""
-        p = _product(test_db_session, external_id=None, external_source=None)
+        p = _product(test_db_session)
         _listing(test_db_session, p.id, chain="coles", external_id="C-001", in_stock=True)
         _listing(test_db_session, p.id, chain="woolworths", external_id="W-001", in_stock=False)
         test_db_session.commit()
@@ -175,7 +163,7 @@ class TestListingBackedMetadata:
     @pytest.mark.integration
     def test_any_in_stock_false_when_all_listings_out(self, test_db_session: Session):
         """Product with two out-of-stock listings → in_stock=False."""
-        p = _product(test_db_session, external_id=None, external_source=None, in_stock=True)
+        p = _product(test_db_session)
         _listing(test_db_session, p.id, chain="coles", external_id="C-002", in_stock=False)
         _listing(test_db_session, p.id, chain="woolworths", external_id="W-002", in_stock=False)
         test_db_session.commit()
@@ -195,7 +183,7 @@ class TestDeterministicListingSelection:
         provides the image (ties broken by id ASC)."""
         from datetime import timedelta
 
-        p = _product(test_db_session, external_id=None, external_source=None)
+        p = _product(test_db_session)
         now = datetime.now(timezone.utc)
         _listing(
             test_db_session,
@@ -221,7 +209,7 @@ class TestDeterministicListingSelection:
     @pytest.mark.integration
     def test_null_last_seen_ranks_last(self, test_db_session: Session):
         """Listing with catalog_last_seen_at=None ranks after any non-null timestamp."""
-        p = _product(test_db_session, external_id=None, external_source=None)
+        p = _product(test_db_session)
         _listing(
             test_db_session,
             p.id,
@@ -254,7 +242,7 @@ class TestBrowseNoFanOut:
         self, test_client, test_db_session: Session
     ):
         """Product with two listings for the same chain appears exactly once in browse."""
-        p = _product(test_db_session, name="Multi-SKU Milk", external_id=None, external_source=None)
+        p = _product(test_db_session, name="Multi-SKU Milk")
         _listing(test_db_session, p.id, chain="coles", external_id="COLES-A")
         _listing(test_db_session, p.id, chain="coles", external_id="COLES-B")
         test_db_session.commit()
@@ -269,10 +257,8 @@ class TestBrowseNoFanOut:
         self, test_client, test_db_session: Session
     ):
         """Product with only a woolworths listing does not appear in chain=coles filter."""
-        p_coles = _product(
-            test_db_session, name="Coles Only", external_id=None, external_source=None
-        )
-        p_ww = _product(test_db_session, name="WW Only", external_id=None, external_source=None)
+        p_coles = _product(test_db_session, name="Coles Only")
+        p_ww = _product(test_db_session, name="WW Only")
         _listing(test_db_session, p_coles.id, chain="coles", external_id="C-ONLY")
         _listing(test_db_session, p_ww.id, chain="woolworths", external_id="W-ONLY")
         test_db_session.commit()
@@ -289,21 +275,16 @@ class TestBrowseNoFanOut:
 
 class TestMissingListingFallback:
     @pytest.mark.integration
-    def test_product_without_listing_uses_product_fields(self, test_db_session: Session):
-        """Product with no listing keeps Product.package_size and Product.in_stock."""
-        p = _product(
-            test_db_session,
-            package_size="Legacy 500g",
-            in_stock=True,
-            external_image_url="http://old/legacy.jpg",
-        )
+    def test_product_without_listing_has_null_metadata(self, test_db_session: Session):
+        """Product with no listing returns null retailer metadata — no legacy fallback."""
+        p = _product(test_db_session)
         test_db_session.commit()
 
         results = _attach_prices(test_db_session, [p])
 
-        assert results[0].package_size == "Legacy 500g"
-        assert results[0].in_stock is True
-        assert results[0].external_image_url == "http://old/legacy.jpg"
+        assert results[0].package_size is None
+        assert results[0].in_stock is False
+        assert results[0].external_image_url is None
 
     @pytest.mark.integration
     def test_enrichment_map_empty_for_product_with_no_listings(self, test_db_session: Session):
@@ -333,7 +314,7 @@ class TestImageFallbackHierarchy:
     @pytest.mark.integration
     def test_listing_image_used_as_image_url_when_canonical_absent(self, test_db_session: Session):
         """When Product.image_url is None, listing.external_image_url fills image_url."""
-        p = _product(test_db_session, image_url=None, external_image_url=None)
+        p = _product(test_db_session, image_url=None)
         _listing(test_db_session, p.id, external_image_url="http://listing/img.jpg")
         test_db_session.commit()
 
@@ -351,10 +332,8 @@ class TestAvailabilityFilter:
     def test_in_stock_filter_true_matches_products_with_in_stock_listing(
         self, test_client, test_db_session: Session
     ):
-        p_in = _product(test_db_session, name="In Stock", external_id=None, external_source=None)
-        p_out = _product(
-            test_db_session, name="Out of Stock", external_id=None, external_source=None
-        )
+        p_in = _product(test_db_session, name="In Stock")
+        p_out = _product(test_db_session, name="Out of Stock")
         _listing(test_db_session, p_in.id, chain="coles", external_id="H-IN", in_stock=True)
         _listing(test_db_session, p_out.id, chain="coles", external_id="H-OUT", in_stock=False)
         test_db_session.commit()
@@ -369,9 +348,7 @@ class TestAvailabilityFilter:
     def test_in_stock_cross_chain_no_leakage(self, test_client, test_db_session: Session):
         """chain=woolworths + in_stock=true must NOT return a product that is only
         in-stock at Coles, not Woolworths."""
-        p = _product(
-            test_db_session, name="Coles Only In Stock", external_id=None, external_source=None
-        )
+        p = _product(test_db_session, name="Coles Only In Stock")
         _listing(test_db_session, p.id, chain="coles", external_id="H-CX", in_stock=True)
         _listing(test_db_session, p.id, chain="woolworths", external_id="H-WX", in_stock=False)
         test_db_session.commit()
@@ -391,7 +368,7 @@ class TestStoresListingBackedUrl:
         self, test_client, test_db_session: Session
     ):
         """store_url must use listing.external_source + listing.external_id."""
-        p = _product(test_db_session, external_source=None, external_id=None)
+        p = _product(test_db_session)
         _listing(
             test_db_session,
             p.id,
@@ -414,7 +391,7 @@ class TestStoresListingBackedUrl:
         self, test_client, test_db_session: Session
     ):
         """Even if a product has two listings for one chain, the store appears once."""
-        p = _product(test_db_session, external_source=None, external_id=None)
+        p = _product(test_db_session)
         _listing(test_db_session, p.id, chain="coles", external_id="C-DUP-A")
         _listing(test_db_session, p.id, chain="coles", external_id="C-DUP-B")
         store = _store(test_db_session, chain="coles")
@@ -429,7 +406,7 @@ class TestStoresListingBackedUrl:
     @pytest.mark.integration
     def test_stores_fallback_graceful_when_no_listing(self, test_client, test_db_session: Session):
         """Product with no listing returns store row but store_url may be None."""
-        p = _product(test_db_session, external_source=None, external_id=None)
+        p = _product(test_db_session)
         store = _store(test_db_session, chain="iga")
         _price_report(test_db_session, p.id, store.id)
         test_db_session.commit()
@@ -449,9 +426,7 @@ class TestTwoChainStoreUrls:
     @pytest.mark.integration
     def test_each_chain_gets_its_own_listing_store_url(self, test_client, test_db_session: Session):
         """A product mapped to both Coles and Woolworths gets independent store_urls."""
-        p = _product(
-            test_db_session, external_source=None, external_id=None, name="Dual-Chain Milk"
-        )
+        p = _product(test_db_session, name="Dual-Chain Milk")
         _listing(
             test_db_session,
             p.id,
@@ -523,7 +498,7 @@ class TestGetListingEnrichmentMap:
     @pytest.mark.integration
     def test_batch_fetches_multiple_products(self, test_db_session: Session):
         p1 = _product(test_db_session, name="P1")
-        p2 = _product(test_db_session, name="P2", external_id="SKU-002")
+        p2 = _product(test_db_session, name="P2")
         _listing(test_db_session, p1.id, external_image_url="http://img/p1.jpg")
         _listing(
             test_db_session, p2.id, external_id="SKU-002", external_image_url="http://img/p2.jpg"
@@ -539,121 +514,76 @@ class TestGetListingEnrichmentMap:
 # ── I. No-listing in_stock compatibility (Blocker 1 fix) ──────────────────────
 
 
-class TestNoListingInStockCompatibility:
-    """Products with zero listings fall back to Product.in_stock for filter purposes."""
+class TestNoListingInStockExclusion:
+    """Products with zero listings are excluded from both in_stock filters (no signal)."""
 
     @pytest.mark.integration
-    def test_no_listing_in_stock_true_included_in_in_stock_filter(
+    def test_no_listing_product_excluded_from_in_stock_true_filter(
         self, test_client, test_db_session: Session
     ):
-        """Product with no listing and Product.in_stock=True must appear in ?in_stock=true."""
-        p = _product(
-            test_db_session,
-            name="Legacy In Stock",
-            in_stock=True,
-            external_id=None,
-            external_source=None,
-        )
+        """Product with no listing must NOT appear in ?in_stock=true (no signal)."""
+        p = _product(test_db_session, name="Zero Listing A")
         test_db_session.commit()
 
         resp = test_client.get("/api/v1/products/search?in_stock=true")
         assert resp.status_code == 200
         ids = [item["id"] for item in resp.json()]
-        assert (
-            str(p.id) in ids
-        ), "no-listing product with Product.in_stock=True must appear in ?in_stock=true"
+        assert str(p.id) not in ids, "zero-listing product must not appear in ?in_stock=true"
 
     @pytest.mark.integration
-    def test_no_listing_in_stock_true_excluded_from_out_of_stock_filter(
+    def test_no_listing_product_excluded_from_in_stock_false_filter(
         self, test_client, test_db_session: Session
     ):
-        """Product with no listing and Product.in_stock=True must NOT appear in ?in_stock=false."""
-        p = _product(
-            test_db_session,
-            name="Legacy In Stock 2",
-            in_stock=True,
-            external_id=None,
-            external_source=None,
-        )
+        """Product with no listing must NOT appear in ?in_stock=false (no signal)."""
+        p = _product(test_db_session, name="Zero Listing B")
         test_db_session.commit()
 
         resp = test_client.get("/api/v1/products/search?in_stock=false")
         assert resp.status_code == 200
         ids = [item["id"] for item in resp.json()]
-        assert (
-            str(p.id) not in ids
-        ), "no-listing product with Product.in_stock=True must NOT appear in ?in_stock=false"
+        assert str(p.id) not in ids, "zero-listing product must not appear in ?in_stock=false"
 
     @pytest.mark.integration
-    def test_no_listing_in_stock_false_included_in_out_of_stock_filter(
+    def test_listing_in_stock_true_appears_in_in_stock_filter(
         self, test_client, test_db_session: Session
     ):
-        """Product with no listing and Product.in_stock=False must appear in ?in_stock=false."""
-        p = _product(
-            test_db_session,
-            name="Legacy Out of Stock",
-            in_stock=False,
-            external_id=None,
-            external_source=None,
-        )
-        test_db_session.commit()
-
-        resp = test_client.get("/api/v1/products/search?in_stock=false")
-        assert resp.status_code == 200
-        ids = [item["id"] for item in resp.json()]
-        assert (
-            str(p.id) in ids
-        ), "no-listing product with Product.in_stock=False must appear in ?in_stock=false"
-
-    @pytest.mark.integration
-    def test_no_listing_in_stock_false_excluded_from_in_stock_filter(
-        self, test_client, test_db_session: Session
-    ):
-        """Product with no listing and Product.in_stock=False must NOT appear in ?in_stock=true."""
-        p = _product(
-            test_db_session,
-            name="Legacy Out of Stock 2",
-            in_stock=False,
-            external_id=None,
-            external_source=None,
-        )
+        """Product with listing.in_stock=True must appear in ?in_stock=true."""
+        p = _product(test_db_session, name="Has Listing In Stock")
+        _listing(test_db_session, p.id, chain="coles", external_id="LT-TT", in_stock=True)
         test_db_session.commit()
 
         resp = test_client.get("/api/v1/products/search?in_stock=true")
         assert resp.status_code == 200
         ids = [item["id"] for item in resp.json()]
-        assert (
-            str(p.id) not in ids
-        ), "no-listing product with Product.in_stock=False must NOT appear in ?in_stock=true"
+        assert str(p.id) in ids
 
     @pytest.mark.integration
-    def test_listing_stock_overrides_legacy_product_in_stock(
+    def test_listing_in_stock_false_appears_in_out_of_stock_filter(
         self, test_client, test_db_session: Session
     ):
-        """Product.in_stock=True but listing.in_stock=False: listing wins in filter."""
-        p = _product(
-            test_db_session,
-            name="Legacy True Listing False",
-            in_stock=True,
-            external_id=None,
-            external_source=None,
-        )
-        _listing(test_db_session, p.id, chain="coles", external_id="LT-LF", in_stock=False)
+        """Product with listing.in_stock=False must appear in ?in_stock=false."""
+        p = _product(test_db_session, name="Has Listing Out of Stock")
+        _listing(test_db_session, p.id, chain="coles", external_id="LT-FF", in_stock=False)
         test_db_session.commit()
 
-        resp_true = test_client.get("/api/v1/products/search?in_stock=true")
-        resp_false = test_client.get("/api/v1/products/search?in_stock=false")
-        assert resp_true.status_code == 200
-        assert resp_false.status_code == 200
+        resp = test_client.get("/api/v1/products/search?in_stock=false")
+        assert resp.status_code == 200
+        ids = [item["id"] for item in resp.json()]
+        assert str(p.id) in ids
 
-        ids_true = [item["id"] for item in resp_true.json()]
-        ids_false = [item["id"] for item in resp_false.json()]
-        assert (
-            str(p.id) not in ids_true
-        ), "listing.in_stock=False must override Product.in_stock=True"
-        assert (
-            str(p.id) in ids_false
-        ), "product with listing.in_stock=False must appear in ?in_stock=false"
+    @pytest.mark.integration
+    def test_listing_in_stock_false_not_in_in_stock_filter(
+        self, test_client, test_db_session: Session
+    ):
+        """Product with listing.in_stock=False must NOT appear in ?in_stock=true."""
+        p = _product(test_db_session, name="Listing False Not In Stock")
+        _listing(test_db_session, p.id, chain="coles", external_id="LT-FN", in_stock=False)
+        test_db_session.commit()
+
+        resp = test_client.get("/api/v1/products/search?in_stock=true")
+        assert resp.status_code == 200
+        ids = [item["id"] for item in resp.json()]
+        assert str(p.id) not in ids
 
 
 # ── J. Chain-specific deal image (Blocker 2 fix) ──────────────────────────────
@@ -670,8 +600,6 @@ class TestDealChainSpecificImage:
         p = _product(
             test_db_session,
             name="Chain Image Product",
-            external_id=None,
-            external_source=None,
             image_url=None,
         )
         _listing(
@@ -712,8 +640,6 @@ class TestDealChainSpecificImage:
         p = _product(
             test_db_session,
             name="Canonical Image Product",
-            external_id=None,
-            external_source=None,
             image_url="http://img/canonical.jpg",
         )
         _listing(
@@ -764,8 +690,6 @@ class TestWatchlistChainSpecificImage:
         p = _product(
             test_db_session,
             name="WL Chain Image",
-            external_id=None,
-            external_source=None,
             image_url=None,
         )
         _listing(
@@ -830,8 +754,6 @@ class TestWatchlistChainSpecificImage:
         p = _product(
             test_db_session,
             name="WL Fallback Image",
-            external_id=None,
-            external_source=None,
             image_url=None,
         )
         _listing(
@@ -864,3 +786,73 @@ class TestWatchlistChainSpecificImage:
         assert (
             result.product_image_url == "http://img/wl-fb-ww.jpg"
         ), f"without current_chain, product-level listing image must be used, got: {result.product_image_url}"
+
+
+# ── package_size regression (Story #49e review fix) ──────────────────────────
+
+
+class TestPackageSizeSearchViaListing:
+    """package_size_raw on ProductRetailerListing must be searchable; no fan-out."""
+
+    @pytest.mark.integration
+    def test_package_size_in_listing_is_found_by_search(
+        self, test_client, test_db_session: Session
+    ):
+        """Product whose name/brand does NOT contain '2L' is found via listing.package_size_raw."""
+        p = _product(test_db_session, name="Full Cream Milk")
+        _listing(test_db_session, p.id, chain="coles", external_id="FCM-2L", package_size_raw="2L")
+        test_db_session.commit()
+
+        resp = test_client.get("/api/v1/products/search?q=2L")
+        assert resp.status_code == 200
+        ids = [item["id"] for item in resp.json()]
+        assert str(p.id) in ids, "product must be found via listing.package_size_raw"
+
+    @pytest.mark.integration
+    def test_package_size_search_no_fan_out_with_multiple_listings(
+        self, test_client, test_db_session: Session
+    ):
+        """Product with two listings both matching package_size appears exactly once."""
+        p = _product(test_db_session, name="Oat Milk")
+        _listing(
+            test_db_session,
+            p.id,
+            chain="coles",
+            external_id="OM-2L-A",
+            package_size_raw="2L",
+        )
+        _listing(
+            test_db_session,
+            p.id,
+            chain="woolworths",
+            external_id="OM-2L-B",
+            package_size_raw="2L",
+        )
+        test_db_session.commit()
+
+        resp = test_client.get("/api/v1/products/search?q=2L")
+        assert resp.status_code == 200
+        ids = [item["id"] for item in resp.json()]
+        assert (
+            ids.count(str(p.id)) == 1
+        ), "product must appear exactly once despite two matching listings"
+
+    @pytest.mark.integration
+    def test_product_without_matching_package_size_not_returned(
+        self, test_client, test_db_session: Session
+    ):
+        """Product with package_size_raw='500g' must NOT appear in ?q=2L search."""
+        p = _product(test_db_session, name="Almond Milk")
+        _listing(
+            test_db_session,
+            p.id,
+            chain="coles",
+            external_id="AM-500G",
+            package_size_raw="500g",
+        )
+        test_db_session.commit()
+
+        resp = test_client.get("/api/v1/products/search?q=2L")
+        assert resp.status_code == 200
+        ids = [item["id"] for item in resp.json()]
+        assert str(p.id) not in ids, "product with 500g listing must not appear in 2L search"
