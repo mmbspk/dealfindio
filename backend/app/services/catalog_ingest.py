@@ -25,7 +25,7 @@ from datetime import date, datetime, timedelta, timezone
 from enum import Enum
 from typing import Optional
 
-from sqlalchemy import desc, select
+from sqlalchemy import desc, or_, select
 from sqlalchemy.orm import Session
 
 from app.models import PriceReport, Product, ProductRetailerListing, Store
@@ -504,33 +504,65 @@ def _refresh_listing_metadata(
     listing.catalog_last_seen_at = now
 
 
+def recompute_product_canonical_fields(
+    session: Session, product_id
+) -> tuple[str | None, str | None]:
+    """Return (package_size_norm, category) for a product from its listings.
+
+    Single query ordered by catalog_last_seen_at DESC NULLS LAST, id ASC.
+    Iterates in that order and returns the first parseable value for each field.
+    Crawl-order independent; unknown external_category values are skipped (never
+    returned verbatim).
+    """
+    rows = session.execute(
+        select(
+            ProductRetailerListing.package_size_raw,
+            ProductRetailerListing.external_category,
+        )
+        .where(
+            ProductRetailerListing.product_id == product_id,
+            or_(
+                ProductRetailerListing.package_size_raw.isnot(None),
+                ProductRetailerListing.external_category.isnot(None),
+            ),
+        )
+        .order_by(
+            ProductRetailerListing.catalog_last_seen_at.desc().nulls_last(),
+            ProductRetailerListing.id.asc(),
+        )
+    ).all()
+
+    pkg_norm: str | None = None
+    category: str | None = None
+    for raw_size, raw_cat in rows:
+        if pkg_norm is None and raw_size:
+            pkg_norm = normalize_package_size(raw_size)
+        if category is None and raw_cat:
+            category = normalise_category(raw_cat)
+        if pkg_norm is not None and category is not None:
+            break
+
+    return pkg_norm, category
+
+
 def recompute_product_package_size_norm(session: Session, product_id) -> str | None:
     """Return canonical package_size_norm for a product from its listings.
 
-    Queries all listings ordered by catalog_last_seen_at DESC NULLS LAST, id ASC,
-    and returns the first normalized value that is not None.  This makes the
-    canonical size crawl-order independent.
+    Convenience wrapper around recompute_product_canonical_fields.
     """
-    rows = (
-        session.execute(
-            select(ProductRetailerListing.package_size_raw)
-            .where(
-                ProductRetailerListing.product_id == product_id,
-                ProductRetailerListing.package_size_raw.isnot(None),
-            )
-            .order_by(
-                ProductRetailerListing.catalog_last_seen_at.desc().nulls_last(),
-                ProductRetailerListing.id.asc(),
-            )
-        )
-        .scalars()
-        .all()
-    )
-    for raw in rows:
-        norm = normalize_package_size(raw)
-        if norm is not None:
-            return norm
-    return None
+    norm, _ = recompute_product_canonical_fields(session, product_id)
+    return norm
+
+
+def recompute_product_category(session: Session, product_id) -> str | None:
+    """Return canonical category for a product from its listings.
+
+    Queries all listings ordered by catalog_last_seen_at DESC NULLS LAST, id ASC,
+    returns the first non-None normalised category value.  Unknown raw categories
+    return None — never stored verbatim.  Crawl-order independent.
+    """
+    _, category = recompute_product_canonical_fields(session, product_id)
+    return category
 
 
 def ingest_catalog_product(
@@ -554,7 +586,6 @@ def ingest_catalog_product(
             gtin=cp.gtin.zfill(14) if cp.gtin else None,
             name=cp.product_name,
             brand=cp.brand,
-            category=normalise_category(cp.category),
             unit_price=cp.unit_price,
             unit_price_label=cp.unit_price_label,
         )
@@ -564,12 +595,9 @@ def ingest_catalog_product(
             _propose_candidate(session, product, fuzzy_candidate, match_score)
         created = True
     else:
-        # Fill only missing canonical metadata — never clobber an existing brand/category.
+        # Fill only missing canonical metadata — never clobber an existing brand.
         if cp.brand and not product.brand:
             product.brand = cp.brand
-            updated = True
-        if cp.category and not product.category:
-            product.category = normalise_category(cp.category)
             updated = True
         if cp.unit_price is not None and (
             product.unit_price is None or product.unit_price != cp.unit_price
@@ -585,11 +613,16 @@ def ingest_catalog_product(
     # Participates in the same savepoint as the Product write.
     _upsert_retailer_listing(session, cp, chain, product, resolution, now)
 
-    # Derive canonical size from all listings: catalog_last_seen_at DESC NULLS LAST, id ASC.
-    # Picks the first parseable raw value — crawl-order independent.
-    new_norm = recompute_product_package_size_norm(session, product.id)
+    # Derive canonical package_size_norm and category from all listings in one query:
+    # catalog_last_seen_at DESC NULLS LAST, id ASC — picks first parseable value each.
+    # Crawl-order independent; unknown categories are never returned verbatim.
+    new_norm, new_category = recompute_product_canonical_fields(session, product.id)
     if new_norm != product.package_size_norm:
         product.package_size_norm = new_norm
+        if not created:
+            updated = True
+    if new_category != product.category:
+        product.category = new_category
         if not created:
             updated = True
 

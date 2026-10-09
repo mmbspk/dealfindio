@@ -6,8 +6,9 @@ Raw category strings from Woolworths (e.g. "Fruit & Veg > FRUIT AND VEG") and Co
 human-readable flat names used across the whole app.
 
 Usage:
-    from app.services.category_normaliser import normalise_category
+    from app.services.category_normaliser import normalise_category, CANONICAL_CATEGORIES
     clean = normalise_category("Baby > GENERAL MERCHANDISE")  # → "Baby"
+    clean = normalise_category("SomeUnknownThing")            # → None
 """
 
 from __future__ import annotations
@@ -15,6 +16,9 @@ from __future__ import annotations
 # Every known raw category string → canonical name.
 # Keys include both the full "root > DEPT" form and bare root forms.
 # A value of None means "not a real product category — store as NULL".
+#
+# INVARIANT: normalise_category(raw) returns only a value in CANONICAL_CATEGORIES or None.
+# Unknown retailer categories must NEVER be returned verbatim.
 CATEGORY_MAP: dict[str, str | None] = {
     # ── Baby ─────────────────────────────────────────────────────────────────
     "Baby": "Baby",
@@ -98,6 +102,8 @@ CATEGORY_MAP: dict[str, str | None] = {
     "Beauty > GROCERIES": "Health & Beauty",
     "Personal Care": "Health & Beauty",
     "Personal Care > GROCERIES": "Health & Beauty",
+    # IGA top-level category covering health foods and personal care
+    "Health & Dietary": "Health & Beauty",
     # ── Home & Garden ────────────────────────────────────────────────────────
     "Home & Garden": "Home & Garden",
     "Home & Lifestyle": "Home & Garden",
@@ -124,6 +130,7 @@ CATEGORY_MAP: dict[str, str | None] = {
     # Drakes
     "Meat": "Meat & Seafood",
     # ── Ready Meals ──────────────────────────────────────────────────────────
+    "Ready Meals": "Ready Meals",
     "Dinner": "Ready Meals",
     "Dinner > FRESH CONVENIENCE": "Ready Meals",
     "Dinner > FRUIT AND VEG": "Ready Meals",
@@ -169,17 +176,26 @@ CATEGORY_MAP: dict[str, str | None] = {
     "Container Bonus Credits": None,
     "Christmas": None,
     "General Merchandise": None,
+    "Bonus Credit Products": None,
+    "Halloween": None,
+    "Back to School": None,
+    # Unresolved: Coles higher-protein navigation section; no clear canonical fit.
+    "Higher Protein Food and Drink": None,
 }
+
+# Closed set of valid canonical category values.
+# normalise_category() guarantees it returns only a value from this set or None.
+CANONICAL_CATEGORIES: frozenset[str] = frozenset(v for v in CATEGORY_MAP.values() if v is not None)
 
 
 def normalise_category(raw: str | None) -> str | None:
     """
-    Map a raw scraper category string to a canonical name.
+    Map a raw scraper category string to a canonical name, or None.
 
-    Tries exact match first, then falls back to stripping the " > SUFFIX" portion
-    and matching the root. Unknown categories are returned as their root (no suffix),
-    so new scraper categories degrade gracefully rather than silently disappearing.
-    Returns None for empty/null input or explicitly non-category labels.
+    Tries exact match first, then strips everything after " > " and tries the root.
+    Unknown roots return None — raw retailer strings are never returned verbatim.
+
+    Invariant: result is None or result in CANONICAL_CATEGORIES.
     """
     if not raw:
         return None
@@ -194,4 +210,5 @@ def normalise_category(raw: str | None) -> str | None:
     root = raw.split(" > ")[0].strip()
     if root in CATEGORY_MAP:
         return CATEGORY_MAP[root]
-    return root
+
+    return None

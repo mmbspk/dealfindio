@@ -665,7 +665,45 @@ def get_catalog_coverage(
     return out
 
 
-@router.delete("/catalog/{chain}", status_code=200)
+class UnmappedCategoryRow(BaseModel):
+    chain: str
+    raw_category: str
+    count: int
+
+
+@router.get("/catalog/unmapped-categories", response_model=list[UnmappedCategoryRow])
+def get_unmapped_categories(
+    db: Session = Depends(get_db),
+    _admin=Depends(require_admin),
+) -> list[UnmappedCategoryRow]:
+    """Return external_category values that do not map to any canonical category.
+
+    Groups by (chain, external_category) and returns only rows where
+    normalise_category(external_category) is None, ordered by count descending.
+    Use this to detect new or mis-labelled retailer categories before they
+    silently affect Product.category.
+    """
+    from app.services.category_normaliser import normalise_category
+
+    rows = db.execute(
+        text(
+            """
+            SELECT chain, external_category, COUNT(*) AS cnt
+            FROM product_retailer_listings
+            WHERE external_category IS NOT NULL
+            GROUP BY chain, external_category
+            ORDER BY cnt DESC
+            """
+        )
+    ).fetchall()
+
+    return [
+        UnmappedCategoryRow(chain=r[0], raw_category=r[1], count=r[2])
+        for r in rows
+        if normalise_category(r[1]) is None
+    ]
+
+
 def cancel_catalog_crawl(
     chain: str,
     db: Session = Depends(get_db),
