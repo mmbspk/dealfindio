@@ -185,7 +185,7 @@ export default function WatchlistScreen() {
   }
 
   async function updateChannelOverride(override: ChannelOverride) {
-    if (!activeListId) return
+    if (!activeListId || channelSaving) return
     const prev = lists.find(l => l.id === activeListId)?.channel_override ?? null
     // Optimistic update
     setLists(cur => cur.map(l =>
@@ -343,7 +343,10 @@ export default function WatchlistScreen() {
           </View>
           <TouchableOpacity
             onPress={() => setShowChannelPicker(true)}
+            disabled={channelSaving}
             style={styles.channelBtn}
+            accessibilityRole="button"
+            accessibilityState={{ busy: channelSaving, disabled: channelSaving }}
             accessibilityLabel="Notification channel settings"
             accessibilityHint="Open notification channel picker for this list"
           >
