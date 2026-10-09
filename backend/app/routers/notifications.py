@@ -68,6 +68,7 @@ async def _fire_badge(token: str, badge: int) -> None:
     """Background coroutine for silent badge-only Expo push — logs failures, never raises."""
     try:
         from app.services.push_sender import send_expo_badge_async
+
         await send_expo_badge_async(token, badge)
     except Exception as e:
         logger.warning(f"Background badge sync failed for token {token[:20]}...: {e}")
@@ -109,7 +110,9 @@ def _notif_to_response(notif: Notification) -> NotificationResponse:
 async def list_notifications(
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
-    channel: Annotated[str | None, Query(description="Filter by channel (in_app/push/email). Defaults to in_app.")] = _IN_APP,
+    channel: Annotated[
+        str | None, Query(description="Filter by channel (in_app/push/email). Defaults to in_app.")
+    ] = _IN_APP,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[NotificationResponse]:
@@ -192,9 +195,7 @@ async def delete_notification(
     ).scalar_one_or_none()
     if not notif:
         raise HTTPException(status_code=404, detail=f"Notification {notification_id} not found")
-    was_unread_in_app = (
-        getattr(notif, "channel", _IN_APP) == _IN_APP and notif.opened_at is None
-    )
+    was_unread_in_app = getattr(notif, "channel", _IN_APP) == _IN_APP and notif.opened_at is None
     db.delete(notif)
     db.commit()
     if was_unread_in_app:
@@ -346,7 +347,9 @@ async def unsubscribe_execute(
     user_id, channel = result
     try:
         _apply_unsubscribe(user_id, channel, db)
-        return HTMLResponse(content=_unsub_page("You've been unsubscribed successfully.", success=True))
+        return HTMLResponse(
+            content=_unsub_page("You've been unsubscribed successfully.", success=True)
+        )
     except Exception as e:
         logger.error(f"Unsubscribe failed: {e}")
         db.rollback()

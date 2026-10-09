@@ -36,13 +36,22 @@ def _seed(db, user):
     db.flush()
     lst = WatchlistList(id=uuid4(), user_id=user.id, name="Groceries")
     entry = UserWatchlist(
-        id=uuid4(), user_id=user.id, list_id=lst.id, product_id=product.id,
-        target_price_cents=500, is_active=True,
+        id=uuid4(),
+        user_id=user.id,
+        list_id=lst.id,
+        product_id=product.id,
+        target_price_cents=500,
+        is_active=True,
     )
     report = PriceReport(
-        id=uuid4(), product_id=product.id, store_id=store.id,
-        price_cents=450, source="catalog_coles", reporter_user_id=None,
-        confidence=1.0, valid_from=date.today(),
+        id=uuid4(),
+        product_id=product.id,
+        store_id=store.id,
+        price_cents=450,
+        source="catalog_coles",
+        reporter_user_id=None,
+        confidence=1.0,
+        valid_from=date.today(),
     )
     db.add_all([lst, entry, report])
     db.commit()
@@ -104,10 +113,14 @@ def test_e2e_happy_path(authed_client, authed_user, test_db_session):
 def test_e2e_quiet_hours(test_db_session):
     """All-day quiet hours: push suppressed, email fires, in_app row created."""
     user = UserProfile(
-        id=uuid4(), firebase_uid="e2e_quiet", email="quiet@example.com",
+        id=uuid4(),
+        firebase_uid="e2e_quiet",
+        email="quiet@example.com",
         fcm_token="ExponentPushToken[e2e-quiet]",
-        notif_push_price_match=True, notif_email_price_match=True,
-        notif_quiet_hours_start=0, notif_quiet_hours_end=24,
+        notif_push_price_match=True,
+        notif_email_price_match=True,
+        notif_quiet_hours_start=0,
+        notif_quiet_hours_end=24,
     )
     test_db_session.add(user)
     test_db_session.flush()
@@ -130,9 +143,12 @@ def test_e2e_quiet_hours(test_db_session):
 def test_e2e_dedup(test_db_session):
     """Same trigger twice within 24 h → only one notification row created."""
     user = UserProfile(
-        id=uuid4(), firebase_uid="e2e_dedup", email="dedup@example.com",
+        id=uuid4(),
+        firebase_uid="e2e_dedup",
+        email="dedup@example.com",
         fcm_token="ExponentPushToken[e2e-dedup]",
-        notif_push_price_match=True, notif_email_price_match=False,
+        notif_push_price_match=True,
+        notif_email_price_match=False,
     )
     test_db_session.add(user)
     test_db_session.flush()
@@ -152,22 +168,28 @@ def test_e2e_dedup(test_db_session):
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize("override,exp_push,exp_email,exp_in_app,exp_status", [
-    (None,    1, 1, 1, "success"),
-    ("push",  1, 0, 1, "success"),
-    ("email", 0, 1, 1, "success"),
-    ("both",  1, 1, 1, "success"),
-    ("none",  0, 0, 0, "no_matches"),
-])
+@pytest.mark.parametrize(
+    "override,exp_push,exp_email,exp_in_app,exp_status",
+    [
+        (None, 1, 1, 1, "success"),
+        ("push", 1, 0, 1, "success"),
+        ("email", 0, 1, 1, "success"),
+        ("both", 1, 1, 1, "success"),
+        ("none", 0, 0, 0, "no_matches"),
+    ],
+)
 def test_e2e_channel_override(
     test_db_session, override, exp_push, exp_email, exp_in_app, exp_status
 ):
     """Per-list channel_override is enforced through actual worker execution."""
     uid_tag = str(override)
     user = UserProfile(
-        id=uuid4(), firebase_uid=f"e2e_ov_{uid_tag}", email=f"ov_{uid_tag}@example.com",
+        id=uuid4(),
+        firebase_uid=f"e2e_ov_{uid_tag}",
+        email=f"ov_{uid_tag}@example.com",
         fcm_token="ExponentPushToken[override]",
-        notif_push_price_match=True, notif_email_price_match=True,
+        notif_push_price_match=True,
+        notif_email_price_match=True,
     )
     test_db_session.add(user)
     test_db_session.flush()
@@ -193,9 +215,12 @@ def test_e2e_channel_override(
 def test_e2e_dedup_all_channels(test_db_session):
     """Dedup prevents push and email from dispatching a second time, not just in_app."""
     user = UserProfile(
-        id=uuid4(), firebase_uid="e2e_dedup_all", email="dedup_all@example.com",
+        id=uuid4(),
+        firebase_uid="e2e_dedup_all",
+        email="dedup_all@example.com",
         fcm_token="ExponentPushToken[e2e-dedup-all]",
-        notif_push_price_match=True, notif_email_price_match=True,
+        notif_push_price_match=True,
+        notif_email_price_match=True,
     )
     test_db_session.add(user)
     test_db_session.flush()
@@ -217,7 +242,9 @@ def test_e2e_dedup_all_channels(test_db_session):
 def test_e2e_push_payload(test_db_session):
     """Push payload notification_id matches in_app UUID; badge equals current unread count."""
     user = UserProfile(
-        id=uuid4(), firebase_uid="e2e_payload", email="payload@example.com",
+        id=uuid4(),
+        firebase_uid="e2e_payload",
+        email="payload@example.com",
         fcm_token="ExponentPushToken[e2e-payload]",
         notif_push_price_match=True,
     )
@@ -241,11 +268,7 @@ def test_e2e_push_payload(test_db_session):
     ):
         notification_tasks.check_watchlist_for_price.apply(args=[report_id])
 
-    in_app = (
-        test_db_session.query(Notification)
-        .filter_by(user_id=user.id, channel="in_app")
-        .one()
-    )
+    in_app = test_db_session.query(Notification).filter_by(user_id=user.id, channel="in_app").one()
     assert captured["data"]["notification_id"] == str(in_app.id)
     assert captured["badge"] == 1
 
@@ -257,7 +280,9 @@ def test_e2e_push_payload(test_db_session):
 def test_e2e_weekly_digest_sends(test_db_session):
     """Weekly digest task sends an email with on-sale items for an opted-in user."""
     user = UserProfile(
-        id=uuid4(), firebase_uid="e2e_digest_send", email="digest_send@example.com",
+        id=uuid4(),
+        firebase_uid="e2e_digest_send",
+        email="digest_send@example.com",
         notif_email_weekly_digest=True,
     )
     test_db_session.add(user)
@@ -270,12 +295,24 @@ def test_e2e_weekly_digest_sends(test_db_session):
 
     lst = WatchlistList(id=uuid4(), user_id=user.id, name="Weekly List")
     entry = UserWatchlist(
-        id=uuid4(), user_id=user.id, list_id=lst.id, product_id=product.id, is_active=True,
+        id=uuid4(),
+        user_id=user.id,
+        list_id=lst.id,
+        product_id=product.id,
+        is_active=True,
     )
     report = PriceReport(
-        id=uuid4(), product_id=product.id, store_id=store.id,
-        price_cents=300, was_price_cents=600, is_on_sale=True, sale_pct_off=50.0,
-        source="catalog_coles", reporter_user_id=None, confidence=1.0, valid_from=date.today(),
+        id=uuid4(),
+        product_id=product.id,
+        store_id=store.id,
+        price_cents=300,
+        was_price_cents=600,
+        is_on_sale=True,
+        sale_pct_off=50.0,
+        source="catalog_coles",
+        reporter_user_id=None,
+        confidence=1.0,
+        valid_from=date.today(),
     )
     test_db_session.add_all([lst, entry, report])
     test_db_session.commit()
@@ -309,7 +346,9 @@ def test_e2e_unsubscribe(test_client, test_db_session):
     from app.services.email_sender import generate_unsubscribe_token
 
     user = UserProfile(
-        id=uuid4(), firebase_uid="e2e_unsub", email="unsub@example.com",
+        id=uuid4(),
+        firebase_uid="e2e_unsub",
+        email="unsub@example.com",
         notif_email_price_match=True,
     )
     test_db_session.add(user)

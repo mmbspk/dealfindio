@@ -145,9 +145,7 @@ class TestResolveChannelsFallback:
 
 class TestChannelOverrideEndpoints:
     @pytest.mark.integration
-    def test_get_lists_returns_channel_override(
-        self, authed_client, authed_user, test_db_session
-    ):
+    def test_get_lists_returns_channel_override(self, authed_client, authed_user, test_db_session):
         """GET /watchlists/ returns channel_override in every list response."""
         from app.models.watchlist_list import WatchlistList
 
@@ -167,9 +165,7 @@ class TestChannelOverrideEndpoints:
         assert by_name["Normal"]["channel_override"] is None
 
     @pytest.mark.integration
-    def test_patch_sets_channel_override(
-        self, authed_client, authed_user, test_db_session
-    ):
+    def test_patch_sets_channel_override(self, authed_client, authed_user, test_db_session):
         """PATCH /watchlists/{id} persists channel_override to the database."""
         from app.models.watchlist_list import WatchlistList
 
@@ -211,9 +207,7 @@ class TestChannelOverrideEndpoints:
         assert lst.channel_override is None
 
     @pytest.mark.integration
-    def test_patch_preserves_unset_fields(
-        self, authed_client, authed_user, test_db_session
-    ):
+    def test_patch_preserves_unset_fields(self, authed_client, authed_user, test_db_session):
         """PATCH with only channel_override leaves name and emoji unchanged."""
         from app.models.watchlist_list import WatchlistList
 
@@ -237,9 +231,7 @@ class TestChannelOverrideEndpoints:
         assert lst.channel_override == "both"
 
     @pytest.mark.integration
-    def test_patch_another_users_list_returns_404(
-        self, authed_client, test_db_session
-    ):
+    def test_patch_another_users_list_returns_404(self, authed_client, test_db_session):
         """A user cannot PATCH a list they don't own."""
         from app.models import UserProfile
         from app.models.watchlist_list import WatchlistList
@@ -263,9 +255,7 @@ class TestChannelOverrideEndpoints:
         assert resp.status_code == 404
 
     @pytest.mark.integration
-    def test_create_list_with_channel_override(
-        self, authed_client, authed_user, test_db_session
-    ):
+    def test_create_list_with_channel_override(self, authed_client, authed_user, test_db_session):
         """POST /watchlists/ accepts and stores channel_override on creation."""
         resp = authed_client.post(
             "/api/v1/watchlist/",
@@ -277,9 +267,7 @@ class TestChannelOverrideEndpoints:
         assert data["name"] == "Push Only"
 
     @pytest.mark.integration
-    def test_patch_name_null_returns_422(
-        self, authed_client, authed_user, test_db_session
-    ):
+    def test_patch_name_null_returns_422(self, authed_client, authed_user, test_db_session):
         """PATCH with explicit name: null must return 422, not a DB error."""
         from app.models.watchlist_list import WatchlistList
 
@@ -436,20 +424,20 @@ class TestDigestPreferenceInheritance:
         captured_list_ids = {d["list_id"] for d in captured_deals}
 
         # ── Suppressed ──────────────────────────────────────────────────────
-        assert str(list_none.id) not in captured_list_ids, (
-            "channel_override='none' list should be excluded from digest"
-        )
-        assert str(list_push.id) not in captured_list_ids, (
-            "channel_override='push' list should be excluded from email digest"
-        )
+        assert (
+            str(list_none.id) not in captured_list_ids
+        ), "channel_override='none' list should be excluded from digest"
+        assert (
+            str(list_push.id) not in captured_list_ids
+        ), "channel_override='push' list should be excluded from email digest"
 
         # ── Included ────────────────────────────────────────────────────────
-        assert str(list_email.id) in captured_list_ids, (
-            "channel_override='email' list should appear in digest"
-        )
-        assert str(list_both.id) in captured_list_ids, (
-            "channel_override='both' list should appear in digest"
-        )
-        assert str(list_inherit.id) in captured_list_ids, (
-            "channel_override=None (inherit) list should appear in digest"
-        )
+        assert (
+            str(list_email.id) in captured_list_ids
+        ), "channel_override='email' list should appear in digest"
+        assert (
+            str(list_both.id) in captured_list_ids
+        ), "channel_override='both' list should appear in digest"
+        assert (
+            str(list_inherit.id) in captured_list_ids
+        ), "channel_override=None (inherit) list should appear in digest"

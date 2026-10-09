@@ -130,7 +130,9 @@ def _build_push_copy(
     return "Deal found", f"{p} at ${price_aud:.2f} at {s}"
 
 
-def _send_push(user: UserProfile, title: str, body: str, data: dict, badge: int | None = None) -> str | None:
+def _send_push(
+    user: UserProfile, title: str, body: str, data: dict, badge: int | None = None
+) -> str | None:
     """Send Expo push. Returns receipt_id or None. Synchronous (Celery task context)."""
     if not user.fcm_token:
         return None
@@ -314,7 +316,9 @@ def check_watchlist_for_price(self, price_report_id: str) -> NotificationResult:
                         body,
                         {
                             "product_id": str(price_report.product_id),
-                            "list_id": str(watchlist_item.list_id) if watchlist_item.list_id else None,
+                            "list_id": str(watchlist_item.list_id)
+                            if watchlist_item.list_id
+                            else None,
                             "notification_id": str(in_app_notif.id) if in_app_notif else None,
                             "store_id": str(price_report.store_id),
                             "price_cents": str(price_report.price_cents),
@@ -540,7 +544,9 @@ def notify_prediction_drops(self) -> NotificationResult:
                         body,
                         {
                             "product_id": str(watchlist_item.product_id),
-                            "list_id": str(watchlist_item.list_id) if watchlist_item.list_id else None,
+                            "list_id": str(watchlist_item.list_id)
+                            if watchlist_item.list_id
+                            else None,
                             "predicted_price_cents": str(prediction.predicted_price_cents),
                             "prediction_week": prediction.prediction_week.isoformat(),
                             "chain": prediction.chain or "",
@@ -756,9 +762,7 @@ def send_weekly_digest(self) -> dict:
                             else None,
                             "store_name": store.name if store else "Store",
                             "product_id": str(pid),
-                            "pct_off": round(report.sale_pct_off)
-                            if report.sale_pct_off
-                            else None,
+                            "pct_off": round(report.sale_pct_off) if report.sale_pct_off else None,
                             "list_id": list_key,
                             "list_name": lst.name if lst else None,
                             "list_emoji": lst.emoji if lst else None,

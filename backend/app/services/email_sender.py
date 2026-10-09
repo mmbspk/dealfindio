@@ -28,7 +28,7 @@ _RESEND_SEND_URL = "https://api.resend.com/emails"
 _UNSUBSCRIBE_SALT = "notif-unsubscribe"
 _UNSUBSCRIBE_MAX_AGE = 60 * 60 * 24 * 365  # 1 year
 _UNSUBSCRIBE_EMAIL = "unsubscribe@dealfindio.com.au"
-_DIGEST_SIZE_BUDGET = 80_000    # Rebuild digest without images if body HTML > 80 KB
+_DIGEST_SIZE_BUDGET = 80_000  # Rebuild digest without images if body HTML > 80 KB
 _EMAIL_CLIP_WARN_BYTES = 90_000  # Log warning if full email HTML > 90 KB
 
 
@@ -74,7 +74,9 @@ def _send_email(to: str, subject: str, html: str, unsubscribe_url: str | None = 
         return None
     size = len(html.encode())
     if size > _EMAIL_CLIP_WARN_BYTES:
-        logger.warning(f"Email to {to} is {size} bytes; may be clipped by Gmail (threshold {_EMAIL_CLIP_WARN_BYTES})")
+        logger.warning(
+            f"Email to {to} is {size} bytes; may be clipped by Gmail (threshold {_EMAIL_CLIP_WARN_BYTES})"
+        )
     payload: dict[str, Any] = {
         "from": f"{settings.EMAIL_FROM_NAME} <{settings.EMAIL_FROM_ADDRESS}>",
         "to": [to],

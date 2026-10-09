@@ -53,7 +53,9 @@ class TestSubjectLineLengths:
     )
     def test_short_product_name_within_50(self, trigger_type, pct):
         subject = _build_subject(trigger_type, _SHORT_PRODUCT, _PRICE, pct_off=pct)
-        assert len(subject) <= 50, f"{trigger_type!r} subject too long ({len(subject)}): {subject!r}"
+        assert (
+            len(subject) <= 50
+        ), f"{trigger_type!r} subject too long ({len(subject)}): {subject!r}"
 
     @pytest.mark.parametrize(
         "trigger_type,pct",
@@ -66,7 +68,9 @@ class TestSubjectLineLengths:
     )
     def test_long_product_name_truncated_within_50(self, trigger_type, pct):
         subject = _build_subject(trigger_type, _LONG_PRODUCT, _PRICE, pct_off=pct)
-        assert len(subject) <= 50, f"{trigger_type!r} subject too long ({len(subject)}): {subject!r}"
+        assert (
+            len(subject) <= 50
+        ), f"{trigger_type!r} subject too long ({len(subject)}): {subject!r}"
 
     def test_weekly_digest_subject_within_50(self):
         subject = "Your deals this week \U0001f6d2"
@@ -152,6 +156,7 @@ class TestPriceAlertEmailTemplate:
 
             with patch.object(httpx, "post", side_effect=capture_post):
                 from app.services import email_sender as es
+
                 # Reload settings inside the module via patching the module-level settings
                 original_settings = es.settings
                 es.settings = mock_settings.return_value
@@ -380,9 +385,9 @@ class TestDigestSizeGuard:
 
             import httpx
 
-            with patch.object(es, "_build_digest_content", side_effect=counting_build), patch.object(
-                httpx, "post", return_value=_mock_resend_ok()
-            ):
+            with patch.object(
+                es, "_build_digest_content", side_effect=counting_build
+            ), patch.object(httpx, "post", return_value=_mock_resend_ok()):
                 es.send_weekly_digest_email(
                     to="user@test.com",
                     user_id="user-1",

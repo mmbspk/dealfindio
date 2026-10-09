@@ -57,7 +57,7 @@ class TestUnreadCountEndpoint:
         uid = authed_user.id
         _make_notif(uid, "in_app", db=test_db_session)
         _make_notif(uid, "in_app", db=test_db_session)
-        _make_notif(uid, "push", db=test_db_session)   # must NOT count
+        _make_notif(uid, "push", db=test_db_session)  # must NOT count
         _make_notif(uid, "email", db=test_db_session)  # must NOT count
         test_db_session.commit()
 
@@ -445,9 +445,13 @@ class TestPushPayloadDeepLink:
         assert mock_badge.called
 
     @pytest.mark.integration
-    def test_delete_read_in_app_does_not_sync_badge(self, authed_client, authed_user, test_db_session):
+    def test_delete_read_in_app_does_not_sync_badge(
+        self, authed_client, authed_user, test_db_session
+    ):
         """Deleting an already-read in_app notification does NOT trigger badge sync."""
-        notif = _make_notif(authed_user.id, "in_app", opened_at=datetime.now(timezone.utc), db=test_db_session)
+        notif = _make_notif(
+            authed_user.id, "in_app", opened_at=datetime.now(timezone.utc), db=test_db_session
+        )
         test_db_session.commit()
 
         mock_badge = AsyncMock()

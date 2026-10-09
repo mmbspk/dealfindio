@@ -142,9 +142,10 @@ class TestEmailSizeGuard:
             with caplog.at_level(logging.WARNING, logger="app.services.email_sender"):
                 _send_email("u@e.com", "Subject", big_html)
 
-        assert any("clipped" in r.message or str(_EMAIL_CLIP_WARN_BYTES) in r.message for r in caplog.records), (
-            "Expected a clipping-warning log for oversized HTML"
-        )
+        assert any(
+            "clipped" in r.message or str(_EMAIL_CLIP_WARN_BYTES) in r.message
+            for r in caplog.records
+        ), "Expected a clipping-warning log for oversized HTML"
 
     def test_normal_html_does_not_log_warning(self, caplog):
         """HTML under 90 KB does not trigger any clip warning."""
