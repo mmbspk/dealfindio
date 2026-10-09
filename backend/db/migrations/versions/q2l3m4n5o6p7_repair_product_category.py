@@ -1,27 +1,31 @@
-"""Repair non-canonical Product.category values.
+"""Repair Product.category from ProductRetailerListing.external_category.
 
-Before this migration, `normalise_category()` had a verbatim fallback that
+Before this migration, ``normalise_category()`` had a verbatim fallback that
 returned the raw root string for unknown retailer categories.  This caused
 promotional/seasonal labels and unmapped retailer department names to leak
-into `products.category`.
+into ``products.category``.
 
-Known invalid values found in dev DB (2026-10-09):
-  Health & Dietary       1177  → "Health & Beauty"  (IGA top-level category)
-  Bonus Credit Products   616  → NULL  (promo label)
-  Halloween               291  → NULL  (seasonal layout)
-  Back to School          192  → NULL  (seasonal layout)
-  > GROCERIES             139  → NULL  (malformed — no root before " > ")
-  > LIQUOR                 30  → NULL
-  > GENERAL MERCHANDISE    14  → NULL
-  > PROPRIETARY BAKERY     13  → NULL
-  > FRESH CONVENIENCE       6  → NULL
-  Higher Protein Food…      3  → NULL  (unresolved Coles navigation section)
-  ─────────────────────────────────────────
-  Total invalid           2481
+This migration rebuilds ``Product.category`` from the canonical source of
+truth — ``ProductRetailerListing.external_category`` — using the same
+deterministic ordering rule as the runtime ``recompute_product_category()``:
 
-This migration re-normalises every product whose category is not in the
-canonical set, using a frozen copy of the updated CATEGORY_MAP.  Valid
-canonical categories are left untouched.
+    catalog_last_seen_at DESC NULLS LAST, id ASC
+
+The first listing per product whose ``external_category`` normalises to a
+canonical value becomes the new ``Product.category``.  Products with no
+listing rows, or no listing rows whose category maps to a canonical value,
+are set to NULL.
+
+NOTE on external_category population
+-------------------------------------
+As of Story #85, all ``product_retailer_listings.external_category`` rows are
+NULL because the ProductRetailerListing architecture was introduced before
+scrapers were updated to populate the column.  As a result this migration
+sets ``category = NULL`` for every product.  This is the correct outcome:
+the new architecture's invariant is "canonical category comes from listings;
+if listings have no category data, the product has no canonical category."
+When scrapers begin populating ``external_category``, the next ingest run
+will call ``recompute_product_category()`` and restore canonical values.
 
 Revision ID: q2l3m4n5o6p7
 Revises: p1k2l3m4n5o6
@@ -41,8 +45,8 @@ branch_labels = None
 depends_on = None
 
 # ── Frozen category map (self-contained — do not import from app.services) ──
-# This is a snapshot of CATEGORY_MAP as of Story #85.  The migration must
-# remain runnable even if the runtime map changes in future.
+# Snapshot of CATEGORY_MAP as of Story #85.  Must remain runnable even if the
+# runtime map changes in future.
 
 _FROZEN_CATEGORY_MAP: dict[str, Optional[str]] = {
     "Baby": "Baby",
@@ -200,39 +204,84 @@ def _frozen_normalise(raw: Optional[str]) -> Optional[str]:
     return None
 
 
+def _derive_categories_from_listing_rows(
+    rows: list[tuple],
+) -> dict:
+    """Given listing rows (product_id, external_category) ordered by
+    (product_id, catalog_last_seen_at DESC NULLS LAST, id ASC), return
+    {product_id: canonical_category} for each product_id that has at least
+    one listing whose category maps to a canonical value.
+
+    Products not present in the returned dict have no canonical category
+    and should be set to NULL.
+    """
+    result: dict = {}
+    for product_id, raw_cat in rows:
+        if product_id in result:
+            continue  # already found best canonical for this product
+        canonical = _frozen_normalise(raw_cat)
+        if canonical is not None:
+            result[product_id] = canonical
+    return result
+
+
 def upgrade() -> None:
     conn = op.get_bind()
 
-    # Fetch all products with a non-null, non-canonical category.
-    rows = conn.execute(
+    # Step 1: Fetch all listing rows with non-NULL external_category.
+    # Ordered so the first row per product_id is the best candidate
+    # (newest timestamp, lowest id for equal timestamps).
+    listing_rows = conn.execute(
         text(
-            "SELECT id, category FROM products "
-            "WHERE category IS NOT NULL"
+            """
+            SELECT product_id, external_category
+            FROM product_retailer_listings
+            WHERE external_category IS NOT NULL
+            ORDER BY product_id,
+                     catalog_last_seen_at DESC NULLS LAST,
+                     id ASC
+            """
         )
     ).fetchall()
 
+    # Step 2: Derive best canonical category per product from listings.
+    listing_categories = _derive_categories_from_listing_rows(listing_rows)
+
+    # Step 3: Fetch all products, compute updates.
+    product_rows = conn.execute(text("SELECT id, category FROM products")).fetchall()
+
+    updates = []
     changed = 0
-    nulled = 0
-    remapped = 0
+    unchanged = 0
 
-    for product_id, current_category in rows:
-        if current_category in _CANONICAL_SET:
-            continue  # already valid — do not touch
+    for product_id, current_category in product_rows:
+        new_category = listing_categories.get(product_id)
+        if new_category != current_category:
+            updates.append({"id": product_id, "cat": new_category})
+            changed += 1
+        else:
+            unchanged += 1
 
-        new_category = _frozen_normalise(current_category)
+    # Step 4: Apply updates in a single executemany call.
+    if updates:
         conn.execute(
             text("UPDATE products SET category = :cat WHERE id = :id"),
-            {"cat": new_category, "id": product_id},
+            updates,
         )
-        changed += 1
-        if new_category is None:
-            nulled += 1
-        else:
-            remapped += 1
+
+    # Step 5: Count post-repair state for reporting.
+    post_rows = conn.execute(
+        text("SELECT category, COUNT(*) FROM products GROUP BY category")
+    ).fetchall()
+    canonical_count = sum(r[1] for r in post_rows if r[0] in _CANONICAL_SET)
+    null_count = sum(r[1] for r in post_rows if r[0] is None)
+    invalid_count = sum(r[1] for r in post_rows if r[0] is not None and r[0] not in _CANONICAL_SET)
 
     print(
-        f"[q2l3m4n5o6p7] category repair: {changed} rows changed "
-        f"({remapped} remapped, {nulled} → NULL)"
+        f"[q2l3m4n5o6p7] listing-backed category repair: "
+        f"{changed} changed, {unchanged} unchanged | "
+        f"post-repair: {canonical_count} canonical, {null_count} NULL, "
+        f"{invalid_count} invalid"
     )
 
 

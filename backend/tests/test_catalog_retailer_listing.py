@@ -1040,141 +1040,134 @@ class TestCategoryNormOnIngest:
 
 
 class TestCategoryRepairMigration:
-    """Tests for the frozen normaliser and migration logic in q2l3m4n5o6p7."""
+    """Unit tests for _derive_categories_from_listing_rows in q2l3m4n5o6p7.
+
+    Rows passed to the helper are pre-ordered by
+    (product_id, catalog_last_seen_at DESC NULLS LAST, id ASC) — exactly as
+    the SQL query in upgrade() emits them.
+    """
 
     @pytest.mark.unit
-    def test_known_invalid_remapped(self):
-        """Health & Dietary → Health & Beauty via migration frozen map."""
+    def test_oldest_valid_listing_used_when_newest_unknown(self):
+        """Newest listing is unknown; older listing "Pantry > GROCERIES" yields Pantry."""
         from db.migrations.versions.q2l3m4n5o6p7_repair_product_category import (
-            _frozen_normalise,
+            _derive_categories_from_listing_rows,
         )
 
-        assert _frozen_normalise("Health & Dietary") == "Health & Beauty"
+        pid = uuid4()
+        # newest-first: Unknown (→ None), then older: Pantry > GROCERIES (→ Pantry)
+        rows = [
+            (pid, "Unknown Category"),
+            (pid, "Pantry > GROCERIES"),
+        ]
+        result = _derive_categories_from_listing_rows(rows)
+        assert result[pid] == "Pantry"
 
     @pytest.mark.unit
-    def test_promo_labels_become_none(self):
+    def test_listing_data_overrides_existing_product_category(self):
+        """Listings resolve to Frozen; product previously had Pantry — result is Frozen."""
         from db.migrations.versions.q2l3m4n5o6p7_repair_product_category import (
-            _frozen_normalise,
+            _derive_categories_from_listing_rows,
         )
 
-        assert _frozen_normalise("Bonus Credit Products") is None
-        assert _frozen_normalise("Halloween") is None
-        assert _frozen_normalise("Back to School") is None
-        assert _frozen_normalise("Higher Protein Food and Drink") is None
+        pid = uuid4()
+        rows = [
+            (pid, "Frozen"),  # newest listing → Frozen
+            (pid, "Pantry"),  # older listing
+        ]
+        result = _derive_categories_from_listing_rows(rows)
+        assert result[pid] == "Frozen"
 
     @pytest.mark.unit
-    def test_malformed_becomes_none(self):
+    def test_no_recognized_listing_category_absent_from_result(self):
+        """Product with only unrecognised listings is absent — category becomes NULL."""
         from db.migrations.versions.q2l3m4n5o6p7_repair_product_category import (
-            _frozen_normalise,
+            _derive_categories_from_listing_rows,
         )
 
-        assert _frozen_normalise("> GROCERIES") is None
-        assert _frozen_normalise("> LIQUOR") is None
-        assert _frozen_normalise("> GENERAL MERCHANDISE") is None
+        pid = uuid4()
+        rows = [
+            (pid, "Unknown A"),
+            (pid, None),
+            (pid, "Unknown B"),
+        ]
+        result = _derive_categories_from_listing_rows(rows)
+        assert pid not in result
 
     @pytest.mark.unit
-    def test_valid_canonical_passes_through(self):
+    def test_equal_timestamps_id_asc_tiebreak(self):
+        """With equal timestamps SQL orders by id ASC — first row in result wins."""
         from db.migrations.versions.q2l3m4n5o6p7_repair_product_category import (
-            _frozen_normalise,
+            _derive_categories_from_listing_rows,
         )
 
-        assert _frozen_normalise("Pantry") == "Pantry"
-        assert _frozen_normalise("Ready Meals") == "Ready Meals"
-        assert _frozen_normalise("Frozen") == "Frozen"
+        pid = uuid4()
+        # Two listings with equal catalog_last_seen_at; lower id comes first per id ASC.
+        # Lower id has external_category "Frozen" → that should win.
+        rows = [
+            (pid, "Frozen"),  # lower id (id ASC → first)
+            (pid, "Pantry"),  # higher id
+        ]
+        result = _derive_categories_from_listing_rows(rows)
+        assert result[pid] == "Frozen"
 
-    @pytest.mark.integration
-    def test_repair_idempotent(self, test_db_session: Session):
-        """Running repair twice produces the same result."""
-        product = Product(id=uuid4(), name="Idempotent Product", category="Halloween")
-        test_db_session.add(product)
-        test_db_session.commit()
+    @pytest.mark.unit
+    def test_idempotent_same_listing_data(self):
+        """Calling the helper twice with identical rows produces identical output."""
+        from db.migrations.versions.q2l3m4n5o6p7_repair_product_category import (
+            _derive_categories_from_listing_rows,
+        )
 
+        pid1, pid2 = uuid4(), uuid4()
+        rows = [
+            (pid1, "Pantry > GROCERIES"),
+            (pid2, "Frozen"),
+        ]
+        result1 = _derive_categories_from_listing_rows(rows)
+        result2 = _derive_categories_from_listing_rows(rows)
+        assert result1 == result2
+
+    @pytest.mark.unit
+    def test_all_derived_values_are_canonical(self):
+        """Every value in the result dict is a member of _CANONICAL_SET."""
         from db.migrations.versions.q2l3m4n5o6p7_repair_product_category import (
             _CANONICAL_SET,
-            _frozen_normalise,
+            _derive_categories_from_listing_rows,
         )
 
-        def apply_repair(session):
-            rows = (
-                session.execute(select(Product).where(Product.category.notin_(_CANONICAL_SET)))
-                .scalars()
-                .all()
-            )
-            for p in rows:
-                p.category = _frozen_normalise(p.category)
-            session.commit()
-
-        apply_repair(test_db_session)
-        test_db_session.refresh(product)
-        assert product.category is None
-
-        apply_repair(test_db_session)
-        test_db_session.refresh(product)
-        assert product.category is None  # no change on second run
-
-    @pytest.mark.integration
-    def test_valid_categories_untouched(self, test_db_session: Session):
-        """Valid canonical categories are not modified by repair."""
-        product = Product(id=uuid4(), name="Valid Category Product", category="Pantry")
-        test_db_session.add(product)
-        test_db_session.commit()
-
-        from db.migrations.versions.q2l3m4n5o6p7_repair_product_category import (
-            _CANONICAL_SET,
-            _frozen_normalise,
-        )
-
-        if product.category not in _CANONICAL_SET:
-            product.category = _frozen_normalise(product.category)
-            test_db_session.commit()
-
-        test_db_session.refresh(product)
-        assert product.category == "Pantry"
-
-    @pytest.mark.integration
-    def test_post_repair_no_invalid_categories(self, test_db_session: Session):
-        """After repair, no non-null category outside CANONICAL_CATEGORIES remains."""
-        invalids = ["Halloween", "Back to School", "> GROCERIES", "Health & Dietary"]
-        for i, cat in enumerate(invalids):
-            test_db_session.add(Product(id=uuid4(), name=f"Bad Cat {i}", category=cat))
-        test_db_session.commit()
-
-        from db.migrations.versions.q2l3m4n5o6p7_repair_product_category import (
-            _CANONICAL_SET,
-            _frozen_normalise,
-        )
-
-        rows = (
-            test_db_session.execute(select(Product).where(Product.category.notin_(_CANONICAL_SET)))
-            .scalars()
-            .all()
-        )
-        for p in rows:
-            p.category = _frozen_normalise(p.category)
-        test_db_session.commit()
-
-        remaining_invalid = test_db_session.execute(
-            select(func.count(Product.id)).where(
-                Product.category.isnot(None),
-                Product.category.notin_(list(_CANONICAL_SET)),
-            )
-        ).scalar()
-        assert remaining_invalid == 0
+        pids = [uuid4() for _ in range(5)]
+        rows = [
+            (pids[0], "Pantry > GROCERIES"),
+            (pids[1], "Frozen"),
+            (pids[2], "Baby > GENERAL MERCHANDISE"),
+            (pids[3], "Fruit & Veg > FRUIT AND VEG"),
+            (pids[4], "Poultry, Meat & Seafood"),
+        ]
+        result = _derive_categories_from_listing_rows(rows)
+        assert len(result) == 5
+        for pid in pids:
+            assert result[pid] in _CANONICAL_SET
 
 
 # ── Diagnostic tests ──────────────────────────────────────────────────────────
 
 
 class TestUnmappedCategoryDiagnostic:
-    """Tests for the get_unmapped_categories admin endpoint logic."""
+    """Tests for the get_unmapped_categories admin endpoint logic.
+
+    The endpoint uses is_unmapped_category() to exclude known-but-None entries
+    (e.g. "Halloween") from the report, surfacing only categories with no
+    knowledge in CATEGORY_MAP at all.
+    """
 
     @pytest.mark.integration
-    def test_known_mapped_category_excluded(self, test_db_session: Session):
-        """Categories that normalise to a canonical value are NOT returned."""
+    def test_known_mapped_category_not_reported(self, test_db_session: Session):
+        """A listing with a canonical category is NOT flagged as unmapped."""
+        from app.services.category_normaliser import is_unmapped_category
+
         product = Product(id=uuid4(), name="Mapped Cat Product")
         test_db_session.add(product)
         test_db_session.flush()
-
         listing = ProductRetailerListing(
             product_id=product.id,
             chain="coles",
@@ -1189,17 +1182,40 @@ class TestUnmappedCategoryDiagnostic:
         test_db_session.add(listing)
         test_db_session.commit()
 
-        from app.services.category_normaliser import normalise_category
-
-        assert normalise_category("Pantry") == "Pantry"
+        assert is_unmapped_category("Pantry") is False
 
     @pytest.mark.integration
-    def test_unknown_category_detected(self, test_db_session: Session):
-        """An external_category that maps to None IS reported as unmapped."""
+    def test_known_none_category_not_reported(self, test_db_session: Session):
+        """A known-but-intentionally-None listing (e.g. Halloween) is NOT flagged."""
+        from app.services.category_normaliser import is_unmapped_category
+
+        product = Product(id=uuid4(), name="Halloween Product")
+        test_db_session.add(product)
+        test_db_session.flush()
+        listing = ProductRetailerListing(
+            product_id=product.id,
+            chain="coles",
+            external_id="DIAG-HALLOW",
+            external_source="catalog_coles",
+            external_name="Halloween Product",
+            external_category="Halloween",
+            in_stock=True,
+            is_online_only=False,
+            catalog_last_seen_at=datetime.now(timezone.utc),
+        )
+        test_db_session.add(listing)
+        test_db_session.commit()
+
+        assert is_unmapped_category("Halloween") is False
+
+    @pytest.mark.integration
+    def test_genuinely_unknown_category_reported(self, test_db_session: Session):
+        """A listing with a category unknown to CATEGORY_MAP IS flagged."""
+        from app.services.category_normaliser import is_unmapped_category
+
         product = Product(id=uuid4(), name="Unknown Cat Product")
         test_db_session.add(product)
         test_db_session.flush()
-
         listing = ProductRetailerListing(
             product_id=product.id,
             chain="drakes",
@@ -1214,6 +1230,60 @@ class TestUnmappedCategoryDiagnostic:
         test_db_session.add(listing)
         test_db_session.commit()
 
-        from app.services.category_normaliser import normalise_category
+        assert is_unmapped_category("Future Category XYZ") is True
 
-        assert normalise_category("Future Category XYZ") is None
+    @pytest.mark.integration
+    def test_chain_count_grouping(self, test_db_session: Session):
+        """Grouping by chain correctly counts genuinely unknown categories."""
+        from sqlalchemy import text
+
+        from app.services.category_normaliser import is_unmapped_category
+
+        pid1, pid2, pid3 = uuid4(), uuid4(), uuid4()
+        for pid, name in [(pid1, "P1"), (pid2, "P2"), (pid3, "P3")]:
+            test_db_session.add(Product(id=pid, name=name))
+        test_db_session.flush()
+
+        listings = [
+            ("coles", "GRP-C1", "Future Category XYZ"),  # genuinely unknown
+            ("coles", "GRP-C2", "Another Unknown Cat"),  # genuinely unknown
+            ("drakes", "GRP-D1", "Halloween"),  # known-but-None → excluded
+        ]
+        pids = [pid1, pid2, pid3]
+        for (chain, ext_id, cat), pid in zip(listings, pids, strict=False):
+            test_db_session.add(
+                ProductRetailerListing(
+                    product_id=pid,
+                    chain=chain,
+                    external_id=ext_id,
+                    external_source=f"catalog_{chain}",
+                    external_name="Test Product",
+                    external_category=cat,
+                    in_stock=True,
+                    is_online_only=False,
+                    catalog_last_seen_at=datetime.now(timezone.utc),
+                )
+            )
+        test_db_session.commit()
+
+        # Replicate the endpoint's query logic: group by chain + external_category,
+        # then filter by is_unmapped_category.
+        rows = test_db_session.execute(
+            text(
+                """
+                SELECT chain, external_category, COUNT(*) AS cnt
+                FROM product_retailer_listings
+                WHERE external_category IS NOT NULL
+                  AND external_id IN ('GRP-C1', 'GRP-C2', 'GRP-D1')
+                GROUP BY chain, external_category
+                ORDER BY chain, external_category
+                """
+            )
+        ).fetchall()
+
+        unmapped = [(r[0], r[1], r[2]) for r in rows if is_unmapped_category(r[1])]
+
+        assert len(unmapped) == 2
+        chains = {r[0] for r in unmapped}
+        assert chains == {"coles"}
+        assert all(r[2] == 1 for r in unmapped)

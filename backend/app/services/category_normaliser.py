@@ -212,3 +212,27 @@ def normalise_category(raw: str | None) -> str | None:
         return CATEGORY_MAP[root]
 
     return None
+
+
+def is_unmapped_category(raw: str | None) -> bool:
+    """Return True if raw is a genuinely unknown retailer category.
+
+    A category is *known* when:
+    - it is an exact key in CATEGORY_MAP (even if the mapped value is None), OR
+    - its root (before " > ") is an exact key in CATEGORY_MAP.
+
+    Known-but-intentionally-None entries (e.g. "Halloween", "Back to School")
+    are NOT reported as unmapped — they are recognised and deliberately discarded.
+    Only categories the map has no knowledge of at all return True.
+    """
+    if not raw:
+        return False
+    raw = raw.strip()
+    if not raw:
+        return False
+    if raw in CATEGORY_MAP:
+        return False
+    root = raw.split(" > ")[0].strip()
+    if root in CATEGORY_MAP:
+        return False
+    return True

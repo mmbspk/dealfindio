@@ -1,19 +1,19 @@
 """
-Unit tests for category_normaliser.normalise_category.
+Unit tests for category_normaliser.
 
-Verifies:
-- Known exact mappings
-- Root-only matching (strip " > SUFFIX")
-- Unknown categories → None (never returned verbatim)
-- Promotional / layout labels → None
-- Empty / null input → None
-- Closed-set invariant: every non-None result is in CANONICAL_CATEGORIES
-- All new CATEGORY_MAP additions introduced in Story #85
+Covers:
+- normalise_category(): exact mappings, root-strip, unknown → None, promos, null/empty,
+  closed-set invariant
+- is_unmapped_category(): genuinely unknown vs known-but-None entries, root matching
 """
 
 import pytest
 
-from app.services.category_normaliser import CANONICAL_CATEGORIES, normalise_category
+from app.services.category_normaliser import (
+    CANONICAL_CATEGORIES,
+    is_unmapped_category,
+    normalise_category,
+)
 
 
 class TestKnownExactMappings:
@@ -187,3 +187,53 @@ class TestClosedSetInvariant:
             "Vitamins & Supplements",
         }
         assert CANONICAL_CATEGORIES == expected
+
+
+class TestIsUnmappedCategory:
+    """is_unmapped_category() distinguishes genuinely unknown from known-but-None."""
+
+    @pytest.mark.unit
+    def test_genuinely_unknown_returns_true(self):
+        assert is_unmapped_category("Future Category XYZ") is True
+        assert is_unmapped_category("Staff Picks") is True
+        assert is_unmapped_category("New Arrivals") is True
+
+    @pytest.mark.unit
+    def test_known_none_entries_return_false(self):
+        # Explicitly mapped to None — known and intentionally discarded.
+        assert is_unmapped_category("Halloween") is False
+        assert is_unmapped_category("Bonus Credit Products") is False
+        assert is_unmapped_category("Back to School") is False
+        assert is_unmapped_category("Specials") is False
+        assert is_unmapped_category("Christmas") is False
+        assert is_unmapped_category("Other") is False
+
+    @pytest.mark.unit
+    def test_canonical_mapped_entries_return_false(self):
+        assert is_unmapped_category("Pantry") is False
+        assert is_unmapped_category("Frozen") is False
+        assert is_unmapped_category("Baby") is False
+
+    @pytest.mark.unit
+    def test_recognized_root_with_arbitrary_suffix_returns_false(self):
+        # "Pantry > UNKNOWN_SECTION" — root "Pantry" is in CATEGORY_MAP.
+        assert is_unmapped_category("Pantry > UNKNOWN_SECTION") is False
+        assert is_unmapped_category("Frozen > SOME_NEW_DEPT") is False
+        assert is_unmapped_category("Pet > EXOTIC_SECTION") is False
+
+    @pytest.mark.unit
+    def test_malformed_leading_arrow_returns_true(self):
+        # "> GROCERIES" — root is "" (empty), not in CATEGORY_MAP.
+        assert is_unmapped_category("> GROCERIES") is True
+        assert is_unmapped_category("> LIQUOR") is True
+
+    @pytest.mark.unit
+    def test_empty_and_none_return_false(self):
+        assert is_unmapped_category(None) is False
+        assert is_unmapped_category("") is False
+        assert is_unmapped_category("   ") is False
+
+    @pytest.mark.unit
+    def test_higher_protein_known_none_returns_false(self):
+        # Explicitly mapped to None as unresolved in Story #85.
+        assert is_unmapped_category("Higher Protein Food and Drink") is False

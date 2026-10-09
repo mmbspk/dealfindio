@@ -676,14 +676,18 @@ def get_unmapped_categories(
     db: Session = Depends(get_db),
     _admin=Depends(require_admin),
 ) -> list[UnmappedCategoryRow]:
-    """Return external_category values that do not map to any canonical category.
+    """Return external_category values that are genuinely unknown to CATEGORY_MAP.
 
-    Groups by (chain, external_category) and returns only rows where
-    normalise_category(external_category) is None, ordered by count descending.
+    Groups by (chain, external_category) and returns only rows where the category
+    is not an exact key in CATEGORY_MAP and its root is not a key either.
+    Known-but-intentionally-None entries (e.g. "Halloween", "Specials") are
+    excluded — they are recognised as promo/layout labels and deliberately
+    discarded.  Only categories the normaliser has no knowledge of at all are
+    returned, ordered by count descending.
     Use this to detect new or mis-labelled retailer categories before they
     silently affect Product.category.
     """
-    from app.services.category_normaliser import normalise_category
+    from app.services.category_normaliser import is_unmapped_category
 
     rows = db.execute(
         text(
@@ -700,7 +704,7 @@ def get_unmapped_categories(
     return [
         UnmappedCategoryRow(chain=r[0], raw_category=r[1], count=r[2])
         for r in rows
-        if normalise_category(r[1]) is None
+        if is_unmapped_category(r[1])
     ]
 
 
