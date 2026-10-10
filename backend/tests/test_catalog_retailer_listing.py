@@ -799,3 +799,633 @@ class TestPackageSizeNormCanonicalOrdering:
 
         norm = recompute_product_package_size_norm(test_db_session, product.id)
         assert norm == expected_norm
+
+
+# ── Category canonical projection tests ──────────────────────────────────────
+
+
+class TestCategoryNormOnIngest:
+    """Integration tests: Product.category is derived from listings, never verbatim."""
+
+    @pytest.mark.integration
+    def test_A_new_product_with_known_category(self, test_db_session: Session):
+        """A. Product created with a recognized raw category → canonical category set."""
+        cp = _cp("Orange Juice 1L", external_id="OJ-COLES-A", category="Drinks > GROCERIES")
+        ingest_catalog_products([cp], "coles", test_db_session)
+        test_db_session.commit()
+
+        product = test_db_session.execute(
+            select(Product).where(Product.name == "Orange Juice 1L")
+        ).scalar_one()
+        assert product.category == "Drinks"
+
+    @pytest.mark.integration
+    def test_B_new_product_with_unknown_category_is_none(self, test_db_session: Session):
+        """B. Product created with an unknown raw category → category is None, raw preserved."""
+        cp = _cp(
+            "Mystery Item B",
+            external_id="MYS-B",
+            category="Staff Picks",
+        )
+        ingest_catalog_products([cp], "coles", test_db_session)
+        test_db_session.commit()
+
+        product = test_db_session.execute(
+            select(Product).where(Product.name == "Mystery Item B")
+        ).scalar_one()
+        assert product.category is None
+
+        listing = test_db_session.execute(
+            select(ProductRetailerListing).where(ProductRetailerListing.external_id == "MYS-B")
+        ).scalar_one()
+        assert listing.external_category == "Staff Picks"
+
+    @pytest.mark.integration
+    def test_C_older_known_beats_newer_unknown(self, test_db_session: Session):
+        """C. Product has older recognized listing + newer unknown listing → recognized wins."""
+        from datetime import timedelta
+
+        product = Product(id=uuid4(), name="Bread C")
+        test_db_session.add(product)
+        test_db_session.flush()
+
+        past = datetime.now(timezone.utc) - timedelta(days=5)
+        future = datetime.now(timezone.utc)
+
+        older_known = ProductRetailerListing(
+            product_id=product.id,
+            chain="coles",
+            external_id="BR-C-COLES",
+            external_source="catalog_coles",
+            external_name="Bread C",
+            external_category="Bakery",
+            in_stock=True,
+            is_online_only=False,
+            catalog_last_seen_at=past,
+        )
+        newer_unknown = ProductRetailerListing(
+            product_id=product.id,
+            chain="woolworths",
+            external_id="BR-C-WW",
+            external_source="catalog_woolworths",
+            external_name="Bread C",
+            external_category="Staff Picks",
+            in_stock=True,
+            is_online_only=False,
+            catalog_last_seen_at=future,
+        )
+        test_db_session.add_all([older_known, newer_unknown])
+        test_db_session.commit()
+
+        from app.services.catalog_ingest import recompute_product_category
+
+        cat = recompute_product_category(test_db_session, product.id)
+        # "Staff Picks" → None (unknown); "Bakery" → "Bakery"
+        assert cat == "Bakery"
+
+    @pytest.mark.integration
+    def test_D_conflicting_known_categories_newest_wins(self, test_db_session: Session):
+        """D. Two recognized listings → newest catalog_last_seen_at wins."""
+        from datetime import timedelta
+
+        product = Product(id=uuid4(), name="Sauce D")
+        test_db_session.add(product)
+        test_db_session.flush()
+
+        old_ts = datetime.now(timezone.utc) - timedelta(days=7)
+        new_ts = datetime.now(timezone.utc)
+
+        older = ProductRetailerListing(
+            product_id=product.id,
+            chain="coles",
+            external_id="SC-D-COLES",
+            external_source="catalog_coles",
+            external_name="Sauce D",
+            external_category="Pantry",
+            in_stock=True,
+            is_online_only=False,
+            catalog_last_seen_at=old_ts,
+        )
+        newer = ProductRetailerListing(
+            product_id=product.id,
+            chain="woolworths",
+            external_id="SC-D-WW",
+            external_source="catalog_woolworths",
+            external_name="Sauce D",
+            external_category="Deli & Fresh",
+            in_stock=True,
+            is_online_only=False,
+            catalog_last_seen_at=new_ts,
+        )
+        test_db_session.add_all([older, newer])
+        test_db_session.commit()
+
+        from app.services.catalog_ingest import recompute_product_category
+
+        cat = recompute_product_category(test_db_session, product.id)
+        assert cat == "Deli & Fresh"
+
+    @pytest.mark.integration
+    def test_E_equal_timestamps_id_asc_tiebreak(self, test_db_session: Session):
+        """E. Equal timestamps → id ASC is the deterministic tie-breaker.
+
+        Flush both listings, inspect actual DB-assigned UUIDs, derive the
+        expected winner from id ordering — never assume insertion order.
+        """
+        product = Product(id=uuid4(), name="Chips E Cat")
+        test_db_session.add(product)
+        test_db_session.flush()
+
+        ts = datetime.now(timezone.utc)
+
+        listing_a = ProductRetailerListing(
+            product_id=product.id,
+            chain="coles",
+            external_id="CE-CAT-COLES",
+            external_source="catalog_coles",
+            external_name="Chips E Cat",
+            external_category="Pantry",
+            in_stock=True,
+            is_online_only=False,
+            catalog_last_seen_at=ts,
+        )
+        listing_b = ProductRetailerListing(
+            product_id=product.id,
+            chain="woolworths",
+            external_id="CE-CAT-WW",
+            external_source="catalog_woolworths",
+            external_name="Chips E Cat",
+            external_category="Snacks & Confectionery",
+            in_stock=True,
+            is_online_only=False,
+            catalog_last_seen_at=ts,
+        )
+        test_db_session.add_all([listing_a, listing_b])
+        test_db_session.flush()
+
+        expected = "Pantry" if listing_a.id < listing_b.id else "Pantry"
+        # Both map to Pantry so result is Pantry regardless of id ordering.
+        # Use different mappings to make the test meaningful.
+        # Reassign to force a difference:
+        listing_a.external_category = "Bakery"  # maps to Bakery
+        listing_b.external_category = "Frozen"  # maps to Frozen
+        test_db_session.flush()
+        expected = "Bakery" if listing_a.id < listing_b.id else "Frozen"
+
+        test_db_session.commit()
+
+        from app.services.catalog_ingest import recompute_product_category
+
+        cat = recompute_product_category(test_db_session, product.id)
+        assert cat == expected
+
+    @pytest.mark.integration
+    def test_F_stale_invalid_category_self_corrects_on_ingest(self, test_db_session: Session):
+        """F. Product has stale invalid category; next ingest with known category corrects it.
+
+        Sets up via ingest (so listing exists and product is matched by listing),
+        corrupts product.category directly, then re-ingests and checks it heals.
+        """
+        # First ingest: creates product + listing with a known category
+        cp = _cp("Promo Item F", external_id="PI-F", category="Pantry > GROCERIES")
+        ingest_catalog_products([cp], "coles", test_db_session)
+        test_db_session.commit()
+
+        product = test_db_session.execute(
+            select(Product).where(Product.name == "Promo Item F")
+        ).scalar_one()
+        assert product.category == "Pantry"
+
+        # Corrupt the canonical category (simulates old verbatim-fallback ingest)
+        product.category = "Halloween"
+        test_db_session.commit()
+
+        # Re-ingest same SKU: recompute from existing listing must self-correct
+        ingest_catalog_products([cp], "coles", test_db_session)
+        test_db_session.commit()
+
+        test_db_session.refresh(product)
+        assert product.category == "Pantry"
+
+    @pytest.mark.integration
+    def test_G_recompute_heals_when_mapping_added(self, test_db_session: Session):
+        """G. Simulate: listing has external_category that now maps (after map update).
+        recompute_product_category returns the new canonical value.
+        """
+        product = Product(id=uuid4(), name="Health Item G")
+        test_db_session.add(product)
+        test_db_session.flush()
+
+        listing = ProductRetailerListing(
+            product_id=product.id,
+            chain="iga",
+            external_id="HI-G",
+            external_source="catalog_iga",
+            external_name="Health Item G",
+            external_category="Health & Dietary",
+            in_stock=True,
+            is_online_only=False,
+            catalog_last_seen_at=datetime.now(timezone.utc),
+        )
+        test_db_session.add(listing)
+        test_db_session.commit()
+
+        from app.services.catalog_ingest import recompute_product_category
+
+        cat = recompute_product_category(test_db_session, product.id)
+        assert cat == "Health & Beauty"
+
+    @pytest.mark.integration
+    def test_H_existing_canonical_preserved_when_listing_has_no_category(
+        self, test_db_session: Session
+    ):
+        """Scenario 6/H. Existing Product.category='Pantry' is preserved when a new
+        listing ingest has no recognisable external_category (transitional compat rule).
+        """
+        chain = "woolworths"
+        # First ingest: listing has a known category → product.category = "Pantry"
+        cp_first = _cp(
+            "Oat Biscuits 250g",
+            external_id="WW-BISCUIT-H",
+            category="Pantry",
+        )
+        ingest_catalog_products([cp_first], chain, test_db_session)
+        test_db_session.commit()
+
+        from app.models import ProductRetailerListing
+
+        listing = test_db_session.execute(
+            select(ProductRetailerListing).where(
+                ProductRetailerListing.external_id == "WW-BISCUIT-H"
+            )
+        ).scalar_one()
+        product = test_db_session.get(Product, listing.product_id)
+        assert product.category == "Pantry"
+
+        # Corrupt the listing's external_category to NULL (simulates pre-column-backfill)
+        listing.external_category = None
+        test_db_session.commit()
+
+        # Second ingest: unknown category → listing has unknown external_category
+        # With the transitional rule, valid existing canonical must be preserved.
+        cp_second = _cp(
+            "Oat Biscuits 250g",
+            external_id="WW-BISCUIT-H",
+            category="Unknown New Section",  # unknown → normalise_category returns None
+        )
+        ingest_catalog_products([cp_second], chain, test_db_session)
+        test_db_session.commit()
+
+        test_db_session.refresh(product)
+        # listing.external_category was updated to "Unknown New Section" by _refresh_listing_metadata.
+        # recompute returns None (no canonical listing evidence).
+        # Transitional rule: valid canonical "Pantry" must NOT be erased.
+        assert product.category == "Pantry"
+
+    @pytest.mark.integration
+    def test_I_listing_canonical_takes_authority_once_populated(self, test_db_session: Session):
+        """Scenario 7/I. Once a recognized listing category appears, it overrides
+        the product's previous canonical category.
+        """
+        chain = "coles"
+        # First ingest: unknown category → product.category = None
+        cp_first = _cp(
+            "Almond Milk 1L",
+            external_id="COLES-ALMILK-I",
+            category=None,
+        )
+        ingest_catalog_products([cp_first], chain, test_db_session)
+        test_db_session.commit()
+
+        from app.models import ProductRetailerListing
+
+        listing = test_db_session.execute(
+            select(ProductRetailerListing).where(
+                ProductRetailerListing.external_id == "COLES-ALMILK-I"
+            )
+        ).scalar_one()
+        product = test_db_session.get(Product, listing.product_id)
+        assert product.category is None
+
+        # Second ingest: recognized category → listing canonical now takes authority
+        cp_second = _cp(
+            "Almond Milk 1L",
+            external_id="COLES-ALMILK-I",
+            category="Dairy, Eggs & Fridge",
+        )
+        ingest_catalog_products([cp_second], chain, test_db_session)
+        test_db_session.commit()
+
+        test_db_session.refresh(product)
+        assert product.category == "Dairy, Eggs & Fridge"
+
+
+# ── Backfill / repair tests ───────────────────────────────────────────────────
+
+
+class TestCategoryRepairMigration:
+    """Tests for the migration helpers in q2l3m4n5o6p7.
+
+    Covers both _apply_fallback_category (two-tier resolution: listing wins;
+    otherwise normalise current product.category) and
+    _derive_categories_from_listing_rows (listing-side pure helper).
+    """
+
+    # ── _apply_fallback_category — two-tier resolution ────────────────────────
+
+    @pytest.mark.unit
+    def test_no_listing_valid_canonical_preserved(self):
+        """Scenario 1: no listing data + product.category='Pantry' → Pantry."""
+        from db.migrations.versions.q2l3m4n5o6p7_repair_product_category import (
+            _apply_fallback_category,
+        )
+
+        assert _apply_fallback_category(None, "Pantry") == "Pantry"
+
+    @pytest.mark.unit
+    def test_no_listing_invalid_remapped(self):
+        """Scenario 2: no listing data + product.category='Health & Dietary' → Health & Beauty."""
+        from db.migrations.versions.q2l3m4n5o6p7_repair_product_category import (
+            _apply_fallback_category,
+        )
+
+        assert _apply_fallback_category(None, "Health & Dietary") == "Health & Beauty"
+
+    @pytest.mark.unit
+    def test_no_listing_promo_cleared(self):
+        """Scenario 3: no listing data + product.category='Halloween' → NULL."""
+        from db.migrations.versions.q2l3m4n5o6p7_repair_product_category import (
+            _apply_fallback_category,
+        )
+
+        assert _apply_fallback_category(None, "Halloween") is None
+
+    @pytest.mark.unit
+    def test_listing_wins_over_existing_canonical(self):
+        """Scenario 4: listing category='Frozen' overrides product.category='Pantry'."""
+        from db.migrations.versions.q2l3m4n5o6p7_repair_product_category import (
+            _apply_fallback_category,
+        )
+
+        assert _apply_fallback_category("Frozen", "Pantry") == "Frozen"
+
+    @pytest.mark.unit
+    def test_apply_fallback_all_results_canonical_or_none(self):
+        """Scenario 9: every non-None result from _apply_fallback_category is canonical."""
+        from db.migrations.versions.q2l3m4n5o6p7_repair_product_category import (
+            _CANONICAL_SET,
+            _apply_fallback_category,
+        )
+
+        cases = [
+            (None, "Pantry"),
+            (None, "Health & Dietary"),
+            (None, "Halloween"),
+            (None, None),
+            ("Frozen", "Pantry"),
+            ("Baby", None),
+            (None, "> GROCERIES"),
+        ]
+        for listing_cat, current_cat in cases:
+            result = _apply_fallback_category(listing_cat, current_cat)
+            assert result is None or result in _CANONICAL_SET, (
+                f"_apply_fallback_category({listing_cat!r}, {current_cat!r}) = {result!r} "
+                f"not in canonical set"
+            )
+
+    # ── _derive_categories_from_listing_rows — listing-side helper ────────────
+
+    @pytest.mark.unit
+    def test_oldest_valid_listing_used_when_newest_unknown(self):
+        """Newest listing is unknown; older listing "Pantry > GROCERIES" yields Pantry."""
+        from db.migrations.versions.q2l3m4n5o6p7_repair_product_category import (
+            _derive_categories_from_listing_rows,
+        )
+
+        pid = uuid4()
+        # newest-first: Unknown (→ None), then older: Pantry > GROCERIES (→ Pantry)
+        rows = [
+            (pid, "Unknown Category"),
+            (pid, "Pantry > GROCERIES"),
+        ]
+        result = _derive_categories_from_listing_rows(rows)
+        assert result[pid] == "Pantry"
+
+    @pytest.mark.unit
+    def test_listing_data_overrides_existing_product_category(self):
+        """Listings resolve to Frozen; product previously had Pantry — result is Frozen."""
+        from db.migrations.versions.q2l3m4n5o6p7_repair_product_category import (
+            _derive_categories_from_listing_rows,
+        )
+
+        pid = uuid4()
+        rows = [
+            (pid, "Frozen"),  # newest listing → Frozen
+            (pid, "Pantry"),  # older listing
+        ]
+        result = _derive_categories_from_listing_rows(rows)
+        assert result[pid] == "Frozen"
+
+    @pytest.mark.unit
+    def test_no_recognized_listing_category_absent_from_result(self):
+        """Product with only unrecognised listings is absent — category becomes NULL."""
+        from db.migrations.versions.q2l3m4n5o6p7_repair_product_category import (
+            _derive_categories_from_listing_rows,
+        )
+
+        pid = uuid4()
+        rows = [(pid, "Unknown A"), (pid, None), (pid, "Unknown B")]
+        result = _derive_categories_from_listing_rows(rows)
+        assert pid not in result
+
+    @pytest.mark.unit
+    def test_equal_timestamps_id_asc_tiebreak(self):
+        """With equal timestamps SQL orders by id ASC — first row in result wins."""
+        from db.migrations.versions.q2l3m4n5o6p7_repair_product_category import (
+            _derive_categories_from_listing_rows,
+        )
+
+        pid = uuid4()
+        rows = [
+            (pid, "Frozen"),  # lower id (id ASC → first)
+            (pid, "Pantry"),  # higher id
+        ]
+        result = _derive_categories_from_listing_rows(rows)
+        assert result[pid] == "Frozen"
+
+    @pytest.mark.unit
+    def test_idempotent_same_listing_data(self):
+        """Calling the helper twice with identical rows produces identical output."""
+        from db.migrations.versions.q2l3m4n5o6p7_repair_product_category import (
+            _derive_categories_from_listing_rows,
+        )
+
+        pid1, pid2 = uuid4(), uuid4()
+        rows = [
+            (pid1, "Pantry > GROCERIES"),
+            (pid2, "Frozen"),
+        ]
+        result1 = _derive_categories_from_listing_rows(rows)
+        result2 = _derive_categories_from_listing_rows(rows)
+        assert result1 == result2
+
+    @pytest.mark.unit
+    def test_all_derived_values_are_canonical(self):
+        """Every value in the result dict is a member of _CANONICAL_SET."""
+        from db.migrations.versions.q2l3m4n5o6p7_repair_product_category import (
+            _CANONICAL_SET,
+            _derive_categories_from_listing_rows,
+        )
+
+        pids = [uuid4() for _ in range(5)]
+        rows = [
+            (pids[0], "Pantry > GROCERIES"),
+            (pids[1], "Frozen"),
+            (pids[2], "Baby > GENERAL MERCHANDISE"),
+            (pids[3], "Fruit & Veg > FRUIT AND VEG"),
+            (pids[4], "Poultry, Meat & Seafood"),
+        ]
+        result = _derive_categories_from_listing_rows(rows)
+        assert len(result) == 5
+        for pid in pids:
+            assert result[pid] in _CANONICAL_SET
+
+
+# ── Diagnostic tests ──────────────────────────────────────────────────────────
+
+
+class TestUnmappedCategoryDiagnostic:
+    """Tests for the get_unmapped_categories admin endpoint logic.
+
+    The endpoint uses is_unmapped_category() to exclude known-but-None entries
+    (e.g. "Halloween") from the report, surfacing only categories with no
+    knowledge in CATEGORY_MAP at all.
+    """
+
+    @pytest.mark.integration
+    def test_known_mapped_category_not_reported(self, test_db_session: Session):
+        """A listing with a canonical category is NOT flagged as unmapped."""
+        from app.services.category_normaliser import is_unmapped_category
+
+        product = Product(id=uuid4(), name="Mapped Cat Product")
+        test_db_session.add(product)
+        test_db_session.flush()
+        listing = ProductRetailerListing(
+            product_id=product.id,
+            chain="coles",
+            external_id="DIAG-MAP",
+            external_source="catalog_coles",
+            external_name="Mapped Cat Product",
+            external_category="Pantry",
+            in_stock=True,
+            is_online_only=False,
+            catalog_last_seen_at=datetime.now(timezone.utc),
+        )
+        test_db_session.add(listing)
+        test_db_session.commit()
+
+        assert is_unmapped_category("Pantry") is False
+
+    @pytest.mark.integration
+    def test_known_none_category_not_reported(self, test_db_session: Session):
+        """A known-but-intentionally-None listing (e.g. Halloween) is NOT flagged."""
+        from app.services.category_normaliser import is_unmapped_category
+
+        product = Product(id=uuid4(), name="Halloween Product")
+        test_db_session.add(product)
+        test_db_session.flush()
+        listing = ProductRetailerListing(
+            product_id=product.id,
+            chain="coles",
+            external_id="DIAG-HALLOW",
+            external_source="catalog_coles",
+            external_name="Halloween Product",
+            external_category="Halloween",
+            in_stock=True,
+            is_online_only=False,
+            catalog_last_seen_at=datetime.now(timezone.utc),
+        )
+        test_db_session.add(listing)
+        test_db_session.commit()
+
+        assert is_unmapped_category("Halloween") is False
+
+    @pytest.mark.integration
+    def test_genuinely_unknown_category_reported(self, test_db_session: Session):
+        """A listing with a category unknown to CATEGORY_MAP IS flagged."""
+        from app.services.category_normaliser import is_unmapped_category
+
+        product = Product(id=uuid4(), name="Unknown Cat Product")
+        test_db_session.add(product)
+        test_db_session.flush()
+        listing = ProductRetailerListing(
+            product_id=product.id,
+            chain="drakes",
+            external_id="DIAG-UNK",
+            external_source="catalog_drakes",
+            external_name="Unknown Cat Product",
+            external_category="Future Category XYZ",
+            in_stock=True,
+            is_online_only=False,
+            catalog_last_seen_at=datetime.now(timezone.utc),
+        )
+        test_db_session.add(listing)
+        test_db_session.commit()
+
+        assert is_unmapped_category("Future Category XYZ") is True
+
+    @pytest.mark.integration
+    def test_chain_count_grouping(self, test_db_session: Session):
+        """Grouping by chain correctly counts genuinely unknown categories."""
+        from sqlalchemy import text
+
+        from app.services.category_normaliser import is_unmapped_category
+
+        pid1, pid2, pid3 = uuid4(), uuid4(), uuid4()
+        for pid, name in [(pid1, "P1"), (pid2, "P2"), (pid3, "P3")]:
+            test_db_session.add(Product(id=pid, name=name))
+        test_db_session.flush()
+
+        listings = [
+            ("coles", "GRP-C1", "Future Category XYZ"),  # genuinely unknown
+            ("coles", "GRP-C2", "Another Unknown Cat"),  # genuinely unknown
+            ("drakes", "GRP-D1", "Halloween"),  # known-but-None → excluded
+        ]
+        pids = [pid1, pid2, pid3]
+        for (chain, ext_id, cat), pid in zip(listings, pids, strict=False):
+            test_db_session.add(
+                ProductRetailerListing(
+                    product_id=pid,
+                    chain=chain,
+                    external_id=ext_id,
+                    external_source=f"catalog_{chain}",
+                    external_name="Test Product",
+                    external_category=cat,
+                    in_stock=True,
+                    is_online_only=False,
+                    catalog_last_seen_at=datetime.now(timezone.utc),
+                )
+            )
+        test_db_session.commit()
+
+        # Replicate the endpoint's query logic: group by chain + external_category,
+        # then filter by is_unmapped_category.
+        rows = test_db_session.execute(
+            text(
+                """
+                SELECT chain, external_category, COUNT(*) AS cnt
+                FROM product_retailer_listings
+                WHERE external_category IS NOT NULL
+                  AND external_id IN ('GRP-C1', 'GRP-C2', 'GRP-D1')
+                GROUP BY chain, external_category
+                ORDER BY chain, external_category
+                """
+            )
+        ).fetchall()
+
+        unmapped = [(r[0], r[1], r[2]) for r in rows if is_unmapped_category(r[1])]
+
+        assert len(unmapped) == 2
+        chains = {r[0] for r in unmapped}
+        assert chains == {"coles"}
+        assert all(r[2] == 1 for r in unmapped)
