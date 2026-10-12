@@ -1,0 +1,12 @@
+{
+  "aps": {
+    "alert": {
+      "title": "DealFindio Price Alert",
+      "body": "Test: invalid product should not crash the app"
+    },
+    "sound": "default"
+  },
+  "product_id": "00000000-0000-0000-0000-000000000000",
+  "notification_id": "00000000-0000-0000-0000-000000000000",
+  "trigger_type": "price_match"
+}

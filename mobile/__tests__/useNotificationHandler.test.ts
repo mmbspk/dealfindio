@@ -30,6 +30,9 @@ import { renderHook, waitFor } from '@testing-library/react-native'
 import * as Notifications from 'expo-notifications'
 import { router, useRootNavigationState } from 'expo-router'
 import AsyncStorage from '@react-native-async-storage/async-storage'
+import apiClient from '../src/api/client'
+import { useStore } from '../src/store/store'
+import { useNotificationHandler } from '../src/notifications/useNotificationHandler'
 
 // ── Mocks ─────────────────────────────────────────────────────────────────────
 
@@ -61,10 +64,6 @@ jest.mock('../src/store/store', () => ({
   useStore: jest.fn(),
 }))
 
-// Imports must follow mock declarations (jest.mock is hoisted; imports are not)
-import apiClient from '../src/api/client'
-import { useStore } from '../src/store/store'
-import { useNotificationHandler } from '../src/notifications/useNotificationHandler'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 

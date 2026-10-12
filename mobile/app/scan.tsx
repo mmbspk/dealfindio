@@ -42,7 +42,7 @@ export default function ScanScreen() {
       } else {
         setMessage(`No product found for barcode ${data}. Try manual search.`)
       }
-    } catch (e) {
+    } catch {
       setMessage('Lookup failed. Check your connection.')
     } finally {
       setLookingUp(false)

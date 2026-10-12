@@ -48,7 +48,7 @@ function PriceTag({ price, pctOff }: { price: number; pctOff?: number }) {
 }
 
 export default function ProductsScreen() {
-  const { query, setQuery, results, setResults, searchLoading, setSearchLoading } = useStore()
+  const { query, setQuery } = useStore()
   const [localQuery, setLocalQuery] = useState(query)
   const [products, setProducts] = useState<ProductWithPrice[]>([])
   const [loading, setLoading] = useState(false)
@@ -70,6 +70,10 @@ export default function ProductsScreen() {
       } catch {}
     })()
     loadProducts('')
+    // loadProducts is stable (useCallback with empty deps) — adding it here
+    // would require memoising coordsRef.current too, which is an unnecessary
+    // complexity for a mount-only effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const loadProducts = useCallback(async (q: string) => {

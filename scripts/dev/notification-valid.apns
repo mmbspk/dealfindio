@@ -1,0 +1,13 @@
+{
+  "aps": {
+    "alert": {
+      "title": "DealFindio Price Alert",
+      "body": "Your watched product is cheaper!"
+    },
+    "sound": "default",
+    "badge": 1
+  },
+  "product_id": "VALID_PRODUCT_UUID",
+  "notification_id": "VALID_NOTIFICATION_UUID",
+  "trigger_type": "price_match"
+}

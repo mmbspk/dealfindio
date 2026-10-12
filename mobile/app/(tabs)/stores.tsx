@@ -10,7 +10,6 @@
 import { useRef, useState } from 'react'
 import {
   ActivityIndicator,
-  Alert,
   FlatList,
   Keyboard,
   KeyboardAvoidingView,
@@ -171,7 +170,7 @@ export default function StoresScreen() {
       const resp = await fetch(url, {
         headers: { 'User-Agent': 'dealfindio-mobile/1.0' },
       })
-      const data = (await resp.json()) as Array<{ lat: string; lon: string }>
+      const data = (await resp.json()) as { lat: string; lon: string }[]
       if (!data.length) {
         setError('Location not found. Try a different suburb or postcode.')
         return

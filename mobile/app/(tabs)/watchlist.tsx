@@ -22,12 +22,12 @@ import { useRouter } from 'expo-router'
 import apiClient from '@/api/client'
 import type { ChannelOverride, WatchlistItem, WatchlistList } from '@/types'
 
-const CHANNEL_OPTIONS: Array<{
+const CHANNEL_OPTIONS: {
   value: ChannelOverride
   icon: string
   label: string
   description: string
-}> = [
+}[] = [
   { value: null,    icon: '⚙️', label: 'Account default',  description: 'Use your account notification settings' },
   { value: 'push',  icon: '🔔', label: 'Push only',        description: 'Push alerts, no emails for this list'  },
   { value: 'email', icon: '✉️', label: 'Email only',       description: 'Email alerts, no push for this list'   },
@@ -44,7 +44,7 @@ export default function WatchlistScreen() {
   const [itemsLoading, setItemsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [deletingItemId, setDeletingItemId] = useState<string | null>(null)
-  const [deletingListId, setDeletingListId] = useState<string | null>(null)
+  const [, setDeletingListId] = useState<string | null>(null)
 
   // New list modal
   const [showNewList, setShowNewList] = useState(false)
