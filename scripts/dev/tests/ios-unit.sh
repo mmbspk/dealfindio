@@ -67,12 +67,13 @@ t3() {
   fi
 }; t3
 
-# ── T4: scheme detection from mocked xcodebuild ───────────────────────────────
+# ── T4: scheme detection — exact match on workspace name ─────────────────────
 t4() {
   local d; d=$(mktemp -d); mkdir -p "$d/ios/App.xcworkspace" "$d/bin"
+  # Mock includes dependency schemes before the app scheme (realistic workspace)
   cat > "$d/bin/xcodebuild" <<'MOCK'
 #!/usr/bin/env bash
-printf 'Information about workspace "App":\n    Schemes:\n        App\n        App-tvOS\n'
+printf 'Information about workspace "App":\n    Schemes:\n        boost\n        fmt\n        App\n        App-tvOS\n'
 exit 0
 MOCK
   chmod +x "$d/bin/xcodebuild"
@@ -81,9 +82,9 @@ MOCK
     && rc=$? || rc=$?
   rm -rf "$d"
   if [[ "$rc" -eq 0 && "$result" == "App" ]]; then
-    ok "T4: scheme detected from xcodebuild -list output"
+    ok "T4: scheme matches workspace name even when dependency schemes appear first"
   else
-    fail "T4: scheme detected from xcodebuild -list output" "rc=$rc result='$result'"
+    fail "T4: scheme matches workspace name even when dependency schemes appear first" "rc=$rc result='$result'"
   fi
 }; t4
 
@@ -150,6 +151,44 @@ MOCK
       "rc=$rc xcrun_log='$xcrun_output'"
   fi
 }; t6
+
+# ── T7: mktemp template valid on macOS/BSD ────────────────────────────────────
+# BSD mktemp requires the X's at the END of the template, not before a suffix.
+# Regression for: mktemp /tmp/xcodebuild.XXXXXX.log  (broken — .log after X's)
+t7() {
+  local tmpfile rc
+  tmpfile=$(mktemp "${TMPDIR:-/tmp}/xcodebuild.XXXXXX" 2>/dev/null) && rc=$? || rc=$?
+  [[ "$rc" -eq 0 ]] && rm -f "$tmpfile"
+  if [[ "$rc" -eq 0 && -n "$tmpfile" ]]; then
+    ok "T7: mktemp template (X's at end, no .log suffix) is valid on this platform"
+  else
+    fail "T7: mktemp template valid" "rc=$rc — BSD mktemp may not accept this template"
+  fi
+}; t7
+
+# ── T8: scheme regression — 'boost' must not be selected over app scheme ──────
+# Regression for: xcodebuild -list returns boost before dealfindio; the function
+# was taking the first entry rather than matching the workspace name.
+t8() {
+  local d; d=$(mktemp -d); mkdir -p "$d/ios/dealfindio.xcworkspace" "$d/bin"
+  cat > "$d/bin/xcodebuild" <<'MOCK'
+#!/usr/bin/env bash
+printf 'Information about workspace "dealfindio":\n    Schemes:\n        boost\n        fmt\n        glog\n        Pods-dealfindio\n        dealfindio\n'
+exit 0
+MOCK
+  chmod +x "$d/bin/xcodebuild"
+  local result rc
+  result=$(PATH="$d/bin:$PATH" bash -c \
+    ". '$HELPERS'; ios_find_scheme '$d/ios/dealfindio.xcworkspace'" 2>/dev/null) \
+    && rc=$? || rc=$?
+  rm -rf "$d"
+  if [[ "$rc" -eq 0 && "$result" == "dealfindio" ]]; then
+    ok "T8: boost/fmt/glog before app scheme — dealfindio selected (not boost)"
+  else
+    fail "T8: boost/fmt/glog before app scheme — dealfindio selected (not boost)" \
+      "rc=$rc result='$result'"
+  fi
+}; t8
 
 # ── Results ───────────────────────────────────────────────────────────────────
 echo ""

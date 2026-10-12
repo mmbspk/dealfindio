@@ -143,7 +143,11 @@ fi
 # ── 7. xcodebuild fallback ────────────────────────────────────────────────────
 # Discover workspace and scheme dynamically — Expo may generate any name.
 WORKSPACE=$(ios_find_workspace "$MOBILE_DIR/ios") || exit 1
-SCHEME=$(ios_find_scheme "$WORKSPACE") || exit 1
+if [[ -n "${SCHEME:-}" ]]; then
+  step "Using supplied SCHEME: $SCHEME"
+else
+  SCHEME=$(ios_find_scheme "$WORKSPACE") || exit 1
+fi
 
 ios_build "$WORKSPACE" "$SCHEME" "$UDID" "$BUILD_DIR" || exit 1
 

@@ -26,17 +26,51 @@ ios_find_workspace() {
 }
 
 # ios_find_scheme <workspace>
-# Prints the first scheme name from `xcodebuild -list`, or returns 1.
+# Prints the application scheme, or returns 1.
+# Strategy:
+#   1. Exact match on workspace basename — Expo names the scheme and workspace
+#      identically (both derived from app.json → name), so this is always right
+#      for Expo projects regardless of how many dependency schemes appear first.
+#   2. If not found, skip known CocoaPods/infrastructure prefixes (Pods-/React-/RCT-)
+#      and return the first remaining scheme, with a warning.
 ios_find_scheme() {
   local ws="$1"
-  local scheme
-  scheme=$(xcodebuild -list -workspace "$ws" 2>/dev/null \
+  local ws_name
+  ws_name=$(basename "$ws" .xcworkspace)
+
+  # Collect every scheme the workspace exposes.
+  # IMPORTANT: the exit rule must appear BEFORE the print+gsub rule.
+  # gsub modifies $0 in-place; if print runs first, the stripped value
+  # (e.g. "boost") would match /^[^[:space:]]/ on the next rule and exit early.
+  local schemes
+  schemes=$(xcodebuild -list -workspace "$ws" 2>/dev/null \
     | awk '/Schemes:/{found=1; next}
-           found && /^[[:space:]]+[^[:space:]]/{
-             gsub(/^[[:space:]]+|[[:space:]]+$/, ""); print; exit
-           }' || true)
+           found && /^[^[:space:]]/{exit}
+           found && /^[[:space:]]+[^[:space:]]/{gsub(/^[[:space:]]+|[[:space:]]+$/, ""); print}' \
+    || true)
+
+  if [[ -z "$schemes" ]]; then
+    printf 'ERROR: xcodebuild -list returned no schemes from %s. Run: make ios-clean\n' "$ws" >&2
+    return 1
+  fi
+
+  # 1. Prefer the scheme whose name is identical to the workspace name
+  local scheme
+  scheme=$(printf '%s\n' "$schemes" | grep -xF "$ws_name" | head -1 || true)
+
+  # 2. Fall back: skip CocoaPods aggregation and pod-library prefixes
   if [[ -z "$scheme" ]]; then
-    printf 'ERROR: Could not detect scheme from %s. Run: make ios-clean\n' "$ws" >&2
+    scheme=$(printf '%s\n' "$schemes" \
+      | grep -Ev "^(Pods-|React-|RCT-)" | head -1 || true)
+    if [[ -n "$scheme" ]]; then
+      printf 'WARNING: scheme "%s" not in workspace; selected "%s". Override: SCHEME=<name> make ios\n' \
+        "$ws_name" "$scheme" >&2
+    fi
+  fi
+
+  if [[ -z "$scheme" ]]; then
+    printf 'ERROR: No app scheme found in %s.\nAvailable schemes:\n%s\nOverride: SCHEME=<name> make ios\n' \
+      "$ws" "$schemes" >&2
     return 1
   fi
   printf '%s\n' "$scheme"
@@ -62,7 +96,7 @@ ios_find_app() {
 ios_build() {
   local workspace="$1" scheme="$2" udid="$3" build_dir="$4"
   local xcbuild_log
-  xcbuild_log="$(mktemp /tmp/xcodebuild.XXXXXX.log)"
+  xcbuild_log="$(mktemp "${TMPDIR:-/tmp}/xcodebuild.XXXXXX")"
   printf '→ Building %s (log: %s)\n' "$scheme" "$xcbuild_log"
 
   # Disable pipefail so PIPESTATUS[0] captures xcodebuild's exit without the
