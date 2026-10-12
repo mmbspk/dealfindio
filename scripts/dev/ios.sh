@@ -89,10 +89,24 @@ else
   open -a DeviceHub 2>/dev/null || open -a Xcode 2>/dev/null || true
 fi
 
-# ── 4. Ensure iOS native project exists ──────────────────────────────────────
+# ── 4. Ensure iOS native project exists and is up-to-date ────────────────────
 cd "$MOBILE_DIR"
+NEEDS_PREBUILD=0
 if [[ ! -f "ios/Podfile" ]]; then
-  step "Running expo prebuild (first time)..."
+  step "iOS native project missing — running expo prebuild..."
+  NEEDS_PREBUILD=1
+elif [[ "app.config.js" -nt "ios/Podfile" ]] || \
+     [[ "app.json" -nt "ios/Podfile" ]] || \
+     [[ "plugins/withFixPodsDeploymentTarget.js" -nt "ios/Podfile" ]] || \
+     [[ "package.json" -nt "ios/Podfile" ]]; then
+  step "Config changed since last prebuild — regenerating native project..."
+  NEEDS_PREBUILD=1
+elif ! grep -q "withFixPodsDeploymentTarget" "ios/Podfile" 2>/dev/null; then
+  step "Deployment-target plugin not present in existing Podfile — re-running expo prebuild..."
+  NEEDS_PREBUILD=1
+fi
+
+if [[ "$NEEDS_PREBUILD" -eq 1 ]]; then
   npx expo prebuild --platform ios --non-interactive
 fi
 
@@ -122,27 +136,20 @@ step "expo run:ios failed — falling back to xcodebuild..."
 XCBUILD_LOG="$(mktemp /tmp/xcodebuild.XXXXXX.log)"
 step "Building with xcodebuild (log: $XCBUILD_LOG)..."
 
-BUILD_EXIT=0
+# Disable pipefail for this pipeline so we can read PIPESTATUS[0] (xcodebuild's
+# exit) without bash aborting early if grep finds no matching lines.
+set +o pipefail
 xcodebuild \
   -workspace "$WORKSPACE" \
   -scheme dealfindio \
   -configuration Debug \
   -destination "id=$UDID" \
   -derivedDataPath "$BUILD_DIR" \
-  build 2>&1 | tee "$XCBUILD_LOG" | grep -E "^(Build|error:|warning:|CompileSwift|Linking)" || true
+  build 2>&1 | tee "$XCBUILD_LOG" | { grep -E "^(Build|error:|warning:|CompileSwift|Linking)" || true; }
+BUILD_EXIT="${PIPESTATUS[0]}"
+set -o pipefail
 
-# Re-check exit from xcodebuild (pipe masks it)
-if ! xcodebuild \
-  -workspace "$WORKSPACE" \
-  -scheme dealfindio \
-  -configuration Debug \
-  -destination "id=$UDID" \
-  -derivedDataPath "$BUILD_DIR" \
-  build > /dev/null 2>&1; then
-  BUILD_EXIT=1
-fi
-
-if [[ $BUILD_EXIT -ne 0 ]]; then
+if [[ "$BUILD_EXIT" -ne 0 ]]; then
   echo ""
   echo "Build failed. Last 40 lines of log:"
   tail -40 "$XCBUILD_LOG"

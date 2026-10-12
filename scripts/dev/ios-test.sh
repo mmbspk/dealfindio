@@ -68,17 +68,22 @@ fi
 # ── Test 2: App launches without crash ────────────────────────────────────────
 step "Launching app..."
 xcrun simctl launch "$UDID" "$BUNDLE_ID" > /dev/null 2>&1 || true
-sleep 3
+sleep 2
 
-if xcrun simctl spawn "$UDID" launchctl list 2>/dev/null | grep -q "$BUNDLE_ID"; then
-  ok "App process is running"
+APP_PID=$(xcrun simctl spawn "$UDID" launchctl list 2>/dev/null \
+  | grep "$BUNDLE_ID" | awk '{print $1}' | head -1 || true)
+
+if [[ -n "$APP_PID" ]] && [[ "$APP_PID" != "-" ]]; then
+  ok "App process running (PID $APP_PID)"
 else
-  warn "Cannot confirm app process via launchctl (may still be running)"
+  warn "App process not visible via launchctl — if Device Hub shows the app, it may still be running"
 fi
 
 # ── Test 3: Valid notification payload ────────────────────────────────────────
-# Replace VALID_PRODUCT_ID / VALID_NOTIFICATION_ID with real UUIDs from your
-# local or staging database before this test can exercise the navigation path.
+# NOTE: simctl push submits to the simulator's local notification daemon.
+# A clean exit from simctl means the payload was accepted and queued —
+# it does NOT confirm the app received or rendered the notification.
+# Full delivery confirmation requires visual verification in Device Hub.
 VALID_PRODUCT_ID="${TEST_PRODUCT_ID:-00000000-0000-0000-0000-000000000001}"
 VALID_NOTIFICATION_ID="${TEST_NOTIFICATION_ID:-00000000-0000-0000-0000-000000000002}"
 
@@ -88,27 +93,44 @@ VALID_PAYLOAD="${VALID_PAYLOAD//VALID_NOTIFICATION_UUID/$VALID_NOTIFICATION_ID}"
 TMP_VALID=$(mktemp /tmp/notif-valid.XXXXXX.json)
 echo "$VALID_PAYLOAD" > "$TMP_VALID"
 
-step "Pushing valid notification payload..."
-if xcrun simctl push "$UDID" "$BUNDLE_ID" "$TMP_VALID" 2>&1; then
-  sleep 2
-  ok "Valid notification delivered without error"
+step "Submitting valid notification payload via simctl..."
+PUSH_OUT=$(xcrun simctl push "$UDID" "$BUNDLE_ID" "$TMP_VALID" 2>&1) && PUSH_RC=0 || PUSH_RC=$?
+if [[ "$PUSH_RC" -eq 0 ]]; then
+  ok "Valid notification payload accepted by simctl (queued for delivery — verify banner in Device Hub)"
 else
-  fail "simctl push failed for valid payload"
+  fail "simctl rejected valid payload: $PUSH_OUT"
 fi
 
-# ── Test 4: Invalid product ID — no crash ─────────────────────────────────────
-step "Pushing invalid product ID notification..."
-if xcrun simctl push "$UDID" "$BUNDLE_ID" "$PAYLOAD_DIR/notification-invalid.apns" 2>&1; then
-  sleep 2
-  # Verify app is still running after bad payload
-  if xcrun simctl spawn "$UDID" launchctl list 2>/dev/null | grep -q "$BUNDLE_ID" || \
-     xcrun simctl get_app_container "$UDID" "$BUNDLE_ID" &>/dev/null; then
-    ok "App survived invalid product ID (no crash)"
-  else
-    warn "Cannot confirm app state after invalid payload — check manually"
-  fi
+# ── Test 4: Invalid product ID — crash resilience ─────────────────────────────
+# Strategy: record the app's PID before delivery, re-check after.
+# A missing PID after notification means the process crashed.
+step "Recording app PID before invalid notification..."
+PRE_PID=$(xcrun simctl spawn "$UDID" launchctl list 2>/dev/null \
+  | grep "$BUNDLE_ID" | awk '{print $1}' | head -1 || true)
+
+step "Submitting invalid product ID notification via simctl..."
+INVALID_OUT=$(xcrun simctl push "$UDID" "$BUNDLE_ID" "$PAYLOAD_DIR/notification-invalid.apns" 2>&1) && INVALID_RC=0 || INVALID_RC=$?
+
+if [[ "$INVALID_RC" -ne 0 ]]; then
+  fail "simctl rejected invalid payload (unexpected — simctl should accept any well-formed APNs JSON): $INVALID_OUT"
 else
-  fail "simctl push failed for invalid payload"
+  sleep 2
+  POST_PID=$(xcrun simctl spawn "$UDID" launchctl list 2>/dev/null \
+    | grep "$BUNDLE_ID" | awk '{print $1}' | head -1 || true)
+
+  if [[ -n "$POST_PID" ]] && [[ "$POST_PID" != "-" ]]; then
+    if [[ "$PRE_PID" == "$POST_PID" ]]; then
+      ok "App process unchanged after invalid notification (PID $POST_PID — no crash)"
+    else
+      ok "App still running after invalid notification (PID changed: $PRE_PID → $POST_PID)"
+    fi
+  else
+    if [[ -z "$PRE_PID" ]] || [[ "$PRE_PID" == "-" ]]; then
+      warn "App process was not visible via launchctl before or after notification — confirm in Device Hub"
+    else
+      fail "App process (was PID $PRE_PID) missing after invalid notification — possible crash"
+    fi
+  fi
 fi
 
 # ── Summary ───────────────────────────────────────────────────────────────────
