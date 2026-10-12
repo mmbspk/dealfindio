@@ -2,6 +2,8 @@
 
 Use this document before releasing any change that touches the notification pipeline (Epic #60 and subsequent).
 
+> **⚠️ Scope of automated tests:** The test suite in §2 mocks all external delivery calls (`_send_push`, `send_price_alert_email`, `send_weekly_digest_email`). Tests prove the pipeline logic is correct, but they **do not prove** real Expo or Resend delivery works. Sections §3–§5 must be executed manually on a physical device with live credentials before each production release. Mark each item with the date it was last verified.
+
 ---
 
 ## 1. Automated CI gates
@@ -39,18 +41,20 @@ The following test files cover the full notification pipeline. Run them as part 
 | `test_notification_copy.py` | #62/#65 | Subject lines, push body lengths, HTML templates |
 | `test_notification_integration.py` | #84 | Lifecycle, ownership, per-list isolation, push failure, RFC 8058 subsequent-alert, digest empty, global prefs, payload completeness |
 
+> **NOT EXECUTED in CI:** actual Expo push delivery, Resend email delivery, and mobile UI interactions. Those require §3–§5 below.
+
 ---
 
 ## 3. Manual Android checklist
 
-Perform on a physical device (emulators suppress Expo push). Use `expo start --dev-client` with a `EXPO_TOKEN` targeting the test environment.
+**NOT EXECUTED** — run on a physical device before each production release (emulators suppress Expo push). Use `expo start --dev-client` targeting the test environment.
 
 ### 3.1 Push notification delivery
 
 - [ ] Sign in. Confirm token registered: check server logs for `Push token registered for <email>`.
 - [ ] Add a product to a watchlist with a `target_price_cents` below the current price.
-- [ ] Seed a `PriceReport` below the target (use the admin API or Django shell).
-- [ ] Trigger `check_watchlist_for_price` for the report ID.
+- [ ] Seed a `PriceReport` below the target via the admin API (`POST /api/v1/admin/price-reports/`) or directly with `psql`.
+- [ ] Trigger the Celery task: `celery -A app.workers.celery_app call app.workers.notification_tasks.check_watchlist_for_price --args='["<report-uuid>"]'`
 - [ ] **Expected:** notification appears in the Android notification drawer within 30 s.
 - [ ] Tap the notification while the app is in the **background**.
 - [ ] **Expected:** app navigates to the matching product screen. ⚠️ *Currently a blocking gap — see issue #93.*
@@ -68,11 +72,11 @@ Perform on a physical device (emulators suppress Expo push). Use `expo start --d
 
 ### 3.3 Per-list channel override
 
-- [ ] Long-press a watchlist list → select **Notification settings** (bell icon).
-- [ ] Set the override to **None (suppress all)**.
+- [ ] On the Watchlist screen, tap the **bell icon** next to the watchlist list name.
+- [ ] In the picker, select **None (suppress all)**.
 - [ ] Trigger a price alert for a product in that list.
 - [ ] **Expected:** no in-app, no push, no email for that list.
-- [ ] Set override back to **Inherit** and verify notifications resume.
+- [ ] Tap the bell icon again; select **Inherit** and verify notifications resume.
 
 ### 3.4 In-app notification list
 
@@ -96,7 +100,7 @@ Perform on a physical device (emulators suppress Expo push). Use `expo start --d
 
 ## 4. Manual iOS checklist
 
-Perform on a physical iPhone (simulator does not receive remote push). Steps mirror Android.
+**NOT EXECUTED** — run on a physical iPhone before each production release (simulator does not receive remote push). Steps mirror Android §3.
 
 ### 4.1 Push notification delivery
 
@@ -123,6 +127,8 @@ Same steps as Android §3.1. Additional iOS-specific checks:
 
 ## 5. Live Resend email verification
 
+**NOT EXECUTED** — run with live credentials before each production release.
+
 ### Prerequisites
 
 - `RESEND_API_KEY` must be set in the backend environment.
@@ -132,35 +138,38 @@ Same steps as Android §3.1. Additional iOS-specific checks:
 ### 5.1 Price alert email
 
 - [ ] Create a user with `notif_email_price_match=True` and a real email address.
-- [ ] Trigger `check_watchlist_for_price` for a matching report.
+- [ ] Trigger `check_watchlist_for_price` for a matching price_match report.
 - [ ] **Expected within 60 s:** email arrives with:
-  - Subject: `Price drop: <Product> — $<price>` (≤50 chars).
-  - Product image (CDN URL, not base64).
-  - Price in bold; was-price struck through (if applicable).
-  - "View deal" CTA button.
-  - Unsubscribe link in footer.
+  - Subject matches `"You hit your target — <Product> at $<price>"` (≤50 chars; varies by trigger type — `pct_off_match` uses `"{pct}% off: <Product>"`; `flash_sale` uses `"Flash deal: <Product> {pct}% off"`).
+  - Product image (CDN URL, not base64), only when `image_url` is set.
+  - Price in green bold; was-price struck through in grey (only when `was_price` is set).
+  - The product card itself is the clickable link (no separate CTA button in price alerts).
+  - "Unsubscribe from these alerts" link in footer.
 - [ ] Check email headers in raw view:
   - `List-Unsubscribe: <https://…/api/v1/notifications/unsubscribe?token=…>, <mailto:unsubscribe@…>`
   - `List-Unsubscribe-Post: List-Unsubscribe=One-Click`
-- [ ] Click the unsubscribe link.
-- [ ] **Expected:** confirmation page shown.
+- [ ] Click the unsubscribe link from the email footer.
+- [ ] **Expected:** confirmation page with a **Confirm unsubscribe** button (GET is non-mutating; no preference is changed yet).
+- [ ] Click **Confirm unsubscribe**.
+- [ ] **Expected:** success page shown ("You've been unsubscribed successfully.").
 - [ ] Trigger another price alert for the same user.
-- [ ] **Expected:** no email sent (preference now False).
+- [ ] **Expected:** no email sent (`notif_email_price_match` is now False).
 
 ### 5.2 Weekly digest email
 
 - [ ] Ensure at least one product in the user's watchlist has `is_on_sale=True` and `sale_pct_off > 0`.
-- [ ] Trigger `send_weekly_digest` (via admin panel or `celery call`).
+- [ ] Trigger: `celery -A app.workers.celery_app call app.workers.notification_tasks.send_weekly_digest`
 - [ ] **Expected within 60 s:** email arrives with:
-  - Subject: `Your deals this week 🛒` (≤50 chars).
+  - Subject: `"Your deals this week 🛒"` (≤50 chars).
   - At least one list section with a product card.
-  - Product images (CDN URLs).
+  - Product images (CDN URLs), when available.
+  - "View All Deals →" CTA button linking to `/watchlist`.
   - Unsubscribe link in footer.
 - [ ] Ensure a user with `notif_email_weekly_digest=False` does **not** receive the digest.
 
 ### 5.3 Email size check
 
-- [ ] If a user has many watchlist items, verify the digest does not exceed 90 KB (check server logs for `[WARNING] email HTML exceeds 90KB clip threshold`).
+- [ ] If a user has many watchlist items, verify the digest does not exceed 90 KB (check server logs for `[WARNING] … exceeds … clip threshold`).
 
 ---
 
