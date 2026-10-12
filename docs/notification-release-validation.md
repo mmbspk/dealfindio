@@ -41,6 +41,17 @@ The following test files cover the full notification pipeline. Run them as part 
 | `test_notification_copy.py` | #62/#65 | Subject lines, push body lengths, HTML templates |
 | `test_notification_integration.py` | #84 | Lifecycle, ownership, per-list isolation, push failure, RFC 8058 subsequent-alert, digest empty, global prefs, payload completeness |
 
+Mobile unit tests (story #93):
+
+```bash
+cd mobile
+npm test
+```
+
+| File | Story | What it covers |
+|---|---|---|
+| `__tests__/useNotificationHandler.test.ts` | #93 | setNotificationHandler, foreground config, background tap navigation, mark-as-read, badge refresh, missing/invalid product_id, null notification_id, dedup, cold-start, subscription cleanup |
+
 > **NOT EXECUTED in CI:** actual Expo push delivery, Resend email delivery, and mobile UI interactions. Those require §3–§5 below.
 
 ---
@@ -57,11 +68,11 @@ The following test files cover the full notification pipeline. Run them as part 
 - [ ] Trigger the Celery task: `celery -A app.workers.celery_app call app.workers.notification_tasks.check_watchlist_for_price --args='["<report-uuid>"]'`
 - [ ] **Expected:** notification appears in the Android notification drawer within 30 s.
 - [ ] Tap the notification while the app is in the **background**.
-- [ ] **Expected:** app navigates to the matching product screen. ⚠️ *Currently a blocking gap — see issue #93.*
+- [ ] **Expected:** app navigates to the matching product screen.
 - [ ] Tap the notification while the app is in the **foreground**.
-- [ ] **Expected:** in-app alert shown; badge updates. ⚠️ *Currently a blocking gap — see issue #93.*
+- [ ] **Expected:** in-app alert shown; badge updates.
 - [ ] Force-quit the app. Tap the notification from the drawer (cold start).
-- [ ] **Expected:** app opens and navigates to the product screen. ⚠️ *Currently a blocking gap — see issue #93.*
+- [ ] **Expected:** app opens and navigates to the product screen.
 
 ### 3.2 Notification preferences
 
@@ -108,7 +119,7 @@ Same steps as Android §3.1. Additional iOS-specific checks:
 
 - [ ] Confirm the Expo token starts with `ExponentPushToken[` (not FCM format).
 - [ ] Test notification tap from the **lock screen**.
-- [ ] **Expected:** Face/Touch ID, then navigate to product screen. ⚠️ *Blocked by issue #93.*
+- [ ] **Expected:** Face/Touch ID, then navigate to product screen.
 
 ### 4.2 iOS badge count
 
@@ -192,11 +203,11 @@ psql $DATABASE_URL -c "\d watchlist_lists" | grep channel_override
 
 | # | Gap | Issue | Severity |
 |---|---|---|---|
-| 1 | Mobile: no push notification tap handler | [#93](https://github.com/mmbspk/dealfindio/issues/93) | **Blocking** — tapping a push does nothing |
-| 2 | Mobile: no Jest / @testing-library/react-native | — | High — zero mobile test coverage |
+| 1 | ~~Mobile: no push notification tap handler~~ | [#93](https://github.com/mmbspk/dealfindio/issues/93) | ✅ Resolved — story #93 |
+| 2 | Mobile: no Jest / @testing-library/react-native | — | ✅ Resolved — story #93 |
 | 3 | Expo push receipts never polled | — | Medium — stale tokens accumulate silently |
 | 4 | No batch push sends | — | Low — performance concern under load |
 | 5 | `_fire_badge` ignores bool return from `send_expo_badge_async` | — | Low — badge sync failures not surfaced |
 | 6 | `notify_prediction_drops` has zero test coverage | — | Medium — production task untested |
 
-**Do not ship to production until gap #1 (issue #93) is resolved.**
+**Pre-release blockers resolved. App is ready for manual end-to-end validation (§3–§5).**

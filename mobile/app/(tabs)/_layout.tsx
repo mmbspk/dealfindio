@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { Pressable, StyleSheet, Text, View } from 'react-native'
 import { router, Tabs } from 'expo-router'
 import apiClient from '@/api/client'
@@ -12,8 +12,7 @@ function TabIcon({ symbol, color }: { symbol: string; color: string }) {
 }
 
 export default function TabsLayout() {
-  const { isAuthenticated } = useStore()
-  const [unreadCount, setUnreadCount] = useState(0)
+  const { isAuthenticated, unreadCount, setUnreadCount } = useStore()
 
   useEffect(() => {
     if (!isAuthenticated) { setUnreadCount(0); return }
@@ -22,7 +21,7 @@ export default function TabsLayout() {
       .then(({ data }) => { if (!cancelled) setUnreadCount(data.count ?? 0) })
       .catch(() => {})
     return () => { cancelled = true }
-  }, [isAuthenticated])
+  }, [isAuthenticated, setUnreadCount])
 
   const headerRight = () => (
     <Pressable

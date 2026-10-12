@@ -31,7 +31,8 @@
       "expo-router",
       "expo-camera",
       "expo-location",
-      "expo-image-picker"
+      "expo-image-picker",
+      "expo-notifications"
     ],
     "extra": {
       "apiUrl": "http://192.168.0.63:8000",

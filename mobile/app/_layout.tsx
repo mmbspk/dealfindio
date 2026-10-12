@@ -12,6 +12,7 @@ import * as Notifications from 'expo-notifications'
 import * as Device from 'expo-device'
 import { apiClient } from '@/api/client'
 import { useStore } from '@/store/store'
+import { useNotificationHandler } from '@/notifications/useNotificationHandler'
 
 async function registerPushToken() {
   if (!Device.isDevice) return
@@ -32,6 +33,8 @@ async function registerPushToken() {
 
 export default function RootLayout() {
   const { isAuthenticated } = useStore()
+
+  useNotificationHandler()
 
   useEffect(() => {
     if (isAuthenticated) {

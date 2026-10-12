@@ -43,6 +43,7 @@ interface AppState {
   notifications: Notification[]
   unreadCount: number
   setNotifications: (items: Notification[]) => void
+  setUnreadCount: (count: number) => void
 }
 
 export const useStore = create<AppState>((set) => ({
@@ -73,4 +74,5 @@ export const useStore = create<AppState>((set) => ({
       notifications,
       unreadCount: notifications.filter((n) => n.opened_at === null).length,
     }),
+  setUnreadCount: (unreadCount) => set({ unreadCount }),
 }))
