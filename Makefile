@@ -13,7 +13,7 @@ DEVICE_ID ?=
 
 # ── Phony ─────────────────────────────────────────────────────────────────────
 .PHONY: help doctor setup-mobile \
-        ios ios-device ios-clean ios-test \
+        ios ios-device ios-clean ios-test ios-unit-test \
         mobile-test mobile-typecheck mobile-lint \
         dev
 
@@ -31,7 +31,8 @@ help:
 	@echo "  make ios-device         Interactive simulator selection"
 	@echo "  make ios-clean          Regenerate iOS native project and Pods from scratch"
 	@echo ""
-	@echo "  make ios-test           Run simulator smoke tests"
+	@echo "  make ios-test           Run simulator smoke tests (requires booted simulator)"
+	@echo "  make ios-unit-test      Run ios-helpers unit tests (no Xcode required)"
 	@echo "  make mobile-test        Run Jest test suite"
 	@echo "  make mobile-typecheck   TypeScript validation"
 	@echo "  make mobile-lint        ESLint"
@@ -87,6 +88,9 @@ ios-clean:
 # ── iOS smoke tests ───────────────────────────────────────────────────────────
 ios-test:
 	@DEVICE_ID="$(DEVICE_ID)" bash scripts/dev/ios-test.sh
+
+ios-unit-test:
+	@bash scripts/dev/tests/ios-unit.sh
 
 # ── Mobile JS/TS checks ───────────────────────────────────────────────────────
 mobile-test:

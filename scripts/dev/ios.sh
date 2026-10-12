@@ -16,16 +16,18 @@
 #   1. Find / validate target simulator UDID
 #   2. Boot the simulator
 #   3. Open the device viewer (Simulator.app or Device Hub)
-#   4. Ensure native iOS files exist (expo prebuild if absent)
+#   4. Ensure native iOS files exist and are up-to-date (expo prebuild if stale)
 #   5. Install Pods if needed
-#   6. Try `expo run:ios --device <UDID>` (skips Simulator.app discovery)
-#   7. On failure, fall back to xcodebuild + simctl install + launch
+#   6. Try `expo run:ios --device <UDID>` only when Simulator.app is present
+#      (Xcode ≤ 25). On Xcode 27+ skip it — expo run:ios requires Simulator.app
+#      internally even with --device, and it no longer exists.
+#   7. xcodebuild fallback: discover workspace + scheme dynamically (no hardcoded
+#      names), build once, check PIPESTATUS[0], install and launch via simctl.
 
 set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 MOBILE_DIR="$REPO_ROOT/mobile"
 BUNDLE_ID="${BUNDLE_ID:-au.com.dealfindio.app}"
-WORKSPACE="$MOBILE_DIR/ios/dealfindio.xcworkspace"
 BUILD_DIR="$MOBILE_DIR/ios/build/DerivedData"
 
 # ── Colour helpers ─────────────────────────────────────────────────────────────
@@ -37,6 +39,8 @@ fi
 
 step() { echo -e "${CYAN}→${RESET} $1"; }
 err()  { echo -e "${RED}ERROR${RESET}: $1" >&2; exit 1; }
+# shellcheck source=./ios-helpers.sh
+source "$(dirname "$0")/ios-helpers.sh"
 
 # ── 1. Find simulator UDID ────────────────────────────────────────────────────
 step "Resolving simulator..."
@@ -122,45 +126,30 @@ if [[ "$NEEDS_POD_INSTALL" -eq 1 ]]; then
   (cd ios && pod install)
 fi
 
-# ── 6. Try expo run:ios with explicit UDID (bypasses Simulator.app lookup) ───
-step "Building via expo run:ios --device $UDID..."
-if npx expo run:ios --device "$UDID" 2>&1; then
-  exit 0
+# ── 6. Select build path ──────────────────────────────────────────────────────
+# expo run:ios opens Simulator.app internally regardless of --device.
+# Xcode 27 removed Simulator.app (replaced by Device Hub); skip expo run:ios
+# when it is absent and go directly to the xcodebuild path.
+if [[ -d "$SIMULATOR_APP" ]]; then
+  step "Trying expo run:ios --device $UDID (Simulator.app present)..."
+  if npx expo run:ios --device "$UDID" 2>&1; then
+    exit 0
+  fi
+  step "expo run:ios failed — using xcodebuild fallback..."
+else
+  step "Simulator.app absent (Xcode 27+) — building with xcodebuild directly..."
 fi
 
-# ── 7. Fallback: xcodebuild + simctl ─────────────────────────────────────────
-step "expo run:ios failed — falling back to xcodebuild..."
+# ── 7. xcodebuild fallback ────────────────────────────────────────────────────
+# Discover workspace and scheme dynamically — Expo may generate any name.
+WORKSPACE=$(ios_find_workspace "$MOBILE_DIR/ios") || exit 1
+SCHEME=$(ios_find_scheme "$WORKSPACE") || exit 1
 
-[[ ! -f "$WORKSPACE" ]] && err "Workspace not found at $WORKSPACE. Run: make ios-clean"
+ios_build "$WORKSPACE" "$SCHEME" "$UDID" "$BUILD_DIR" || exit 1
 
-XCBUILD_LOG="$(mktemp /tmp/xcodebuild.XXXXXX.log)"
-step "Building with xcodebuild (log: $XCBUILD_LOG)..."
+APP_PATH=$(ios_find_app "$BUILD_DIR") || exit 1
 
-# Disable pipefail for this pipeline so we can read PIPESTATUS[0] (xcodebuild's
-# exit) without bash aborting early if grep finds no matching lines.
-set +o pipefail
-xcodebuild \
-  -workspace "$WORKSPACE" \
-  -scheme dealfindio \
-  -configuration Debug \
-  -destination "id=$UDID" \
-  -derivedDataPath "$BUILD_DIR" \
-  build 2>&1 | tee "$XCBUILD_LOG" | { grep -E "^(Build|error:|warning:|CompileSwift|Linking)" || true; }
-BUILD_EXIT="${PIPESTATUS[0]}"
-set -o pipefail
-
-if [[ "$BUILD_EXIT" -ne 0 ]]; then
-  echo ""
-  echo "Build failed. Last 40 lines of log:"
-  tail -40 "$XCBUILD_LOG"
-  err "xcodebuild exited with errors. See full log: $XCBUILD_LOG"
-fi
-
-APP_PATH=$(find "$BUILD_DIR" -name "dealfindio.app" \
-  -path "*/Debug-iphonesimulator/*" 2>/dev/null | head -1 || true)
-[[ -z "$APP_PATH" ]] && err "Build succeeded but .app bundle not found under $BUILD_DIR"
-
-step "Installing $APP_PATH on $UDID..."
+step "Installing on simulator $UDID..."
 xcrun simctl install "$UDID" "$APP_PATH"
 
 step "Launching $BUNDLE_ID..."
