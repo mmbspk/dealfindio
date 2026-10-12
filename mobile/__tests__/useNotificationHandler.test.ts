@@ -21,6 +21,8 @@
  * 17.  Background tap: navigation deferred when navigator not ready, fires when ready
  * 18.  Cold-start: identifier saved to AsyncStorage AFTER navigation is queued, not before
  * 19.  Cold-start async is cancelled on unmount: no navigation or storage writes
+ * 20.  Cold-start unauthenticated: identifier NOT saved to AsyncStorage (safe for app restart)
+ * 21.  Cold-start unauthed then sign-in: navigation dispatched and identifier persisted after auth
  */
 
 import { renderHook, waitFor } from '@testing-library/react-native'
@@ -365,4 +367,42 @@ it('19 — cold-start async is cancelled on unmount: no navigation or storage wr
   expect(router.push).not.toHaveBeenCalled()
   expect(AsyncStorage.getItem).not.toHaveBeenCalled()
   expect(AsyncStorage.setItem).not.toHaveBeenCalled()
+})
+
+it('20 — cold-start unauthenticated: identifier not saved to AsyncStorage (safe for app restart)', async () => {
+  setupStoreMock(false)
+
+  const coldResponse = makeResponse({ identifier: 'restart-safe-id' })
+  ;(Notifications.getLastNotificationResponseAsync as jest.Mock).mockResolvedValue(coldResponse)
+
+  renderHook(() => useNotificationHandler())
+
+  await new Promise<void>((r) => setTimeout(r, 50))
+  // Must NOT be written yet — if the app is killed before sign-in the identifier
+  // must remain absent from storage so the next cold start can re-process it.
+  expect(AsyncStorage.setItem).not.toHaveBeenCalled()
+})
+
+it('21 — cold-start unauthed then sign-in: navigation dispatched and identifier persisted after auth', async () => {
+  setupStoreMock(false)
+
+  const coldResponse = makeResponse({ identifier: 'auth-then-persist-id' })
+  ;(Notifications.getLastNotificationResponseAsync as jest.Mock).mockResolvedValue(coldResponse)
+
+  const { rerender } = renderHook(() => useNotificationHandler())
+
+  await new Promise<void>((r) => setTimeout(r, 50))
+  expect(AsyncStorage.setItem).not.toHaveBeenCalled()  // not saved before auth
+
+  // User signs in
+  setupStoreMock(true)
+  rerender(undefined)
+
+  await waitFor(() => {
+    expect(router.push).toHaveBeenCalledWith(`/product/${VALID_PRODUCT_UUID}`)
+    expect(AsyncStorage.setItem).toHaveBeenCalledWith(
+      '@dealfindio/cold_start_notif_id',
+      'auth-then-persist-id',
+    )
+  })
 })

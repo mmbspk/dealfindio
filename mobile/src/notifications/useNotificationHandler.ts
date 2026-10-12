@@ -12,6 +12,11 @@ const COLD_START_NOTIF_KEY = '@dealfindio/cold_start_notif_id'
 interface PendingAction {
   route: string
   notificationId: string | null
+  // Non-null only when the action originated from a cold-start tap. The
+  // identifier must not be written to AsyncStorage until navigation is
+  // dispatched: if the app is killed before sign-in the notification must
+  // remain re-processable on the next cold start.
+  coldStartId: string | null
 }
 
 function extractProductId(response: Notifications.NotificationResponse): string | null {
@@ -104,6 +109,12 @@ export function useNotificationHandler(): void {
       markReadAndRefreshBadge(action.notificationId, setUnreadCount)
     }
     queueOrNavigate(action.route)
+    // Cold-start taps skip their AsyncStorage write until now so that killing
+    // the app before sign-in leaves the identifier absent from storage and
+    // the notification re-processable. Write it here, after navigation is queued.
+    if (action.coldStartId) {
+      void AsyncStorage.setItem(COLD_START_NOTIF_KEY, action.coldStartId).catch(() => {})
+    }
   }, [isAuthenticated, queueOrNavigate, setUnreadCount])
 
   // Register foreground display config and the background/foreground tap listener.
@@ -132,7 +143,7 @@ export function useNotificationHandler(): void {
         // Unauthenticated: preserve destination and notification ID so navigation
         // and mark-as-read can both fire once the user signs in.
         if (productId) {
-          pendingAfterAuth.current = { route: `/product/${productId}`, notificationId }
+          pendingAfterAuth.current = { route: `/product/${productId}`, notificationId, coldStartId: null }
         }
         return
       }
@@ -171,16 +182,27 @@ export function useNotificationHandler(): void {
 
       if (!isAuthRef.current) {
         // Unauthenticated cold start: defer until login, same as background tap.
+        // Do NOT write to AsyncStorage here — the action only exists in memory.
+        // If the app is killed before the user signs in, the identifier must be
+        // absent from storage so the next cold start can re-process it safely.
+        // The identifier will be persisted by the auth-restoration effect once
+        // navigation is actually dispatched.
         if (productId) {
-          pendingAfterAuth.current = { route: `/product/${productId}`, notificationId }
+          pendingAfterAuth.current = {
+            route: `/product/${productId}`,
+            notificationId,
+            coldStartId: identifier,
+          }
         }
-      } else {
-        if (notificationId) {
-          markReadAndRefreshBadge(notificationId, setUnreadCount)
-        }
-        if (productId) {
-          queueOrNavigate(`/product/${productId}`)
-        }
+        return  // skip AsyncStorage.setItem
+      }
+
+      // Authenticated path: queue navigation then persist.
+      if (notificationId) {
+        markReadAndRefreshBadge(notificationId, setUnreadCount)
+      }
+      if (productId) {
+        queueOrNavigate(`/product/${productId}`)
       }
 
       // Persist AFTER queuing navigation. A crash before this write causes a safe
