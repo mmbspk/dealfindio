@@ -103,6 +103,17 @@ export interface UserProfile {
   contribution_count: number
 }
 
+/** Data payload carried in an Expo push notification from the backend. */
+export interface PushNotificationPayload {
+  product_id?: string
+  list_id?: string | null
+  notification_id?: string | null
+  store_id?: string
+  price_cents?: string
+  trigger_type?: string
+  deep_link?: string
+}
+
 /** Payload for submitting a community price report. */
 export interface PriceReportSubmission {
   product_gtin?: string
