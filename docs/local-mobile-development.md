@@ -197,6 +197,30 @@ make doctor             # checks for low deployment targets
 
 ---
 
+## Troubleshooting fmt consteval errors (Xcode 27 / Apple Clang 21+)
+
+**Symptom:**
+
+```
+Pods/fmt/include/fmt/format-inl.h:59:24 error:
+'call to consteval function ... is not a constant expression'
+```
+
+**Cause:** React Native bundles `fmt 9.1.0` (via `RCT-Folly`).  `fmt 9.x` uses `consteval` in its `FMT_STRING()` macro.  Apple Clang 21 (Xcode 27) tightened its enforcement of the C++20 `consteval` standard in a way that rejects the macro.  This is a known upstream issue ([fmtlib/fmt#4740](https://github.com/fmtlib/fmt/issues/4740), [RN#55601](https://github.com/facebook/react-native/issues/55601)).
+
+**Fix (already applied):** `mobile/app.config.js` includes a config plugin (`plugins/withFmtAppleClangFix.js`) that injects a `post_install` hook which adds `-DFMT_USE_CONSTEVAL=0` to the `fmt` pod's `OTHER_CPLUSPLUSFLAGS` only.  This tells fmt to use `constexpr` instead of `consteval`.  No other pod or the global C++ standard is changed.
+
+**The fix survives `expo prebuild --clean`** because it is applied via a config plugin, not by editing generated files.
+
+**To rebuild from scratch:**
+
+```bash
+make ios-clean    # expo prebuild --clean + pod install (plugins re-inject automatically)
+make ios
+```
+
+---
+
 ## Troubleshooting `Simulator.app` discovery failures
 
 **Symptom:**

@@ -43,6 +43,10 @@ const config = {
     // their deployment target from the podspec, not from `platform :ios`)
     // to the project minimum.  Required for Xcode 27 which rejects < 15.0.
     './plugins/withFixPodsDeploymentTarget',
+    // Post-install hook that disables consteval in the fmt pod for Apple
+    // Clang 21+ (Xcode 27) compatibility.  fmt 9.x FMT_STRING() uses consteval
+    // in a way Apple Clang 21 rejects.  Ref: fmtlib/fmt#4740, RN#55601.
+    './plugins/withFmtAppleClangFix',
   ],
 };
 
