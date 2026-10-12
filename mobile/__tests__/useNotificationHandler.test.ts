@@ -23,6 +23,7 @@
  * 19.  Cold-start async is cancelled on unmount: no navigation or storage writes
  * 20.  Cold-start unauthenticated: identifier NOT saved to AsyncStorage (safe for app restart)
  * 21.  Cold-start unauthed then sign-in: navigation dispatched and identifier persisted after auth
+ * 22.  Authenticated cold-start nav-deferred: app termination before nav fires → notification re-processable
  */
 
 import { renderHook, waitFor } from '@testing-library/react-native'
@@ -245,7 +246,7 @@ it('13 — cold-start: stale notification already processed in a previous sessio
   expect(AsyncStorage.setItem).not.toHaveBeenCalled()
 })
 
-it('14 — cold-start: navigation deferred when navigator not ready, fires when it becomes ready', async () => {
+it('14 — cold-start: navigation deferred when navigator not ready; both push and setItem fire on flush', async () => {
   ;(useRootNavigationState as jest.Mock)
     .mockReturnValueOnce(undefined)    // not ready on first render
     .mockReturnValue(NAV_READY)        // ready on subsequent renders
@@ -255,22 +256,21 @@ it('14 — cold-start: navigation deferred when navigator not ready, fires when 
 
   const { rerender } = renderHook(() => useNotificationHandler())
 
-  // Wait for the cold-start async to write to AsyncStorage (proves processing completed)
-  await waitFor(() => {
-    expect(AsyncStorage.setItem).toHaveBeenCalledWith(
-      '@dealfindio/cold_start_notif_id',
-      'cold-deferred-id',
-    )
-  })
-
-  // Navigation must NOT have fired yet (navigator was not ready when cold-start ran)
+  // Cold-start has run and set pendingRoute, but neither push nor setItem should
+  // have fired yet — the identifier must not be persisted before navigation dispatches.
+  await new Promise<void>((r) => setTimeout(r, 50))
   expect(router.push).not.toHaveBeenCalled()
+  expect(AsyncStorage.setItem).not.toHaveBeenCalled()
 
-  // Simulate navigator becoming ready
+  // Simulate navigator becoming ready — flush effect fires push AND setItem together.
   rerender(undefined)
 
   await waitFor(() => {
     expect(router.push).toHaveBeenCalledWith(`/product/${VALID_PRODUCT_UUID}`)
+    expect(AsyncStorage.setItem).toHaveBeenCalledWith(
+      '@dealfindio/cold_start_notif_id',
+      'cold-deferred-id',
+    )
   })
 })
 
@@ -403,6 +403,50 @@ it('21 — cold-start unauthed then sign-in: navigation dispatched and identifie
     expect(AsyncStorage.setItem).toHaveBeenCalledWith(
       '@dealfindio/cold_start_notif_id',
       'auth-then-persist-id',
+    )
+  })
+})
+
+it('22 — authenticated cold-start nav-deferred: app termination before nav fires leaves notification re-processable', async () => {
+  // First launch: navigator not ready when cold-start runs
+  ;(useRootNavigationState as jest.Mock)
+    .mockReturnValueOnce(undefined)  // not ready on first render
+    .mockReturnValue(NAV_READY)
+
+  const coldResponse = makeResponse({ identifier: 'nav-deferred-restart-id' })
+  ;(Notifications.getLastNotificationResponseAsync as jest.Mock).mockResolvedValue(coldResponse)
+
+  const { unmount } = renderHook(() => useNotificationHandler())
+
+  await new Promise<void>((r) => setTimeout(r, 50))
+  // pendingRoute was set; identifier must NOT have been written to AsyncStorage
+  expect(router.push).not.toHaveBeenCalled()
+  expect(AsyncStorage.setItem).not.toHaveBeenCalled()
+
+  // App terminates — pendingRoute is lost from memory
+  unmount()
+
+  // Second launch: navigator immediately ready; identifier absent from storage
+  jest.clearAllMocks()
+  setupStoreMock(true)
+  ;(useRootNavigationState as jest.Mock).mockReturnValue(NAV_READY)
+  ;(Notifications.getLastNotificationResponseAsync as jest.Mock).mockResolvedValue(coldResponse)
+  ;(AsyncStorage.getItem as jest.Mock).mockResolvedValue(null)  // not in storage → re-processable
+  ;(AsyncStorage.setItem as jest.Mock).mockResolvedValue(undefined)
+  ;(apiClient.put as jest.Mock).mockResolvedValue({ data: {} })
+  ;(apiClient.get as jest.Mock).mockResolvedValue({ data: { count: 3 } })
+  ;(Notifications.addNotificationResponseReceivedListener as jest.Mock).mockImplementation((cb) => {
+    capturedListener = cb
+    return { remove: mockRemove }
+  })
+
+  renderHook(() => useNotificationHandler())
+
+  await waitFor(() => {
+    expect(router.push).toHaveBeenCalledWith(`/product/${VALID_PRODUCT_UUID}`)
+    expect(AsyncStorage.setItem).toHaveBeenCalledWith(
+      '@dealfindio/cold_start_notif_id',
+      'nav-deferred-restart-id',
     )
   })
 })

@@ -12,10 +12,18 @@ const COLD_START_NOTIF_KEY = '@dealfindio/cold_start_notif_id'
 interface PendingAction {
   route: string
   notificationId: string | null
-  // Non-null only when the action originated from a cold-start tap. The
-  // identifier must not be written to AsyncStorage until navigation is
-  // dispatched: if the app is killed before sign-in the notification must
-  // remain re-processable on the next cold start.
+  // Non-null only when the action originated from a cold-start tap. The identifier
+  // must not be written to AsyncStorage until navigation is dispatched; keeping it
+  // here ensures it can be threaded to pendingRoute when nav is not yet ready.
+  coldStartId: string | null
+}
+
+interface PendingRoute {
+  route: string
+  // Non-null when the route came from a cold-start tap. The flush effect writes
+  // the identifier to AsyncStorage after router.push fires, so killing the app
+  // before the navigator initialises leaves the identifier absent from storage
+  // and the notification re-processable on the next cold start.
   coldStartId: string | null
 }
 
@@ -55,70 +63,78 @@ function markReadAndRefreshBadge(
  * Registers foreground/background/cold-start notification handlers.
  * Call once in the root layout — must be mounted for the lifetime of the app.
  *
- * All three code paths (foreground tap, background tap, cold start) route through
- * the same readiness and authentication gates before navigating.
+ * All three code paths (foreground tap, background tap, cold start) share the same
+ * readiness and authentication gates. The cold-start identifier is only persisted to
+ * AsyncStorage after router.push has actually been called, whether that happens
+ * synchronously or after the navigator and/or authentication become ready.
  */
 export function useNotificationHandler(): void {
   const setUnreadCount = useStore((s) => s.setUnreadCount)
   const isAuthenticated = useStore((s) => s.isAuthenticated)
 
   const processedIds = useRef<Set<string>>(new Set())
-  const pendingRoute = useRef<string | null>(null)
-  // A tap that arrived while the user was not authenticated — held until login.
+  const pendingRoute = useRef<PendingRoute | null>(null)
   const pendingAfterAuth = useRef<PendingAction | null>(null)
 
-  // Refs mirror reactive values for use inside async callbacks and stable closures.
   const isAuthRef = useRef(isAuthenticated)
   const isNavReadyRef = useRef(false)
 
   const rootNavState = useRootNavigationState()
   const isNavReady = !!rootNavState?.key
 
-  // Update refs every render so async code always reads the latest values.
   isAuthRef.current = isAuthenticated
   isNavReadyRef.current = isNavReady
 
-  // Shared navigation helper used by all three code paths.
-  // useCallback with empty deps — only reads refs and calls stable router import.
+  // Used only by the background-tap subscription handler — no coldStartId to thread.
   const queueOrNavigate = useCallback((route: string): void => {
     if (isNavReadyRef.current) {
       router.push(route)
     } else {
-      pendingRoute.current = route
+      pendingRoute.current = { route, coldStartId: null }
     }
   }, [])
 
-  // Once the navigator is ready, flush any navigation that was deferred because the
-  // navigator had not yet initialised (cold start or early background tap).
+  // Flush any deferred navigation once the navigator becomes ready.
+  // If the pending route originated from a cold start, persist the identifier
+  // only here — after router.push has actually been called.
   useEffect(() => {
     if (isNavReady && pendingRoute.current) {
-      const route = pendingRoute.current
+      const { route, coldStartId } = pendingRoute.current
       pendingRoute.current = null
       router.push(route)
+      if (coldStartId) {
+        void AsyncStorage.setItem(COLD_START_NOTIF_KEY, coldStartId).catch(() => {})
+      }
     }
   }, [isNavReady])
 
   // Resume a notification action that arrived while the user was unauthenticated.
-  // On false→true auth transition: navigate and reconcile the mark-as-read state.
+  // Inlines the nav-readiness check so that a cold-start coldStartId is threaded
+  // through to pendingRoute when nav is not yet ready, rather than being saved to
+  // AsyncStorage before the push fires.
   useEffect(() => {
     if (!isAuthenticated) return
     const action = pendingAfterAuth.current
     if (!action) return
     pendingAfterAuth.current = null
+
     if (action.notificationId) {
       markReadAndRefreshBadge(action.notificationId, setUnreadCount)
     }
-    queueOrNavigate(action.route)
-    // Cold-start taps skip their AsyncStorage write until now so that killing
-    // the app before sign-in leaves the identifier absent from storage and
-    // the notification re-processable. Write it here, after navigation is queued.
-    if (action.coldStartId) {
-      void AsyncStorage.setItem(COLD_START_NOTIF_KEY, action.coldStartId).catch(() => {})
+
+    if (isNavReadyRef.current) {
+      router.push(action.route)
+      if (action.coldStartId) {
+        void AsyncStorage.setItem(COLD_START_NOTIF_KEY, action.coldStartId).catch(() => {})
+      }
+    } else {
+      // Pass coldStartId into pendingRoute so the flush effect writes AsyncStorage
+      // after the push — not before.
+      pendingRoute.current = { route: action.route, coldStartId: action.coldStartId }
     }
-  }, [isAuthenticated, queueOrNavigate, setUnreadCount])
+  }, [isAuthenticated, setUnreadCount])
 
   // Register foreground display config and the background/foreground tap listener.
-  // Both queueOrNavigate and setUnreadCount are stable, so this runs only on mount.
   useEffect(() => {
     Notifications.setNotificationHandler({
       handleNotification: () =>
@@ -140,15 +156,12 @@ export function useNotificationHandler(): void {
       const notificationId = extractNotificationId(response)
 
       if (!isAuthRef.current) {
-        // Unauthenticated: preserve destination and notification ID so navigation
-        // and mark-as-read can both fire once the user signs in.
         if (productId) {
           pendingAfterAuth.current = { route: `/product/${productId}`, notificationId, coldStartId: null }
         }
         return
       }
 
-      // Authenticated path: fire mark-as-read concurrently — NEVER awaited before nav.
       if (notificationId) {
         markReadAndRefreshBadge(notificationId, setUnreadCount)
       }
@@ -181,12 +194,10 @@ export function useNotificationHandler(): void {
       const notificationId = extractNotificationId(response)
 
       if (!isAuthRef.current) {
-        // Unauthenticated cold start: defer until login, same as background tap.
-        // Do NOT write to AsyncStorage here — the action only exists in memory.
-        // If the app is killed before the user signs in, the identifier must be
-        // absent from storage so the next cold start can re-process it safely.
-        // The identifier will be persisted by the auth-restoration effect once
-        // navigation is actually dispatched.
+        // Unauthenticated: defer to login. Do NOT write to AsyncStorage — the
+        // identifier will be persisted by the auth-restoration path once navigation
+        // is actually dispatched, so killing the app before sign-in leaves the
+        // notification re-processable on the next cold start.
         if (productId) {
           pendingAfterAuth.current = {
             route: `/product/${productId}`,
@@ -194,19 +205,30 @@ export function useNotificationHandler(): void {
             coldStartId: identifier,
           }
         }
-        return  // skip AsyncStorage.setItem
+        return
       }
 
-      // Authenticated path: queue navigation then persist.
+      // Authenticated path.
       if (notificationId) {
         markReadAndRefreshBadge(notificationId, setUnreadCount)
       }
+
       if (productId) {
-        queueOrNavigate(`/product/${productId}`)
+        if (isNavReadyRef.current) {
+          router.push(`/product/${productId}`)
+          // Nav dispatched synchronously — safe to persist immediately.
+          // (Falls through to the setItem below.)
+        } else {
+          // Nav not ready: bundle the route and identifier into pendingRoute so the
+          // flush effect persists after router.push fires, not before. An app kill
+          // before the navigator initialises leaves the identifier absent from storage
+          // and the notification re-processable on the next cold start.
+          pendingRoute.current = { route: `/product/${productId}`, coldStartId: identifier }
+          return  // skip setItem
+        }
       }
 
-      // Persist AFTER queuing navigation. A crash before this write causes a safe
-      // re-process on the next cold start rather than permanently losing the notification.
+      // Reached when: nav was dispatched synchronously, OR there is no productId.
       try {
         await AsyncStorage.setItem(COLD_START_NOTIF_KEY, identifier)
       } catch {
