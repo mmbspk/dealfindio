@@ -1,23 +1,28 @@
 /**
  * Story #93 — useNotificationHandler unit tests.
  *
- * Covers 11 scenarios:
- *  1. setNotificationHandler is called on mount
- *  2. Foreground handler config: shouldShowAlert=true, shouldSetBadge=false
- *  3. Background tap with valid product_id navigates to product screen
- *  4. Background tap marks notification as read via API
- *  5. Background tap refreshes unread badge count
- *  6. Tap with missing product_id does not navigate
- *  7. Tap with non-UUID product_id does not navigate
- *  8. Tap with null notification_id skips mark-read call
- *  9. Duplicate tap (same identifier) is processed only once
- * 10. Cold-start notification is handled on mount
- * 11. Subscription is cleaned up on unmount
+ * Covers 15 scenarios:
+ *  1.  setNotificationHandler is called on mount
+ *  2.  Foreground handler config: shouldShowAlert=true, shouldSetBadge=false
+ *  3.  Background tap with valid product_id navigates to product screen
+ *  4.  Background tap marks notification as read via API
+ *  5.  Background tap refreshes unread badge count
+ *  6.  Tap with missing product_id does not navigate
+ *  7.  Tap with non-UUID product_id does not navigate
+ *  8.  Tap with null notification_id skips mark-read call
+ *  9.  Duplicate tap (same identifier) is processed only once
+ * 10.  Cold-start notification is handled on mount
+ * 11.  Subscription is cleaned up on unmount
+ * 12.  Navigation fires immediately, concurrent with mark-as-read (non-blocking)
+ * 13.  Cold-start stale notification (already processed) is not replayed
+ * 14.  Cold-start navigation is deferred when navigator not ready, fires when ready
+ * 15.  Unauthenticated tap: mark-as-read skipped, navigation still fires
  */
 
 import { renderHook, waitFor } from '@testing-library/react-native'
 import * as Notifications from 'expo-notifications'
-import { router } from 'expo-router'
+import { router, useRootNavigationState } from 'expo-router'
+import AsyncStorage from '@react-native-async-storage/async-storage'
 
 // ── Mocks ─────────────────────────────────────────────────────────────────────
 
@@ -29,6 +34,12 @@ jest.mock('expo-notifications', () => ({
 
 jest.mock('expo-router', () => ({
   router: { push: jest.fn() },
+  useRootNavigationState: jest.fn(),
+}))
+
+jest.mock('@react-native-async-storage/async-storage', () => ({
+  getItem: jest.fn(),
+  setItem: jest.fn(),
 }))
 
 jest.mock('../src/api/client', () => ({
@@ -39,14 +50,13 @@ jest.mock('../src/api/client', () => ({
   },
 }))
 
-const mockSetUnreadCount = jest.fn()
 jest.mock('../src/store/store', () => ({
-  useStore: (selector: (s: { setUnreadCount: jest.Mock }) => unknown) =>
-    selector({ setUnreadCount: mockSetUnreadCount }),
+  useStore: jest.fn(),
 }))
 
-// Import AFTER mocks are declared (jest.mock is hoisted but imports must follow)
+// Imports must follow mock declarations (jest.mock is hoisted; imports are not)
 import apiClient from '../src/api/client'
+import { useStore } from '../src/store/store'
 import { useNotificationHandler } from '../src/notifications/useNotificationHandler'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -54,9 +64,20 @@ import { useNotificationHandler } from '../src/notifications/useNotificationHand
 const VALID_PRODUCT_UUID = '11111111-1111-1111-1111-111111111111'
 const VALID_NOTIF_UUID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
 
+const NAV_READY = { key: 'test-nav-key', routes: [], index: 0, type: 'stack', stale: false }
+
+const mockSetUnreadCount = jest.fn()
+
+function setupStoreMock(isAuthenticated = true) {
+  ;(useStore as unknown as jest.Mock).mockImplementation(
+    (selector: (s: { setUnreadCount: jest.Mock; isAuthenticated: boolean }) => unknown) =>
+      selector({ setUnreadCount: mockSetUnreadCount, isAuthenticated }),
+  )
+}
+
 function makeResponse(overrides: {
   identifier?: string
-  productId?: string | null  // null = omit product_id from payload
+  productId?: string | null  // null = omit product_id from data
   notificationId?: string | null
 } = {}): Notifications.NotificationResponse {
   const {
@@ -90,11 +111,15 @@ beforeEach(() => {
   jest.clearAllMocks()
   capturedListener = null
 
+  setupStoreMock(true)
+  ;(useRootNavigationState as jest.Mock).mockReturnValue(NAV_READY)
   ;(Notifications.addNotificationResponseReceivedListener as jest.Mock).mockImplementation((cb) => {
     capturedListener = cb
     return { remove: mockRemove }
   })
   ;(Notifications.getLastNotificationResponseAsync as jest.Mock).mockResolvedValue(null)
+  ;(AsyncStorage.getItem as jest.Mock).mockResolvedValue(null)
+  ;(AsyncStorage.setItem as jest.Mock).mockResolvedValue(undefined)
   ;(apiClient.put as jest.Mock).mockResolvedValue({ data: {} })
   ;(apiClient.get as jest.Mock).mockResolvedValue({ data: { count: 3 } })
 })
@@ -184,4 +209,73 @@ it('11 — notification listener subscription is removed on unmount', () => {
   const { unmount } = renderHook(() => useNotificationHandler())
   unmount()
   expect(mockRemove).toHaveBeenCalledTimes(1)
+})
+
+it('12 — navigation fires immediately even when mark-as-read request is pending', async () => {
+  // Put never resolves — navigation must not wait for it
+  ;(apiClient.put as jest.Mock).mockReturnValue(new Promise(() => {}))
+
+  renderHook(() => useNotificationHandler())
+  capturedListener!(makeResponse())
+
+  await waitFor(() => {
+    expect(router.push).toHaveBeenCalledWith(`/product/${VALID_PRODUCT_UUID}`)
+  })
+  // Confirm navigation happened while put is still pending
+  expect(apiClient.put).toHaveBeenCalledTimes(1)
+})
+
+it('13 — cold-start: stale notification already processed in a previous session is not replayed', async () => {
+  const identifier = 'previously-seen-id'
+  ;(Notifications.getLastNotificationResponseAsync as jest.Mock).mockResolvedValue(
+    makeResponse({ identifier }),
+  )
+  ;(AsyncStorage.getItem as jest.Mock).mockResolvedValue(identifier)  // already stored
+
+  renderHook(() => useNotificationHandler())
+
+  await new Promise<void>((r) => setTimeout(r, 50))
+  expect(router.push).not.toHaveBeenCalled()
+  expect(AsyncStorage.setItem).not.toHaveBeenCalled()
+})
+
+it('14 — cold-start: navigation deferred when navigator not ready, fires when it becomes ready', async () => {
+  ;(useRootNavigationState as jest.Mock)
+    .mockReturnValueOnce(undefined)    // not ready on first render
+    .mockReturnValue(NAV_READY)        // ready on subsequent renders
+
+  const coldResponse = makeResponse({ identifier: 'cold-deferred-id' })
+  ;(Notifications.getLastNotificationResponseAsync as jest.Mock).mockResolvedValue(coldResponse)
+
+  const { rerender } = renderHook(() => useNotificationHandler())
+
+  // Wait for the cold-start async to write to AsyncStorage (proves processing completed)
+  await waitFor(() => {
+    expect(AsyncStorage.setItem).toHaveBeenCalledWith(
+      '@dealfindio/cold_start_notif_id',
+      'cold-deferred-id',
+    )
+  })
+
+  // Navigation must NOT have fired yet (navigator was not ready when cold-start ran)
+  expect(router.push).not.toHaveBeenCalled()
+
+  // Simulate navigator becoming ready by re-rendering with the updated mock
+  rerender(undefined)
+
+  await waitFor(() => {
+    expect(router.push).toHaveBeenCalledWith(`/product/${VALID_PRODUCT_UUID}`)
+  })
+})
+
+it('15 — unauthenticated tap: mark-as-read is skipped but navigation still fires', async () => {
+  setupStoreMock(false)  // isAuthenticated = false
+
+  renderHook(() => useNotificationHandler())
+  capturedListener!(makeResponse())
+
+  await waitFor(() => {
+    expect(router.push).toHaveBeenCalledWith(`/product/${VALID_PRODUCT_UUID}`)
+  })
+  expect(apiClient.put).not.toHaveBeenCalled()
 })
