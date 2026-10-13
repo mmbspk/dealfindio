@@ -153,7 +153,7 @@ else
   SCHEME=$(ios_find_scheme "$WORKSPACE") || exit 1
 fi
 
-ios_build "$WORKSPACE" "$SCHEME" "$UDID" "$BUILD_DIR" || exit 1
+ios_build "$WORKSPACE" "$SCHEME" "$UDID" "$BUILD_DIR" "${JOBS:-}" || exit 1
 
 APP_PATH=$(ios_find_app "$BUILD_DIR") || exit 1
 

@@ -90,14 +90,28 @@ ios_find_app() {
   printf '%s\n' "$app"
 }
 
-# ios_build <workspace> <scheme> <udid> <build_dir>
+# ios_build <workspace> <scheme> <udid> <build_dir> [jobs]
 # Runs xcodebuild exactly once, streams filtered output, returns xcodebuild's
 # own exit code via PIPESTATUS (not the pipeline's exit).
+# Optional fifth argument limits xcodebuild parallelism via -jobs <n>.
+# Omit (or pass empty string) to let xcodebuild choose automatically.
 ios_build() {
   local workspace="$1" scheme="$2" udid="$3" build_dir="$4"
+  local jobs="${5:-}"
   local xcbuild_log
   xcbuild_log="$(mktemp "${TMPDIR:-/tmp}/xcodebuild.XXXXXX")"
-  printf '→ Building %s (log: %s)\n' "$scheme" "$xcbuild_log"
+
+  # Validate jobs when provided
+  if [[ -n "$jobs" ]] && ! [[ "$jobs" =~ ^[1-9][0-9]*$ ]]; then
+    printf 'ERROR: JOBS must be a positive integer (got: %s)\n' "$jobs" >&2
+    return 1
+  fi
+
+  local jobs_args=()
+  [[ -n "$jobs" ]] && jobs_args=(-jobs "$jobs")
+
+  printf '→ Building %s%s (log: %s)\n' "$scheme" \
+    "${jobs:+ with -jobs $jobs}" "$xcbuild_log"
 
   # Disable pipefail so PIPESTATUS[0] captures xcodebuild's exit without the
   # pipeline aborting if grep finds no matching filter lines.
@@ -108,6 +122,7 @@ ios_build() {
     -configuration Debug \
     -destination "id=$udid" \
     -derivedDataPath "$build_dir" \
+    "${jobs_args[@]}" \
     build 2>&1 | tee "$xcbuild_log" | { grep -E "^(Build|error:|warning:|CompileSwift|Linking)" || true; }
   local build_exit="${PIPESTATUS[0]}"
   set -o pipefail

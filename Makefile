@@ -11,6 +11,11 @@ SHELL := /usr/bin/env bash -euo pipefail
 DEVICE    ?=
 DEVICE_ID ?=
 
+# Limit xcodebuild parallelism to reduce heat on sustained builds.
+# Leave unset to let xcodebuild use all available cores.
+# Example: make ios JOBS=2
+JOBS ?=
+
 # ── Phony ─────────────────────────────────────────────────────────────────────
 .PHONY: help doctor setup-mobile \
         ios ios-device ios-clean ios-test ios-unit-test \
@@ -28,6 +33,7 @@ help:
 	@echo "  make ios                Build + launch on iOS Simulator (auto-select)"
 	@echo "  make ios DEVICE=\"iPhone 18 Pro\""
 	@echo "  make ios DEVICE_ID=<UUID>"
+	@echo "  make ios JOBS=2         Limit xcodebuild to 2 parallel compile jobs"
 	@echo "  make ios-device         Interactive simulator selection"
 	@echo "  make ios-clean          Regenerate iOS native project and Pods from scratch"
 	@echo ""
@@ -52,7 +58,7 @@ setup-mobile:
 
 # ── iOS build + launch ────────────────────────────────────────────────────────
 ios:
-	@DEVICE="$(DEVICE)" DEVICE_ID="$(DEVICE_ID)" bash scripts/dev/ios.sh
+	@DEVICE="$(DEVICE)" DEVICE_ID="$(DEVICE_ID)" JOBS="$(JOBS)" bash scripts/dev/ios.sh
 
 # Interactive device selection (prompts user)
 ios-device:

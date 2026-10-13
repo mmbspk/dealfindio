@@ -190,6 +190,62 @@ MOCK
   fi
 }; t8
 
+# ── T9: JOBS=2 reaches xcodebuild as -jobs 2 ─────────────────────────────────
+t9() {
+  local d; d=$(mktemp -d); mkdir -p "$d/ios/App.xcworkspace" "$d/bin" "$d/build"
+  local xcbuild_log="$d/xcbuild-args.log"
+
+  # xcodebuild mock: records its argument list and succeeds
+  cat > "$d/bin/xcodebuild" <<MOCK
+#!/usr/bin/env bash
+printf '%s\n' "\$@" >> "$xcbuild_log"
+exit 0
+MOCK
+  chmod +x "$d/bin/xcodebuild"
+
+  local rc
+  PATH="$d/bin:$PATH" bash -c \
+    ". '$HELPERS'; ios_build '$d/ios/App.xcworkspace' 'App' 'FAKE-UDID' '$d/build' '2'" \
+    > /dev/null 2>&1 && rc=$? || rc=$?
+
+  local xcbuild_output
+  xcbuild_output=$(cat "$xcbuild_log" 2>/dev/null || printf '')
+  rm -rf "$d"
+
+  # The recorded argument list must contain "-jobs" followed by "2"
+  if [[ "$rc" -eq 0 && "$xcbuild_output" == *"-jobs"*"2"* ]]; then
+    ok "T9: JOBS=2 passes -jobs 2 to xcodebuild"
+  else
+    fail "T9: JOBS=2 passes -jobs 2 to xcodebuild" \
+      "rc=$rc xcodebuild args='$xcbuild_output'"
+  fi
+}; t9
+
+# ── T10: non-integer JOBS rejected with error ─────────────────────────────────
+t10() {
+  local d; d=$(mktemp -d); mkdir -p "$d/ios/App.xcworkspace" "$d/bin" "$d/build"
+
+  # xcodebuild mock: should not be called at all
+  cat > "$d/bin/xcodebuild" <<'MOCK'
+#!/usr/bin/env bash
+exit 0
+MOCK
+  chmod +x "$d/bin/xcodebuild"
+
+  local result rc
+  result=$(PATH="$d/bin:$PATH" bash -c \
+    ". '$HELPERS'; ios_build '$d/ios/App.xcworkspace' 'App' 'FAKE-UDID' '$d/build' 'abc'" \
+    2>&1) && rc=$? || rc=$?
+  rm -rf "$d"
+
+  if [[ "$rc" -ne 0 && "$result" == *"positive integer"* ]]; then
+    ok "T10: non-integer JOBS rejected with validation error"
+  else
+    fail "T10: non-integer JOBS rejected with validation error" \
+      "rc=$rc output='$result'"
+  fi
+}; t10
+
 # ── Results ───────────────────────────────────────────────────────────────────
 echo ""
 echo "── Results ───────────────────────────────────────────────────────────────"
