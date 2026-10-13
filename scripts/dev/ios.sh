@@ -103,12 +103,14 @@ elif [[ "app.config.js" -nt "ios/Podfile" ]] || \
      [[ "app.json" -nt "ios/Podfile" ]] || \
      [[ "plugins/withFixPodsDeploymentTarget.js" -nt "ios/Podfile" ]] || \
      [[ "plugins/withFmtAppleClangFix.js" -nt "ios/Podfile" ]] || \
+     [[ "plugins/withIosSceneLifecycle.js" -nt "ios/Podfile" ]] || \
      [[ "package.json" -nt "ios/Podfile" ]]; then
   step "Config changed since last prebuild — regenerating native project..."
   NEEDS_PREBUILD=1
 elif ! grep -q "withFixPodsDeploymentTarget" "ios/Podfile" 2>/dev/null || \
-     ! grep -q "withFmtAppleClangFix" "ios/Podfile" 2>/dev/null; then
-  step "Config plugins missing from existing Podfile — re-running expo prebuild..."
+     ! grep -q "withFmtAppleClangFix" "ios/Podfile" 2>/dev/null || \
+     ! grep -rq "withIosSceneLifecycle" "ios/dealfindio/AppDelegate.swift" 2>/dev/null; then
+  step "Config plugins missing from existing native project — re-running expo prebuild..."
   NEEDS_PREBUILD=1
 fi
 

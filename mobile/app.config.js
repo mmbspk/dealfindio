@@ -47,6 +47,11 @@ const config = {
     // Clang 21+ (Xcode 27) compatibility.  fmt 9.x FMT_STRING() uses consteval
     // in a way Apple Clang 21 rejects.  Ref: fmtlib/fmt#4740, RN#55601.
     './plugins/withFmtAppleClangFix',
+    // Adds UIApplicationSceneManifest to Info.plist and wires UIWindowSceneDelegate
+    // into AppDelegate.swift so the app satisfies iOS 26+ SDK requirements.
+    // Expo SDK 54's ExpoAppDelegate has a TODO for scene lifecycle; this plugin
+    // bridges the gap without upgrading Expo.
+    './plugins/withIosSceneLifecycle',
   ],
 };
 
