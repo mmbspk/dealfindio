@@ -16,6 +16,12 @@ DEVICE_ID ?=
 # Example: make ios JOBS=2
 JOBS ?=
 
+# Metro bundler port.  Override when port 8081 is occupied by another process.
+# The native iOS debug build is told to connect to the same port via
+# xcrun simctl spawn (writes RCT_jsLocation to the app's NSUserDefaults).
+# Example: make ios METRO_PORT=8082
+METRO_PORT ?= 8081
+
 # ── Phony ─────────────────────────────────────────────────────────────────────
 .PHONY: help doctor setup-mobile \
         ios ios-device ios-clean ios-test ios-unit-test \
@@ -34,6 +40,7 @@ help:
 	@echo "  make ios DEVICE=\"iPhone 18 Pro\""
 	@echo "  make ios DEVICE_ID=<UUID>"
 	@echo "  make ios JOBS=2         Limit xcodebuild to 2 parallel compile jobs"
+	@echo "  make ios METRO_PORT=8082 Use Metro on port 8082 (when 8081 is occupied)"
 	@echo "  make ios-device         Interactive simulator selection"
 	@echo "  make ios-clean          Regenerate iOS native project and Pods from scratch"
 	@echo ""
@@ -58,7 +65,7 @@ setup-mobile:
 
 # ── iOS build + launch ────────────────────────────────────────────────────────
 ios:
-	@DEVICE="$(DEVICE)" DEVICE_ID="$(DEVICE_ID)" JOBS="$(JOBS)" bash scripts/dev/ios.sh
+	@DEVICE="$(DEVICE)" DEVICE_ID="$(DEVICE_ID)" JOBS="$(JOBS)" METRO_PORT="$(METRO_PORT)" bash scripts/dev/ios.sh
 
 # Interactive device selection (prompts user)
 ios-device:

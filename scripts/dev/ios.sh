@@ -160,8 +160,17 @@ APP_PATH=$(ios_find_app "$BUILD_DIR") || exit 1
 step "Installing on simulator $UDID..."
 xcrun simctl install "$UDID" "$APP_PATH"
 
+# Tell RCTBundleURLProvider which port Metro is on.
+# It reads NSUserDefaults["RCT_jsLocation"] before probing localhost:8081, so
+# writing here ensures the native debug build connects to the right Metro
+# even when the default port 8081 is occupied by another process.
+EFFECTIVE_METRO_PORT="${METRO_PORT:-8081}"
+step "Configuring Metro port $EFFECTIVE_METRO_PORT for iOS debug build..."
+xcrun simctl spawn "$UDID" defaults write "$BUNDLE_ID" \
+  RCT_jsLocation "localhost:$EFFECTIVE_METRO_PORT" || true
+
 step "Launching $BUNDLE_ID..."
 xcrun simctl launch "$UDID" "$BUNDLE_ID"
 
-step "Starting Metro bundler..."
-npx expo start --dev-client
+step "Starting Metro bundler on port $EFFECTIVE_METRO_PORT..."
+npx expo start --dev-client --port "$EFFECTIVE_METRO_PORT"
