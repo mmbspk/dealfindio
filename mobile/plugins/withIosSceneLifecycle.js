@@ -44,6 +44,16 @@ const path = require('path');
 const PATCH_MARKER = '// # [withIosSceneLifecycle]';
 
 /**
+ * Expo SDK 54 generates `var window` with internal (module) access.
+ * `UIWindowSceneDelegate` is a `public` protocol, so the `window` property it
+ * requires must also be `public`.  Without this, Swift emits:
+ *   error: property 'window' must be declared public because it matches a
+ *          requirement in public protocol 'UIWindowSceneDelegate'
+ */
+const WINDOW_DECL_OLD = '  var window: UIWindow?';
+const WINDOW_DECL_NEW = '  public var window: UIWindow?';
+
+/**
  * The exact window-creation block Expo SDK 54 generates inside
  * `didFinishLaunchingWithOptions`.  Matched including the leading blank line
  * so the replacement leaves a single clean comment line.
@@ -124,16 +134,40 @@ const CLASS_TRANSITION = '\n}\n\nclass ReactNativeDelegate';
  * @returns {string}         Patched file contents
  */
 function patchAppDelegate(contents) {
-  if (contents.includes(PATCH_MARKER)) return contents;
+  // ── Step 0 — make window property public (independent of full-patch marker) ──
+  //
+  // This step runs even when the file was already patched by an older version of
+  // this plugin that pre-dates the access-control fix.  It is safe to re-run:
+  // if WINDOW_DECL_OLD is absent and WINDOW_DECL_NEW is present, the replace is
+  // skipped; if neither is present the file has changed in an unexpected way.
+  const hasInternalWindow = contents.includes(WINDOW_DECL_OLD);
+  const hasPublicWindow = contents.includes(WINDOW_DECL_NEW);
 
-  if (!contents.includes(WINDOW_SETUP_OLD)) {
+  if (!hasInternalWindow && !hasPublicWindow) {
+    throw new Error(
+      '[withIosSceneLifecycle]: expected "var window: UIWindow?" declaration not found in ' +
+        'AppDelegate.swift.  The Expo SDK 54 template may have changed — review withIosSceneLifecycle.js.'
+    );
+  }
+
+  let patched = hasInternalWindow
+    ? contents.replace(WINDOW_DECL_OLD, WINDOW_DECL_NEW)
+    : contents;
+
+  // ── Steps 1–2 — scene lifecycle insertion (gated by full-patch marker) ───────
+  //
+  // If the marker is already present the scene lifecycle blocks were injected by
+  // a previous prebuild run.  Skip to avoid duplicating them.
+  if (patched.includes(PATCH_MARKER)) return patched;
+
+  if (!patched.includes(WINDOW_SETUP_OLD)) {
     throw new Error(
       '[withIosSceneLifecycle]: expected UIWindow creation block not found in AppDelegate.swift. ' +
         'The Expo SDK 54 template may have changed — review withIosSceneLifecycle.js.'
     );
   }
 
-  if (!contents.includes(CLASS_TRANSITION)) {
+  if (!patched.includes(CLASS_TRANSITION)) {
     throw new Error(
       '[withIosSceneLifecycle]: expected class boundary (AppDelegate → ReactNativeDelegate) ' +
         'not found in AppDelegate.swift.'
@@ -141,7 +175,7 @@ function patchAppDelegate(contents) {
   }
 
   // 1. Remove the window-creation block from didFinishLaunchingWithOptions
-  let patched = contents.replace(WINDOW_SETUP_OLD, WINDOW_SETUP_NEW);
+  patched = patched.replace(WINDOW_SETUP_OLD, WINDOW_SETUP_NEW);
 
   // 2. Insert configurationForConnecting inside AppDelegate, then add the
   //    UIWindowSceneDelegate extension right after the class closes.
@@ -205,5 +239,7 @@ function withIosSceneLifecycle(config) {
 module.exports = withIosSceneLifecycle;
 module.exports.patchAppDelegate = patchAppDelegate;
 module.exports.PATCH_MARKER = PATCH_MARKER;
+module.exports.WINDOW_DECL_OLD = WINDOW_DECL_OLD;
+module.exports.WINDOW_DECL_NEW = WINDOW_DECL_NEW;
 module.exports.WINDOW_SETUP_OLD = WINDOW_SETUP_OLD;
 module.exports.CLASS_TRANSITION = CLASS_TRANSITION;
