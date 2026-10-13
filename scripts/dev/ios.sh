@@ -102,6 +102,7 @@ if [[ ! -f "ios/Podfile" ]]; then
 elif [[ "app.config.js" -nt "ios/Podfile" ]] || \
      [[ "app.json" -nt "ios/Podfile" ]] || \
      [[ "plugins/withFixPodsDeploymentTarget.js" -nt "ios/Podfile" ]] || \
+     [[ "plugins/withFmtAppleClangFix.js" -nt "ios/Podfile" ]] || \
      [[ "package.json" -nt "ios/Podfile" ]]; then
   step "Config changed since last prebuild — regenerating native project..."
   NEEDS_PREBUILD=1
