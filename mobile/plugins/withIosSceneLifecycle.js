@@ -25,11 +25,22 @@
  *     a. Remove the `#if os(iOS)…#endif` window-creation block from
  *        `didFinishLaunchingWithOptions`.
  *     b. Add `application(_:configurationForConnecting:options:)` which
- *        designates AppDelegate itself as the scene delegate via
- *        `config.delegateClass = type(of: self)`.
+ *        returns a `UISceneConfiguration` WITHOUT setting `delegateClass`.
+ *        When `delegateClass` is nil and no `UISceneDelegateClassName` is
+ *        present in Info.plist, UIKit falls back to the existing app-delegate
+ *        object (documented Apple behaviour), so the same AppDelegate instance
+ *        that set up `reactNativeFactory` in `didFinishLaunchingWithOptions`
+ *        will receive `scene(_:willConnectTo:options:)`.
+ *        WARNING: setting `config.delegateClass = type(of: self)` would cause
+ *        UIKit to create a NEW AppDelegate instance as the scene delegate.
+ *        That new instance has `reactNativeFactory = nil`, so the guard in
+ *        `scene(_:willConnectTo:options:)` silently returns and React Native
+ *        never starts.
  *     c. Add an `extension AppDelegate: UIWindowSceneDelegate` block with
  *        `scene(_:willConnectTo:options:)` that creates
  *        `UIWindow(windowScene:)` and calls `startReactNative`.
+ *        `RCTReactNativeFactory.startReactNativeWithModuleName:inWindow:`
+ *        calls `[window makeKeyAndVisible]` itself — no additional call needed.
  *
  * The fix survives `expo prebuild --clean` because both changes are
  * re-applied by the plugin every time.
@@ -54,6 +65,26 @@ const WINDOW_DECL_OLD = '  var window: UIWindow?';
 const WINDOW_DECL_NEW = '  public var window: UIWindow?';
 
 /**
+ * Retroactive fix for files already patched by an older version of this plugin
+ * that incorrectly set `config.delegateClass = type(of: self)`.
+ *
+ * Setting delegateClass causes UIKit to instantiate a NEW AppDelegate as the
+ * scene delegate.  That new instance has reactNativeFactory = nil, so the
+ * guard in scene(_:willConnectTo:) silently returns and React Native never
+ * starts → black screen.
+ *
+ * The correct behaviour is to return the UISceneConfiguration with no
+ * delegateClass set.  UIKit then uses the existing app-delegate object
+ * (documented Apple fallback) which already holds reactNativeFactory.
+ */
+const DELEGATE_CLASS_FIXUP_OLD =
+  '    let config = UISceneConfiguration(name: "Default Configuration", sessionRole: connectingSceneSession.role)\n' +
+  '    config.delegateClass = type(of: self)\n' +
+  '    return config';
+const DELEGATE_CLASS_FIXUP_NEW =
+  '    return UISceneConfiguration(name: "Default Configuration", sessionRole: connectingSceneSession.role)';
+
+/**
  * The exact window-creation block Expo SDK 54 generates inside
  * `didFinishLaunchingWithOptions`.  Matched including the leading blank line
  * so the replacement leaves a single clean comment line.
@@ -76,21 +107,29 @@ const WINDOW_SETUP_NEW =
 
 /**
  * Scene-configuration callback to insert at the end of the AppDelegate class
- * body (before its closing `}`).  Designates AppDelegate as the UIWindowScene
- * delegate so iOS calls `scene(_:willConnectTo:options:)` on it.
+ * body (before its closing `}`).
+ *
+ * IMPORTANT: `delegateClass` is intentionally NOT set.  When delegateClass is
+ * nil and no UISceneDelegateClassName is in Info.plist, UIKit uses the
+ * existing app-delegate object as scene delegate (documented Apple fallback).
+ * That object already holds reactNativeFactory from didFinishLaunchingWithOptions.
+ * Setting delegateClass would create a fresh AppDelegate with nil factory.
  */
 const CONFIG_FOR_CONNECTING = [
   '',
-  '  ' + PATCH_MARKER + ': required by iOS 26+ SDK — returns a scene configuration pointing',
-  '  ' + PATCH_MARKER + ': to AppDelegate itself as UIWindowSceneDelegate.',
+  '  ' + PATCH_MARKER + ': required by iOS 26+ SDK.  Returns configuration without',
+  '  ' + PATCH_MARKER + ': delegateClass so UIKit reuses this AppDelegate instance',
+  '  ' + PATCH_MARKER + ': (which holds reactNativeFactory) as UIWindowSceneDelegate.',
   '  public func application(',
   '    _ application: UIApplication,',
   '    configurationForConnecting connectingSceneSession: UISceneSession,',
   '    options: UIScene.ConnectionOptions',
   '  ) -> UISceneConfiguration {',
-  '    let config = UISceneConfiguration(name: "Default Configuration", sessionRole: connectingSceneSession.role)',
-  '    config.delegateClass = type(of: self)',
-  '    return config',
+  '    #if DEBUG',
+  '    NSLog("[dealfindio:scene] configurationForConnecting — self=%p factory=%@",',
+  '          unsafeBitCast(self, to: UInt.self), reactNativeFactory != nil ? "set" : "NIL")',
+  '    #endif',
+  '    return UISceneConfiguration(name: "Default Configuration", sessionRole: connectingSceneSession.role)',
   '  }',
 ].join('\n');
 
@@ -98,6 +137,10 @@ const CONFIG_FOR_CONNECTING = [
  * UIWindowSceneDelegate extension that creates the app's main window once a
  * UIWindowScene is available.  `reactNativeFactory` was set up earlier in
  * `didFinishLaunchingWithOptions`; we simply call through to it here.
+ *
+ * RCTReactNativeFactory.startReactNativeWithModuleName:inWindow:launchOptions:
+ * (RCTReactNativeFactory.mm:83-95) unconditionally calls [window makeKeyAndVisible].
+ * No additional makeKeyAndVisible call is needed from our code.
  */
 const SCENE_DELEGATE_EXTENSION = [
   PATCH_MARKER + ': UIWindowSceneDelegate wires the React Native window into',
@@ -108,10 +151,19 @@ const SCENE_DELEGATE_EXTENSION = [
   '    willConnectTo session: UISceneSession,',
   '    options connectionOptions: UIScene.ConnectionOptions',
   '  ) {',
+  '    #if DEBUG',
+  '    NSLog("[dealfindio:scene] scene willConnectTo — self=%p factory=%@",',
+  '          unsafeBitCast(self, to: UInt.self), reactNativeFactory != nil ? "set" : "NIL")',
+  '    #endif',
   '    guard let windowScene = scene as? UIWindowScene,',
   '          let factory = reactNativeFactory else { return }',
   '    window = UIWindow(windowScene: windowScene)',
   '    factory.startReactNative(withModuleName: "main", in: window, launchOptions: nil)',
+  '    #if DEBUG',
+  '    NSLog("[dealfindio:scene] startReactNative done — rootVC=%@ isKey=%d isHidden=%d",',
+  '          String(describing: window?.rootViewController),',
+  '          window?.isKeyWindow == true ? 1 : 0, window?.isHidden == true ? 1 : 0)',
+  '    #endif',
   '  }',
   '}',
 ].join('\n');
@@ -153,6 +205,20 @@ function patchAppDelegate(contents) {
   let patched = hasInternalWindow
     ? contents.replace(WINDOW_DECL_OLD, WINDOW_DECL_NEW)
     : contents;
+
+  // ── Step 0.5 — retroactively remove config.delegateClass = type(of: self) ────
+  //
+  // Older versions of this plugin (before the scene-delegate instance fix)
+  // generated `config.delegateClass = type(of: self)` in the
+  // configurationForConnecting method.  That line causes UIKit to create a
+  // NEW AppDelegate as the scene delegate — which has reactNativeFactory = nil,
+  // so scene(_:willConnectTo:) silently returns and React Native never starts.
+  //
+  // This step runs unconditionally before the PATCH_MARKER check so it fixes
+  // files that were already patched by the old plugin, without needing --clean.
+  if (patched.includes(DELEGATE_CLASS_FIXUP_OLD)) {
+    patched = patched.replace(DELEGATE_CLASS_FIXUP_OLD, DELEGATE_CLASS_FIXUP_NEW);
+  }
 
   // ── Steps 1–2 — scene lifecycle insertion (gated by full-patch marker) ───────
   //
@@ -241,5 +307,7 @@ module.exports.patchAppDelegate = patchAppDelegate;
 module.exports.PATCH_MARKER = PATCH_MARKER;
 module.exports.WINDOW_DECL_OLD = WINDOW_DECL_OLD;
 module.exports.WINDOW_DECL_NEW = WINDOW_DECL_NEW;
+module.exports.DELEGATE_CLASS_FIXUP_OLD = DELEGATE_CLASS_FIXUP_OLD;
+module.exports.DELEGATE_CLASS_FIXUP_NEW = DELEGATE_CLASS_FIXUP_NEW;
 module.exports.WINDOW_SETUP_OLD = WINDOW_SETUP_OLD;
 module.exports.CLASS_TRANSITION = CLASS_TRANSITION;
