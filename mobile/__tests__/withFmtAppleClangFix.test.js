@@ -3,17 +3,19 @@
 /**
  * Regression tests for withFmtAppleClangFix.js
  *
- * Covers three scenarios:
- *   1. Patch applied once — RUBY_FIX injected at the right location
+ * Covers five scenarios:
+ *   1. Patch applied once — Ruby file-patching code injected at the right location
  *   2. Repeated run (idempotent) — applying twice produces identical output
  *   3. Unsupported Podfile layout — throws with a clear message
+ *   4. Clean Podfile (no prior patches) — works in isolation
+ *   5. Composition — both withFixPodsDeploymentTarget and withFmtAppleClangFix markers present
  */
 
-const { injectFmtFix, PATCH_MARKER } = require('../plugins/withFmtAppleClangFix');
+const { injectFmtFix, PATCH_MARKER, BASE_H_OLD_GUARD } = require('../plugins/withFmtAppleClangFix');
 
 // Minimal Expo-generated Podfile that ends with the expected trailing pattern.
-// The withFixPodsDeploymentTarget marker simulates a Podfile that already had
-// that plugin applied, verifying both plugins compose correctly.
+// The withFixPodsDeploymentTarget marker simulates a Podfile where that plugin
+// already ran, verifying both plugins compose correctly.
 const PODFILE_BASE = `require File.join(File.dirname(\`node --print "require.resolve('expo/package.json')"\`), "scripts/autolinking")
 require File.join(File.dirname(\`node --print "require.resolve('@react-native-community/cli-platform-ios/package.json')"\`), "native_modules/ios")
 
@@ -65,22 +67,30 @@ end`;
 
 describe('withFmtAppleClangFix — injectFmtFix', () => {
   // ── Test 1: patch applied once ────────────────────────────────────────────────
-  it('injects the fmt consteval fix into an unpatched Podfile', () => {
+  it('injects the fmt base.h patching code into an unpatched Podfile', () => {
     const result = injectFmtFix(PODFILE_BASE);
 
-    // Marker present
+    // Marker present in the Podfile
     expect(result).toContain(PATCH_MARKER);
 
-    // The flag is present in the injected Ruby
-    expect(result).toContain('-DFMT_USE_CONSTEVAL=0');
+    // Ruby reads fmt/base.h via the sandbox root
+    expect(result).toContain('fmt/include/fmt/base.h');
 
-    // Only the fmt pod is targeted
-    expect(result).toContain("next unless target.name == 'fmt'");
+    // Ruby contains the exact guard string we are searching for
+    expect(result).toContain(
+      '#elif defined(__apple_build_version__) && __apple_build_version__ < 14000029L'
+    );
 
-    // File still ends correctly — post_install block is properly closed
+    // Ruby patches the file using .sub (not gsub — narrow, replaces only first match)
+    expect(result).toContain('.sub(_old, _new)');
+
+    // Ruby does NOT set OTHER_CPLUSPLUSFLAGS (the old non-working approach)
+    expect(result).not.toContain('OTHER_CPLUSPLUSFLAGS');
+
+    // File ends correctly — post_install block properly closed
     expect(result.trimEnd()).toMatch(/\n  end\nend$/);
 
-    // The existing deployment-target patch is preserved
+    // Existing deployment-target patch is preserved
     expect(result).toContain('[withFixPodsDeploymentTarget]');
   });
 
@@ -92,9 +102,11 @@ describe('withFmtAppleClangFix — injectFmtFix', () => {
     // Output is byte-for-byte identical
     expect(twice).toBe(once);
 
-    // The marker appears exactly once (not duplicated)
-    const markerCount = (twice.split(PATCH_MARKER).length - 1);
-    expect(markerCount).toBe(1);
+    // Marker count does not grow on repeated calls (idempotency guard is working)
+    const markerCountOnce = once.split(PATCH_MARKER).length - 1;
+    const markerCountTwice = twice.split(PATCH_MARKER).length - 1;
+    expect(markerCountTwice).toBe(markerCountOnce);
+    expect(markerCountOnce).toBeGreaterThan(0);
   });
 
   // ── Test 3: unsupported Podfile layout ────────────────────────────────────────
@@ -109,24 +121,34 @@ describe('withFmtAppleClangFix — injectFmtFix', () => {
   it('works on a Podfile with no prior config-plugin patches', () => {
     const result = injectFmtFix(PODFILE_CLEAN);
     expect(result).toContain(PATCH_MARKER);
-    expect(result).toContain('-DFMT_USE_CONSTEVAL=0');
+    expect(result).toContain('fmt/include/fmt/base.h');
     expect(result.trimEnd()).toMatch(/\n  end\nend$/);
   });
 
-  // ── Test 5: deployment-target patch is preserved after fmt patch ──────────────
+  // ── Test 5: composition with deployment-target patch ─────────────────────────
   it('preserves the withFixPodsDeploymentTarget content when composing both plugins', () => {
     const result = injectFmtFix(PODFILE_BASE);
 
-    // Both markers present
+    // Both plugin markers are present in the Podfile
     expect(result).toContain('[withFixPodsDeploymentTarget]');
     expect(result).toContain('[withFmtAppleClangFix]');
 
-    // Both injected patches are inside the post_install block
+    // Both Ruby patches are inside the post_install block
     const postInstallContent = result.slice(
       result.indexOf('post_install do'),
       result.lastIndexOf('end')
     );
     expect(postInstallContent).toContain('IPHONEOS_DEPLOYMENT_TARGET');
-    expect(postInstallContent).toContain('FMT_USE_CONSTEVAL');
+    expect(postInstallContent).toContain('fmt/include/fmt/base.h');
+  });
+});
+
+describe('withFmtAppleClangFix — exported constants', () => {
+  it('exports BASE_H_OLD_GUARD matching the exact string in fmt 9.x base.h', () => {
+    // This value must match what is installed in mobile/ios/Pods/fmt/include/fmt/base.h.
+    // If it changes, the Ruby patch will no longer apply and the post_install raise fires.
+    expect(BASE_H_OLD_GUARD).toBe(
+      '#elif defined(__apple_build_version__) && __apple_build_version__ < 14000029L'
+    );
   });
 });
