@@ -25,20 +25,19 @@
  *     a. Remove the `#if os(iOS)…#endif` window-creation block from
  *        `didFinishLaunchingWithOptions`.
  *     b. Add `application(_:configurationForConnecting:options:)` which
- *        returns a `UISceneConfiguration` WITHOUT setting `delegateClass`.
- *        When `delegateClass` is nil and no `UISceneDelegateClassName` is
- *        present in Info.plist, UIKit falls back to the existing app-delegate
- *        object (documented Apple behaviour), so the same AppDelegate instance
- *        that set up `reactNativeFactory` in `didFinishLaunchingWithOptions`
- *        will receive `scene(_:willConnectTo:options:)`.
- *        WARNING: setting `config.delegateClass = type(of: self)` would cause
- *        UIKit to create a NEW AppDelegate instance as the scene delegate.
- *        That new instance has `reactNativeFactory = nil`, so the guard in
- *        `scene(_:willConnectTo:options:)` silently returns and React Native
- *        never starts.
+ *        returns a `UISceneConfiguration` with `delegateClass` explicitly
+ *        set to `type(of: self)`.  UIKit instantiates a new object of that
+ *        class as the scene delegate, so factory access in
+ *        `scene(_:willConnectTo:options:)` MUST go through
+ *        `UIApplication.shared.delegate as? AppDelegate` — NOT through
+ *        `self.reactNativeFactory`, which is nil on the new instance.
  *     c. Add an `extension AppDelegate: UIWindowSceneDelegate` block with
- *        `scene(_:willConnectTo:options:)` that creates
- *        `UIWindow(windowScene:)` and calls `startReactNative`.
+ *        `scene(_:willConnectTo:options:)` that retrieves the factory via
+ *        `UIApplication.shared.delegate as? AppDelegate`, creates
+ *        `UIWindow(windowScene:)`, syncs the window back to the original
+ *        AppDelegate instance via `appDelegate.window = win` (required for
+ *        deep-link routing via `UIApplication.shared.delegate.window`),
+ *        and calls `startReactNative`.
  *        `RCTReactNativeFactory.startReactNativeWithModuleName:inWindow:`
  *        calls `[window makeKeyAndVisible]` itself — no additional call needed.
  *
@@ -65,24 +64,68 @@ const WINDOW_DECL_OLD = '  var window: UIWindow?';
 const WINDOW_DECL_NEW = '  public var window: UIWindow?';
 
 /**
- * Retroactive fix for files already patched by an older version of this plugin
- * that incorrectly set `config.delegateClass = type(of: self)`.
+ * Retroactive fix (step 0.5) for files already patched by an older version of
+ * this plugin (commits up to 88df50d) that returned a UISceneConfiguration
+ * WITHOUT setting delegateClass, relying on an undocumented UIKit fallback.
  *
- * Setting delegateClass causes UIKit to instantiate a NEW AppDelegate as the
- * scene delegate.  That new instance has reactNativeFactory = nil, so the
- * guard in scene(_:willConnectTo:) silently returns and React Native never
- * starts → black screen.
+ * The correct behaviour is to set `config.delegateClass = type(of: self)`
+ * explicitly.  Factory access in the scene callback then goes through
+ * UIApplication.shared.delegate (see FACTORY_ACCESS_FIXUP / step 0.6).
  *
- * The correct behaviour is to return the UISceneConfiguration with no
- * delegateClass set.  UIKit then uses the existing app-delegate object
- * (documented Apple fallback) which already holds reactNativeFactory.
+ * OLD = the nil-delegateClass one-liner from commits up to 88df50d
+ * NEW = explicit delegateClass with diagnostic NSLog
  */
 const DELEGATE_CLASS_FIXUP_OLD =
+  '    return UISceneConfiguration(name: "Default Configuration", sessionRole: connectingSceneSession.role)';
+const DELEGATE_CLASS_FIXUP_NEW =
+  '    #if DEBUG\n' +
+  '    NSLog("[dealfindio:scene] configurationForConnecting — selfType=%@",\n' +
+  '          NSStringFromClass(type(of: self)))\n' +
+  '    #endif\n' +
   '    let config = UISceneConfiguration(name: "Default Configuration", sessionRole: connectingSceneSession.role)\n' +
   '    config.delegateClass = type(of: self)\n' +
   '    return config';
-const DELEGATE_CLASS_FIXUP_NEW =
-  '    return UISceneConfiguration(name: "Default Configuration", sessionRole: connectingSceneSession.role)';
+
+/**
+ * Retroactive fix (step 0.6) for files already patched by an older version of
+ * this plugin that used `self.reactNativeFactory` directly in
+ * `scene(_:willConnectTo:)`.
+ *
+ * When `config.delegateClass = type(of: self)` is set, UIKit instantiates a
+ * NEW AppDelegate as the scene delegate.  That new instance has
+ * reactNativeFactory = nil, so `self.reactNativeFactory` fails the guard
+ * silently and React Native never starts.
+ *
+ * The fix retrieves the factory via `UIApplication.shared.delegate as?
+ * AppDelegate`, which always returns the original, initialised instance, and
+ * syncs the new UIWindow back to that instance for deep-link routing.
+ *
+ * OLD = the self.reactNativeFactory guard form from older plugin versions
+ * NEW = UIApplication.shared.delegate + window sync + diagnostic NSLog
+ */
+const FACTORY_ACCESS_FIXUP_OLD =
+  '    guard let windowScene = scene as? UIWindowScene,\n' +
+  '          let factory = reactNativeFactory else { return }\n' +
+  '    window = UIWindow(windowScene: windowScene)\n' +
+  '    factory.startReactNative(withModuleName: "main", in: window, launchOptions: nil)';
+const FACTORY_ACCESS_FIXUP_NEW =
+  '    guard let windowScene = scene as? UIWindowScene,\n' +
+  '          let appDelegate = UIApplication.shared.delegate as? AppDelegate,\n' +
+  '          let factory = appDelegate.reactNativeFactory else { return }\n' +
+  '    #if DEBUG\n' +
+  '    NSLog("[dealfindio:scene] scene willConnectTo — selfType=%@ adFactory=set jsLoc=%@",\n' +
+  '          NSStringFromClass(type(of: self)),\n' +
+  '          UserDefaults.standard.string(forKey: "RCT_jsLocation") ?? "NOT_SET")\n' +
+  '    #endif\n' +
+  '    let win = UIWindow(windowScene: windowScene)\n' +
+  '    window = win\n' +
+  '    appDelegate.window = win\n' +
+  '    factory.startReactNative(withModuleName: "main", in: win, launchOptions: nil)\n' +
+  '    #if DEBUG\n' +
+  '    NSLog("[dealfindio:scene] startReactNative done — rootVC=%@ isKey=%d isHidden=%d",\n' +
+  '          String(describing: win.rootViewController),\n' +
+  '          win.isKeyWindow ? 1 : 0, win.isHidden ? 1 : 0)\n' +
+  '    #endif';
 
 /**
  * The exact window-creation block Expo SDK 54 generates inside
@@ -106,37 +149,41 @@ const WINDOW_SETUP_NEW =
   '\n\n  ' + PATCH_MARKER + ': window creation deferred to UIWindowSceneDelegate.scene(_:willConnectTo:)';
 
 /**
- * Scene-configuration callback to insert at the end of the AppDelegate class
- * body (before its closing `}`).
+ * Scene-configuration callback inserted at the end of the AppDelegate class body.
  *
- * IMPORTANT: `delegateClass` is intentionally NOT set.  When delegateClass is
- * nil and no UISceneDelegateClassName is in Info.plist, UIKit uses the
- * existing app-delegate object as scene delegate (documented Apple fallback).
- * That object already holds reactNativeFactory from didFinishLaunchingWithOptions.
- * Setting delegateClass would create a fresh AppDelegate with nil factory.
+ * `delegateClass` is explicitly set to `type(of: self)` so UIKit creates a typed
+ * scene-delegate object.  Factory access in scene(_:willConnectTo:) goes through
+ * UIApplication.shared.delegate, not self.reactNativeFactory.
  */
 const CONFIG_FOR_CONNECTING = [
   '',
-  '  ' + PATCH_MARKER + ': required by iOS 26+ SDK.  Returns configuration without',
-  '  ' + PATCH_MARKER + ': delegateClass so UIKit reuses this AppDelegate instance',
-  '  ' + PATCH_MARKER + ': (which holds reactNativeFactory) as UIWindowSceneDelegate.',
+  '  ' + PATCH_MARKER + ': required by iOS 26+ SDK.  Sets delegateClass = type(of: self)',
+  '  ' + PATCH_MARKER + ': so UIKit creates a typed scene delegate.  Factory access uses',
+  '  ' + PATCH_MARKER + ': UIApplication.shared.delegate in scene(_:willConnectTo:).',
   '  public func application(',
   '    _ application: UIApplication,',
   '    configurationForConnecting connectingSceneSession: UISceneSession,',
   '    options: UIScene.ConnectionOptions',
   '  ) -> UISceneConfiguration {',
   '    #if DEBUG',
-  '    NSLog("[dealfindio:scene] configurationForConnecting — self=%p factory=%@",',
-  '          unsafeBitCast(self, to: UInt.self), reactNativeFactory != nil ? "set" : "NIL")',
+  '    NSLog("[dealfindio:scene] configurationForConnecting — selfType=%@",',
+  '          NSStringFromClass(type(of: self)))',
   '    #endif',
-  '    return UISceneConfiguration(name: "Default Configuration", sessionRole: connectingSceneSession.role)',
+  '    let config = UISceneConfiguration(name: "Default Configuration", sessionRole: connectingSceneSession.role)',
+  '    config.delegateClass = type(of: self)',
+  '    return config',
   '  }',
 ].join('\n');
 
 /**
  * UIWindowSceneDelegate extension that creates the app's main window once a
- * UIWindowScene is available.  `reactNativeFactory` was set up earlier in
- * `didFinishLaunchingWithOptions`; we simply call through to it here.
+ * UIWindowScene is available.
+ *
+ * Factory is retrieved from the original AppDelegate via
+ * UIApplication.shared.delegate (not self.reactNativeFactory, which is nil on
+ * the new scene-delegate instance created by UIKit when delegateClass is set).
+ * The new UIWindow is synced back to the original AppDelegate instance so that
+ * RCTLinkingManager and Expo Router can find it via UIApplication.shared.delegate.window.
  *
  * RCTReactNativeFactory.startReactNativeWithModuleName:inWindow:launchOptions:
  * (RCTReactNativeFactory.mm:83-95) unconditionally calls [window makeKeyAndVisible].
@@ -151,18 +198,22 @@ const SCENE_DELEGATE_EXTENSION = [
   '    willConnectTo session: UISceneSession,',
   '    options connectionOptions: UIScene.ConnectionOptions',
   '  ) {',
-  '    #if DEBUG',
-  '    NSLog("[dealfindio:scene] scene willConnectTo — self=%p factory=%@",',
-  '          unsafeBitCast(self, to: UInt.self), reactNativeFactory != nil ? "set" : "NIL")',
-  '    #endif',
   '    guard let windowScene = scene as? UIWindowScene,',
-  '          let factory = reactNativeFactory else { return }',
-  '    window = UIWindow(windowScene: windowScene)',
-  '    factory.startReactNative(withModuleName: "main", in: window, launchOptions: nil)',
+  '          let appDelegate = UIApplication.shared.delegate as? AppDelegate,',
+  '          let factory = appDelegate.reactNativeFactory else { return }',
+  '    #if DEBUG',
+  '    NSLog("[dealfindio:scene] scene willConnectTo — selfType=%@ adFactory=set jsLoc=%@",',
+  '          NSStringFromClass(type(of: self)),',
+  '          UserDefaults.standard.string(forKey: "RCT_jsLocation") ?? "NOT_SET")',
+  '    #endif',
+  '    let win = UIWindow(windowScene: windowScene)',
+  '    window = win',
+  '    appDelegate.window = win',
+  '    factory.startReactNative(withModuleName: "main", in: win, launchOptions: nil)',
   '    #if DEBUG',
   '    NSLog("[dealfindio:scene] startReactNative done — rootVC=%@ isKey=%d isHidden=%d",',
-  '          String(describing: window?.rootViewController),',
-  '          window?.isKeyWindow == true ? 1 : 0, window?.isHidden == true ? 1 : 0)',
+  '          String(describing: win.rootViewController),',
+  '          win.isKeyWindow ? 1 : 0, win.isHidden ? 1 : 0)',
   '    #endif',
   '  }',
   '}',
@@ -188,10 +239,8 @@ const CLASS_TRANSITION = '\n}\n\nclass ReactNativeDelegate';
 function patchAppDelegate(contents) {
   // ── Step 0 — make window property public (independent of full-patch marker) ──
   //
-  // This step runs even when the file was already patched by an older version of
-  // this plugin that pre-dates the access-control fix.  It is safe to re-run:
-  // if WINDOW_DECL_OLD is absent and WINDOW_DECL_NEW is present, the replace is
-  // skipped; if neither is present the file has changed in an unexpected way.
+  // Runs even when the file was already patched by an older version of this
+  // plugin that pre-dates the access-control fix.  Safe to re-run.
   const hasInternalWindow = contents.includes(WINDOW_DECL_OLD);
   const hasPublicWindow = contents.includes(WINDOW_DECL_NEW);
 
@@ -206,18 +255,26 @@ function patchAppDelegate(contents) {
     ? contents.replace(WINDOW_DECL_OLD, WINDOW_DECL_NEW)
     : contents;
 
-  // ── Step 0.5 — retroactively remove config.delegateClass = type(of: self) ────
+  // ── Step 0.5 — retroactively add config.delegateClass = type(of: self) ───────
   //
-  // Older versions of this plugin (before the scene-delegate instance fix)
-  // generated `config.delegateClass = type(of: self)` in the
-  // configurationForConnecting method.  That line causes UIKit to create a
-  // NEW AppDelegate as the scene delegate — which has reactNativeFactory = nil,
-  // so scene(_:willConnectTo:) silently returns and React Native never starts.
-  //
-  // This step runs unconditionally before the PATCH_MARKER check so it fixes
-  // files that were already patched by the old plugin, without needing --clean.
+  // Older plugin versions (commits up to 88df50d) returned UISceneConfiguration
+  // without delegateClass, relying on an undocumented UIKit fallback.  This step
+  // upgrades already-patched files to the explicit-delegateClass form without
+  // requiring --clean.  Non-throwing: the old pattern may never be present on
+  // clean builds from the current plugin.
   if (patched.includes(DELEGATE_CLASS_FIXUP_OLD)) {
     patched = patched.replace(DELEGATE_CLASS_FIXUP_OLD, DELEGATE_CLASS_FIXUP_NEW);
+  }
+
+  // ── Step 0.6 — retroactively fix factory access in scene(_:willConnectTo:) ──
+  //
+  // Older plugin versions accessed `self.reactNativeFactory` directly.  When
+  // delegateClass is set, UIKit creates a NEW AppDelegate as scene delegate and
+  // self.reactNativeFactory is nil on that instance → React Native never starts.
+  // This step upgrades already-patched files to use UIApplication.shared.delegate.
+  // Non-throwing: the old pattern may not be present on clean builds.
+  if (patched.includes(FACTORY_ACCESS_FIXUP_OLD)) {
+    patched = patched.replace(FACTORY_ACCESS_FIXUP_OLD, FACTORY_ACCESS_FIXUP_NEW);
   }
 
   // ── Steps 1–2 — scene lifecycle insertion (gated by full-patch marker) ───────
@@ -309,5 +366,7 @@ module.exports.WINDOW_DECL_OLD = WINDOW_DECL_OLD;
 module.exports.WINDOW_DECL_NEW = WINDOW_DECL_NEW;
 module.exports.DELEGATE_CLASS_FIXUP_OLD = DELEGATE_CLASS_FIXUP_OLD;
 module.exports.DELEGATE_CLASS_FIXUP_NEW = DELEGATE_CLASS_FIXUP_NEW;
+module.exports.FACTORY_ACCESS_FIXUP_OLD = FACTORY_ACCESS_FIXUP_OLD;
+module.exports.FACTORY_ACCESS_FIXUP_NEW = FACTORY_ACCESS_FIXUP_NEW;
 module.exports.WINDOW_SETUP_OLD = WINDOW_SETUP_OLD;
 module.exports.CLASS_TRANSITION = CLASS_TRANSITION;

@@ -6,16 +6,20 @@
  * Covers:
  *   1.  Patch applied once — window block removed, scene methods injected
  *   2.  window property promoted to public (UIWindowSceneDelegate requirement)
- *   3.  configurationForConnecting does NOT set delegateClass (instance isolation fix)
- *   4.  Already-patched file with delegateClass is retroactively fixed (step 0.5)
- *   5.  Idempotent — second call returns identical string
- *   6.  Throws when window declaration absent from AppDelegate.swift
- *   7.  Throws when WINDOW_SETUP_OLD pattern is absent
- *   8.  Throws when class-boundary pattern is absent
- *   9.  configurationForConnecting is inside AppDelegate class body
- *   10. UIWindowSceneDelegate extension is after the AppDelegate class
- *   11. Patched file still contains factory setup lines (not over-removed)
- *   12. Exported constants are stable
+ *   3.  configurationForConnecting SETS delegateClass = type(of: self);
+ *       factory access goes through UIApplication.shared.delegate
+ *   4.  Already-patched file (nil-delegateClass) retroactively gets explicit
+ *       delegateClass (step 0.5)
+ *   5.  Already-patched file (self.reactNativeFactory guard) retroactively gets
+ *       UIApplication.shared.delegate factory access (step 0.6)
+ *   6.  Idempotent — second call returns identical string
+ *   7.  Throws when window declaration absent from AppDelegate.swift
+ *   8.  Throws when WINDOW_SETUP_OLD pattern is absent
+ *   9.  Throws when class-boundary pattern is absent
+ *   10. configurationForConnecting is inside AppDelegate class body
+ *   11. UIWindowSceneDelegate extension is after the AppDelegate class
+ *   12. Patched file still contains factory setup lines (not over-removed)
+ *   13. Exported constants are stable
  */
 
 const {
@@ -25,6 +29,8 @@ const {
   WINDOW_DECL_NEW,
   DELEGATE_CLASS_FIXUP_OLD,
   DELEGATE_CLASS_FIXUP_NEW,
+  FACTORY_ACCESS_FIXUP_OLD,
+  FACTORY_ACCESS_FIXUP_NEW,
   WINDOW_SETUP_OLD,
   CLASS_TRANSITION,
 } = require('../plugins/withIosSceneLifecycle');
@@ -100,25 +106,29 @@ describe('withIosSceneLifecycle — patchAppDelegate', () => {
     expect(result).toContain('window creation deferred to UIWindowSceneDelegate');
   });
 
-  it('adds configurationForConnecting returning a UISceneConfiguration', () => {
+  it('adds configurationForConnecting that explicitly sets delegateClass = type(of: self)', () => {
     const result = patchAppDelegate(APP_DELEGATE_BASE);
 
     expect(result).toContain('configurationForConnecting connectingSceneSession: UISceneSession');
     expect(result).toContain('UISceneConfiguration(name: "Default Configuration"');
-    // Must NOT set delegateClass — doing so would cause UIKit to create a new
-    // AppDelegate instance as scene delegate, which would have reactNativeFactory = nil
-    expect(result).not.toContain('config.delegateClass = type(of: self)');
-    // The method must return the configuration directly (no intermediate let)
-    expect(result).toContain('return UISceneConfiguration(name: "Default Configuration"');
+    // Must set delegateClass explicitly so UIKit uses a typed scene delegate
+    expect(result).toContain('config.delegateClass = type(of: self)');
+    // Must use the multi-line let config / return config form, not a one-liner return
+    expect(result).not.toContain('return UISceneConfiguration(name: "Default Configuration"');
   });
 
-  it('adds a UIWindowSceneDelegate extension that creates UIWindow(windowScene:)', () => {
+  it('adds a UIWindowSceneDelegate extension that accesses the factory via UIApplication.shared.delegate', () => {
     const result = patchAppDelegate(APP_DELEGATE_BASE);
 
     expect(result).toContain('extension AppDelegate: UIWindowSceneDelegate');
     expect(result).toContain('willConnectTo session: UISceneSession');
     expect(result).toContain('UIWindow(windowScene: windowScene)');
-    expect(result).toContain('factory.startReactNative(withModuleName: "main", in: window, launchOptions: nil)');
+    // Factory must come from the original AppDelegate, not from self (which is nil on new instance)
+    expect(result).toContain('UIApplication.shared.delegate as? AppDelegate');
+    expect(result).toContain('appDelegate.reactNativeFactory');
+    // Window must be synced back to original AppDelegate for deep-link routing
+    expect(result).toContain('appDelegate.window = win');
+    expect(result).toContain('factory.startReactNative(withModuleName: "main", in: win, launchOptions: nil)');
   });
 
   // ── Test 2: window access control ────────────────────────────────────────────
@@ -141,43 +151,63 @@ describe('withIosSceneLifecycle — patchAppDelegate', () => {
     expect(result).toContain('  public var window: UIWindow?');
   });
 
-  // ── Test 3: configurationForConnecting must NOT set delegateClass ─────────────
-  it('configurationForConnecting does not set delegateClass on UISceneConfiguration', () => {
+  // ── Test 3: configurationForConnecting MUST set delegateClass ─────────────────
+  it('configurationForConnecting sets delegateClass = type(of: self)', () => {
     const result = patchAppDelegate(APP_DELEGATE_BASE);
 
-    // The generated configurationForConnecting must not contain delegateClass.
-    // Setting it causes UIKit to create a NEW AppDelegate as scene delegate,
-    // which has reactNativeFactory = nil → scene(_:willConnectTo:) guard fails
-    // silently → React Native never starts → black screen.
     const configMethod = result.slice(
       result.indexOf('configurationForConnecting'),
       result.indexOf('}\n', result.indexOf('configurationForConnecting')) + 2
     );
-    expect(configMethod).not.toContain('delegateClass');
-    expect(configMethod).toContain('return UISceneConfiguration(');
+    // delegateClass must be present — UIKit uses it to create a typed scene delegate
+    expect(configMethod).toContain('config.delegateClass = type(of: self)');
+    // One-liner return form must NOT be present (use let config / return config)
+    expect(configMethod).not.toContain('return UISceneConfiguration(');
   });
 
-  // ── Test 4: step 0.5 retroactively fixes already-patched files ───────────────
-  it('retroactively removes config.delegateClass from a file already patched by old plugin', () => {
-    // Simulate a file that was patched by the OLD plugin version which set
-    // config.delegateClass = type(of: self).
-    const oldPatchedFile = patchAppDelegate(APP_DELEGATE_BASE)
-      .replace(DELEGATE_CLASS_FIXUP_NEW, DELEGATE_CLASS_FIXUP_OLD);
+  // ── Test 4: step 0.5 retroactively adds delegateClass to already-patched files ─
+  it('retroactively adds config.delegateClass to a file already patched by old plugin (step 0.5)', () => {
+    // Simulate a file patched by the old plugin version (commits up to 88df50d)
+    // that returned UISceneConfiguration without setting delegateClass.
+    const phase4Patched = patchAppDelegate(APP_DELEGATE_BASE);
+    const oldPatchedFile = phase4Patched.replace(DELEGATE_CLASS_FIXUP_NEW, DELEGATE_CLASS_FIXUP_OLD);
 
-    // Sanity-check: the simulated old file has delegateClass assignment
-    expect(oldPatchedFile).toContain('config.delegateClass = type(of: self)');
-    // It also already has PATCH_MARKER (patched by old plugin)
+    // Sanity checks: old file lacks delegateClass, uses nil-delegateClass one-liner
+    expect(oldPatchedFile).not.toContain('config.delegateClass = type(of: self)');
+    expect(oldPatchedFile).toContain('return UISceneConfiguration(name: "Default Configuration"');
+    // It already has PATCH_MARKER (patched by old plugin)
     expect(oldPatchedFile).toContain(PATCH_MARKER);
 
-    // Running the current plugin must fix the delegateClass line even though
-    // the PATCH_MARKER is already present (step 0.5 runs before the guard).
+    // Running the current plugin must add delegateClass even though PATCH_MARKER
+    // is present (step 0.5 runs before the idempotency guard).
     const fixed = patchAppDelegate(oldPatchedFile);
-    // The Swift assignment must be gone (checking the assignment form, not just the word)
-    expect(fixed).not.toContain('config.delegateClass = type(of: self)');
-    expect(fixed).toContain('return UISceneConfiguration(');
+    expect(fixed).toContain('config.delegateClass = type(of: self)');
+    expect(fixed).not.toContain(DELEGATE_CLASS_FIXUP_OLD);
   });
 
-  // ── Test 2: idempotent ──────────────────────────────────────────────────────
+  // ── Test 5: step 0.6 retroactively fixes factory access ─────────────────────
+  it('retroactively fixes factory access from self.reactNativeFactory to UIApplication.shared.delegate (step 0.6)', () => {
+    // Simulate a file patched by an older plugin that used self.reactNativeFactory.
+    // When delegateClass is set, UIKit creates a new AppDelegate as scene delegate;
+    // self.reactNativeFactory is nil on that instance → React Native never starts.
+    const phase4Patched = patchAppDelegate(APP_DELEGATE_BASE);
+    const oldFactoryFile = phase4Patched.replace(FACTORY_ACCESS_FIXUP_NEW, FACTORY_ACCESS_FIXUP_OLD);
+
+    // Sanity checks: old pattern present, new pattern absent
+    expect(oldFactoryFile).toContain(PATCH_MARKER);
+    expect(oldFactoryFile).toContain(FACTORY_ACCESS_FIXUP_OLD);
+    expect(oldFactoryFile).not.toContain(FACTORY_ACCESS_FIXUP_NEW);
+
+    // Running the current plugin must fix the factory access even though
+    // PATCH_MARKER is present (step 0.6 runs before the idempotency guard).
+    const fixed = patchAppDelegate(oldFactoryFile);
+    expect(fixed).toContain('UIApplication.shared.delegate as? AppDelegate');
+    expect(fixed).toContain('appDelegate.reactNativeFactory');
+    expect(fixed).toContain('appDelegate.window = win');
+    expect(fixed).not.toContain('let factory = reactNativeFactory else { return }');
+  });
+
+  // ── Test 6: idempotent ──────────────────────────────────────────────────────
   it('is idempotent — second call returns byte-for-byte identical output', () => {
     const once = patchAppDelegate(APP_DELEGATE_BASE);
     const twice = patchAppDelegate(once);
@@ -195,7 +225,7 @@ describe('withIosSceneLifecycle — patchAppDelegate', () => {
     expect(() => patchAppDelegate(noWindowDecl)).toThrow('window');
   });
 
-  // ── Test 3: throws when window block absent ──────────────────────────────────
+  // ── Test: throws when window block absent ──────────────────────────────────
   it('throws with [withIosSceneLifecycle] prefix when UIWindow block is missing', () => {
     const noWindowBlock = APP_DELEGATE_BASE.replace(WINDOW_SETUP_OLD, '// already removed');
 
@@ -203,7 +233,7 @@ describe('withIosSceneLifecycle — patchAppDelegate', () => {
     expect(() => patchAppDelegate(noWindowBlock)).toThrow('UIWindow creation block not found');
   });
 
-  // ── Test 4: throws when class boundary absent ────────────────────────────────
+  // ── Test: throws when class boundary absent ──────────────────────────────────
   it('throws with [withIosSceneLifecycle] prefix when class boundary is missing', () => {
     const noTransition = APP_DELEGATE_BASE.replace(CLASS_TRANSITION, '\n}\n\nclass SomethingElse');
 
@@ -211,7 +241,7 @@ describe('withIosSceneLifecycle — patchAppDelegate', () => {
     expect(() => patchAppDelegate(noTransition)).toThrow('class boundary');
   });
 
-  // ── Test 5: configurationForConnecting is inside AppDelegate class ───────────
+  // ── Test: configurationForConnecting is inside AppDelegate class ─────────────
   it('places configurationForConnecting inside the AppDelegate class body (before the extension)', () => {
     const result = patchAppDelegate(APP_DELEGATE_BASE);
 
@@ -226,7 +256,7 @@ describe('withIosSceneLifecycle — patchAppDelegate', () => {
     expect(configMethod).toBeLessThan(extensionPos);
   });
 
-  // ── Test 6: UIWindowSceneDelegate extension is after the AppDelegate class ───
+  // ── Test: UIWindowSceneDelegate extension is after the AppDelegate class ──────
   it('places UIWindowSceneDelegate extension after the AppDelegate class closing brace', () => {
     const result = patchAppDelegate(APP_DELEGATE_BASE);
 
@@ -236,7 +266,7 @@ describe('withIosSceneLifecycle — patchAppDelegate', () => {
     expect(extensionPos).toBeGreaterThan(classClosePos);
   });
 
-  // ── Test 7: factory setup lines are preserved ────────────────────────────────
+  // ── Test: factory setup lines are preserved ──────────────────────────────────
   it('preserves the React Native factory setup lines in didFinishLaunchingWithOptions', () => {
     const result = patchAppDelegate(APP_DELEGATE_BASE);
 
@@ -258,15 +288,27 @@ describe('withIosSceneLifecycle — exported constants', () => {
     expect(WINDOW_DECL_NEW).toBe('  public var window: UIWindow?');
   });
 
-  it('DELEGATE_CLASS_FIXUP_OLD covers the exact body generated by old plugin', () => {
-    // This constant drives step 0.5, which retroactively removes the line that
-    // caused UIKit to create a new AppDelegate as the scene delegate.
-    expect(DELEGATE_CLASS_FIXUP_OLD).toContain('let config = UISceneConfiguration(');
-    expect(DELEGATE_CLASS_FIXUP_OLD).toContain('config.delegateClass = type(of: self)');
-    expect(DELEGATE_CLASS_FIXUP_OLD).toContain('return config');
-    // The replacement must be the one-liner form without delegateClass
-    expect(DELEGATE_CLASS_FIXUP_NEW).toContain('return UISceneConfiguration(');
-    expect(DELEGATE_CLASS_FIXUP_NEW).not.toContain('delegateClass');
+  it('DELEGATE_CLASS_FIXUP_OLD/NEW convert nil-delegateClass form to explicit delegateClass', () => {
+    // OLD = the nil-delegateClass one-liner from commits up to 88df50d
+    expect(DELEGATE_CLASS_FIXUP_OLD).toContain('return UISceneConfiguration(');
+    expect(DELEGATE_CLASS_FIXUP_OLD).not.toContain('delegateClass');
+    // NEW = the explicit delegateClass form with NSLog diagnostic
+    expect(DELEGATE_CLASS_FIXUP_NEW).toContain('config.delegateClass = type(of: self)');
+    expect(DELEGATE_CLASS_FIXUP_NEW).toContain('return config');
+    expect(DELEGATE_CLASS_FIXUP_NEW).not.toContain('return UISceneConfiguration(');
+  });
+
+  it('FACTORY_ACCESS_FIXUP_OLD/NEW cover the old and new factory access patterns', () => {
+    // OLD = self.reactNativeFactory guard from older plugin versions
+    expect(FACTORY_ACCESS_FIXUP_OLD).toContain('let factory = reactNativeFactory else { return }');
+    expect(FACTORY_ACCESS_FIXUP_OLD).toContain('factory.startReactNative(withModuleName: "main", in: window, launchOptions: nil)');
+    expect(FACTORY_ACCESS_FIXUP_OLD).not.toContain('UIApplication.shared.delegate');
+    // NEW = UIApplication.shared.delegate + window sync + NSLog
+    expect(FACTORY_ACCESS_FIXUP_NEW).toContain('UIApplication.shared.delegate as? AppDelegate');
+    expect(FACTORY_ACCESS_FIXUP_NEW).toContain('appDelegate.reactNativeFactory');
+    expect(FACTORY_ACCESS_FIXUP_NEW).toContain('appDelegate.window = win');
+    expect(FACTORY_ACCESS_FIXUP_NEW).toContain('factory.startReactNative(withModuleName: "main", in: win, launchOptions: nil)');
+    expect(FACTORY_ACCESS_FIXUP_NEW).toContain('RCT_jsLocation');
   });
 
   it('WINDOW_SETUP_OLD matches the exact block generated by Expo SDK 54', () => {
