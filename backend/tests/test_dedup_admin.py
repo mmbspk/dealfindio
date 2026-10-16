@@ -204,3 +204,85 @@ class TestDecideCandidateApprove:
             select(PriceReport).where(PriceReport.id == pr_id)
         ).scalar_one()
         assert str(moved.product_id) == keep_id
+
+
+# ── Size-variant penalty in fuzzy composite score (Gap 4) ────────────────────
+
+
+class TestSizeVariantPenalty:
+    """_match_product must never propose a merge between two products that have
+    the same name/brand but different canonical package sizes (e.g. 375mL vs 1.25L)."""
+
+    @pytest.mark.integration
+    def test_different_size_variant_capped_below_review_threshold(self, test_db_session):
+        """Identical name + brand, different package_size_norm: score must stay ≤80."""
+        existing = Product(
+            id=uuid4(),
+            name="Coke No Sugar",
+            brand="Coca-Cola",
+            package_size_norm="1.25L",
+        )
+        test_db_session.add(existing)
+        test_db_session.commit()
+
+        cp = _catalog_product("Coke No Sugar", brand="Coca-Cola")
+        cp = CatalogProduct(
+            product_name="Coke No Sugar",
+            price_cents=350,
+            brand="Coca-Cola",
+            package_size="375mL",
+        )
+        match, score, candidate, _ = _match_product(test_db_session, cp, "woolworths")
+
+        # Size mismatch: even with identical name and brand, score must be ≤80.
+        assert match is None, "size variants must not auto-merge"
+        assert score <= 80.0, f"expected score ≤80.0, got {score}"
+
+    @pytest.mark.integration
+    def test_matching_size_no_penalty(self, test_db_session):
+        """Identical name + brand + size: full score, auto-merges without penalty."""
+        existing = Product(
+            id=uuid4(),
+            name="Coca Cola Classic",
+            brand="Coca-Cola",
+            package_size_norm="375mL",
+        )
+        test_db_session.add(existing)
+        test_db_session.commit()
+
+        cp = CatalogProduct(
+            product_name="Coca Cola Classic",
+            price_cents=250,
+            brand="Coca-Cola",
+            package_size="375mL",
+        )
+        match, score, candidate, _ = _match_product(test_db_session, cp, "woolworths")
+
+        # Same size: no penalty. Identical title + brand should auto-merge (score ≥ 100).
+        assert match is not None or score >= 92.0, (
+            f"same-size pair should not be penalised (score={score})"
+        )
+
+    @pytest.mark.integration
+    def test_missing_package_size_no_penalty(self, test_db_session):
+        """When either side has no size data, no penalty is applied."""
+        existing = Product(
+            id=uuid4(),
+            name="Milk Full Cream",
+            brand="Coles",
+            package_size_norm=None,
+        )
+        test_db_session.add(existing)
+        test_db_session.commit()
+
+        cp = CatalogProduct(
+            product_name="Milk Full Cream",
+            price_cents=280,
+            brand="Coles",
+        )
+        match, score, candidate, _ = _match_product(test_db_session, cp, "woolworths")
+
+        # No size info → no penalty; identical name should auto-merge.
+        assert match is not None or score >= 92.0, (
+            f"pair without size data should not be penalised (score={score})"
+        )

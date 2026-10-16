@@ -332,6 +332,18 @@ def _match_product(
         total_weight += W_PRICE
     score = weighted / total_weight
 
+    # Size-variant penalty: when both sides carry a parseable canonical size and
+    # they differ, the products are definitively different pack sizes — don't
+    # surface them as a merge candidate at any threshold.
+    if cp.package_size and matched.package_size_norm:
+        cp_norm = normalize_package_size(cp.package_size)
+        if cp_norm and cp_norm != matched.package_size_norm:
+            logger.debug(
+                "Size variant penalty: '%s' (%s) vs '%s' (%s) — capping score %.1f→80.0",
+                cp.product_name, cp_norm, matched.name, matched.package_size_norm, score,
+            )
+            score = min(score, 80.0)
+
     if score >= 100.0:
         # Perfect match — auto-merge
         return matched, score, None, ResolutionReason.FUZZY

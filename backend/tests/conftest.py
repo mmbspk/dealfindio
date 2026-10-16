@@ -82,6 +82,19 @@ def test_db_engine():
     pg_url = os.environ.get("TEST_DATABASE_URL")
 
     if pg_url:
+        # Safety guard: refuse to wipe a non-test database.
+        # A bug in TEST_DATABASE_URL pointing at dev/prod would cause irreversible
+        # data loss via the DROP SCHEMA below, as happened in Oct 2026.
+        _safe_kw = ("_test", "test_", "/test")
+        _unsafe_kw = ("_dev", "_prod", "dealfindio_dev", "dealfindio_prod")
+        _url_lower = pg_url.lower()
+        if any(k in _url_lower for k in _unsafe_kw) or not any(k in _url_lower for k in _safe_kw):
+            raise RuntimeError(
+                f"TEST_DATABASE_URL looks like a dev/prod database: {pg_url!r}\n"
+                "Point TEST_DATABASE_URL at a dedicated test database "
+                "(e.g. postgresql://...dealfindio_test) to prevent data loss."
+            )
+
         engine = create_engine(pg_url, echo=False)
         # Ensure a clean schema, then build from the ORM models.
         with engine.begin() as conn:

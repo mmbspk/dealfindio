@@ -386,6 +386,30 @@ class TestColesPackageSize:
         }
         assert self._fn(item) == "350g"
 
+    @pytest.mark.unit
+    def test_size_at_start_of_name(self):
+        """Gap 5: size token at the START of the name must be extracted.
+
+        Previously the trailing-anchor-only regex missed these cases.
+        Regression example: "2L Farmhouse Gold Full Cream Milk".
+        """
+        item = {"name": "2L Farmhouse Gold Full Cream Milk"}
+        assert self._fn(item) == "2L"
+
+    @pytest.mark.unit
+    def test_size_trailing_takes_priority_over_leading_number(self):
+        """Gap 5 regression guard: when size is at the end the trailing-anchor wins.
+
+        For a name like "12 Pack Soft Drink Cans 375mL", the leading "12 Pack"
+        must NOT win — the canonical size at the end ("375mL") should be returned
+        because the trailing regex fires first.
+        """
+        item = {"name": "12 Pack Soft Drink Cans 375mL"}
+        result = self._fn(item)
+        # The trailing regex matches "375mL" at the end before the unanchored
+        # fallback has a chance to match "12 Pack".
+        assert result == "375mL"
+
 
 # ── catalog_ingest ───────────────────────────────────────────────────────────
 
