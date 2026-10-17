@@ -83,16 +83,21 @@ def test_db_engine():
 
     if pg_url:
         # Safety guard: refuse to wipe a non-test database.
-        # A bug in TEST_DATABASE_URL pointing at dev/prod would cause irreversible
-        # data loss via the DROP SCHEMA below, as happened in Oct 2026.
-        _safe_kw = ("_test", "test_", "/test")
+        # Inspect the database NAME only (not the full URL) so credentials are never
+        # leaked into the error message.  A bug in TEST_DATABASE_URL pointing at
+        # dev/prod would cause irreversible data loss via the DROP SCHEMA below,
+        # as happened in Oct 2026.
+        from urllib.parse import urlparse as _urlparse
+
+        _dbname = (_urlparse(pg_url).path or "").lstrip("/").lower()
+        _safe_kw = ("_test", "test_", "test")
         _unsafe_kw = ("_dev", "_prod", "dealfindio_dev", "dealfindio_prod")
-        _url_lower = pg_url.lower()
-        if any(k in _url_lower for k in _unsafe_kw) or not any(k in _url_lower for k in _safe_kw):
+        if any(k in _dbname for k in _unsafe_kw) or not any(k in _dbname for k in _safe_kw):
             raise RuntimeError(
-                f"TEST_DATABASE_URL looks like a dev/prod database: {pg_url!r}\n"
-                "Point TEST_DATABASE_URL at a dedicated test database "
-                "(e.g. postgresql://...dealfindio_test) to prevent data loss."
+                f"TEST_DATABASE_URL points to database '{_dbname}', which does not look "
+                "like a dedicated test database.\n"
+                "Rename the test database to include 'test' (e.g. dealfindio_test) "
+                "to prevent accidental data loss."
             )
 
         engine = create_engine(pg_url, echo=False)

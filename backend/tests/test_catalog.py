@@ -397,6 +397,22 @@ class TestColesPackageSize:
         assert self._fn(item) == "2L"
 
     @pytest.mark.unit
+    def test_multipack_nx_unit_format_preserved(self):
+        """Gap 5 / review fix: NxUnit format (e.g. '6x375mL') must not lose the count.
+
+        Previously the regex would match '375mL' from '6x375mL', discarding the
+        '6x' pack count. An NxUnit alternative is now tried first.
+        """
+        item = {"name": "6x375mL Soft Drink Cans"}
+        assert self._fn(item) == "6x375mL"
+
+    @pytest.mark.unit
+    def test_multipack_nx_unit_at_end_preserved(self):
+        """Gap 5 / review fix: NxUnit at the end of the name is also captured."""
+        item = {"name": "Soft Drink Cans 24x375mL"}
+        assert self._fn(item) == "24x375mL"
+
+    @pytest.mark.unit
     def test_size_trailing_takes_priority_over_leading_number(self):
         """Gap 5 regression guard: when size is at the end the trailing-anchor wins.
 

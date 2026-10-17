@@ -501,7 +501,7 @@ def facts_for_product_id(
     if listing is not None:
         src = listing.external_source or ""
         if src.startswith("catalog_"):
-            chain = src[len("catalog_"):]
+            chain = src[len("catalog_") :]
         elif listing.chain:
             chain = listing.chain
         external_id = listing.external_id

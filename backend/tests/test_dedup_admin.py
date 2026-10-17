@@ -215,7 +215,7 @@ class TestSizeVariantPenalty:
 
     @pytest.mark.integration
     def test_different_size_variant_capped_below_review_threshold(self, test_db_session):
-        """Identical name + brand, different package_size_norm: score must stay ≤80."""
+        """Identical name + brand, different package_size_norm: fully vetoed, no candidate."""
         existing = Product(
             id=uuid4(),
             name="Coke No Sugar",
@@ -225,7 +225,6 @@ class TestSizeVariantPenalty:
         test_db_session.add(existing)
         test_db_session.commit()
 
-        cp = _catalog_product("Coke No Sugar", brand="Coca-Cola")
         cp = CatalogProduct(
             product_name="Coke No Sugar",
             price_cents=350,
@@ -234,9 +233,10 @@ class TestSizeVariantPenalty:
         )
         match, score, candidate, _ = _match_product(test_db_session, cp, "woolworths")
 
-        # Size mismatch: even with identical name and brand, score must be ≤80.
+        # Size mismatch: no auto-merge AND no review candidate (fully vetoed).
         assert match is None, "size variants must not auto-merge"
-        assert score <= 80.0, f"expected score ≤80.0, got {score}"
+        assert candidate is None, "size variants must not be proposed as a review candidate"
+        assert score == 0.0, f"vetoed pair must return score 0.0, got {score}"
 
     @pytest.mark.integration
     def test_matching_size_no_penalty(self, test_db_session):
@@ -259,9 +259,9 @@ class TestSizeVariantPenalty:
         match, score, candidate, _ = _match_product(test_db_session, cp, "woolworths")
 
         # Same size: no penalty. Identical title + brand should auto-merge (score ≥ 100).
-        assert match is not None or score >= 92.0, (
-            f"same-size pair should not be penalised (score={score})"
-        )
+        assert (
+            match is not None or score >= 92.0
+        ), f"same-size pair should not be penalised (score={score})"
 
     @pytest.mark.integration
     def test_missing_package_size_no_penalty(self, test_db_session):
@@ -283,6 +283,6 @@ class TestSizeVariantPenalty:
         match, score, candidate, _ = _match_product(test_db_session, cp, "woolworths")
 
         # No size info → no penalty; identical name should auto-merge.
-        assert match is not None or score >= 92.0, (
-            f"pair without size data should not be penalised (score={score})"
-        )
+        assert (
+            match is not None or score >= 92.0
+        ), f"pair without size data should not be penalised (score={score})"

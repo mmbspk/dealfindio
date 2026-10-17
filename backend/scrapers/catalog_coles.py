@@ -717,15 +717,19 @@ def _extract_coles_package_size(item: dict) -> Optional[str]:
 
 
 _COLES_UNIT_PRICE_RE = re.compile(r"\$?([\d.]+)\s*/\s*(.+)", re.IGNORECASE)
-# Try trailing-anchor first (size at end, which is the common case). If no match
-# fall back to the same pattern without anchor so size tokens at the start/middle
-# of the name are also captured (e.g. "2L Farmhouse Gold Milk").
+# NxUnit alternative (e.g. "6x375mL") must be tried BEFORE the bare-unit alternative
+# so "6x375mL Soft Drink Cans" returns "6x375mL" and not just "375mL".
+# Trailing-anchor version is tried first; unanchored is the fallback for size at start/middle.
 _COLES_PACKAGE_SIZE_RE_TRAILING = re.compile(
-    r"(\d+\.?\d*\s*(?:ml|L|kg|g|oz)\b(?:\s+\d+\s*(?:pack|pk))?|\d+\s*(?:pack|pk))\s*$",
+    r"(\d+\s*[xX]\s*\d+\.?\d*\s*(?:ml|L|kg|g|oz)\b"
+    r"|\d+\.?\d*\s*(?:ml|L|kg|g|oz)\b(?:\s+\d+\s*(?:pack|pk))?"
+    r"|\d+\s*(?:pack|pk))\s*$",
     re.IGNORECASE,
 )
 _COLES_PACKAGE_SIZE_RE = re.compile(
-    r"(\d+\.?\d*\s*(?:ml|L|kg|g|oz)\b(?:\s+\d+\s*(?:pack|pk))?|\d+\s*(?:pack|pk))",
+    r"(\d+\s*[xX]\s*\d+\.?\d*\s*(?:ml|L|kg|g|oz)\b"
+    r"|\d+\.?\d*\s*(?:ml|L|kg|g|oz)\b(?:\s+\d+\s*(?:pack|pk))?"
+    r"|\d+\s*(?:pack|pk))",
     re.IGNORECASE,
 )
 
