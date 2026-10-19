@@ -87,17 +87,22 @@ def test_db_engine():
         # leaked into the error message.  A bug in TEST_DATABASE_URL pointing at
         # dev/prod would cause irreversible data loss via the DROP SCHEMA below,
         # as happened in Oct 2026.
+        #
+        # Strict naming rule: the database name must START with 'test_' OR END with
+        # '_test' (optionally followed by digits).  This accepts 'dealfindio_test',
+        # 'dealfindio_test2', 'test_dealfindio' and rejects ambiguous names like
+        # 'testdb', 'atestdb', 'contest'.
+        import re as _re
         from urllib.parse import urlparse as _urlparse
 
         _dbname = (_urlparse(pg_url).path or "").lstrip("/").lower()
-        _safe_kw = ("_test", "test_", "test")
-        _unsafe_kw = ("_dev", "_prod", "dealfindio_dev", "dealfindio_prod")
-        if any(k in _dbname for k in _unsafe_kw) or not any(k in _dbname for k in _safe_kw):
+        _TEST_DB_RE = _re.compile(r"(?:^test[-_]|[-_]test\d*$)")
+        if not _TEST_DB_RE.search(_dbname):
             raise RuntimeError(
-                f"TEST_DATABASE_URL points to database '{_dbname}', which does not look "
-                "like a dedicated test database.\n"
-                "Rename the test database to include 'test' (e.g. dealfindio_test) "
-                "to prevent accidental data loss."
+                f"TEST_DATABASE_URL points to database '{_dbname}', which is not a "
+                "recognised test database.\n"
+                "The database name must start with 'test_' or end with '_test' "
+                "(e.g. dealfindio_test). Rename it to prevent accidental data loss."
             )
 
         engine = create_engine(pg_url, echo=False)
