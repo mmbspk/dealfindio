@@ -169,8 +169,24 @@ step "Configuring Metro port $EFFECTIVE_METRO_PORT for iOS debug build..."
 xcrun simctl spawn "$UDID" defaults write "$BUNDLE_ID" \
   RCT_jsLocation "localhost:$EFFECTIVE_METRO_PORT" || true
 
+step "Starting Metro bundler on port $EFFECTIVE_METRO_PORT..."
+npx expo start --dev-client --port "$EFFECTIVE_METRO_PORT" &
+METRO_PID=$!
+
+# Wait for Metro to accept connections before launching the app, so the app
+# does not hit connection-refused and show a red overlay on first open.
+MAX_WAIT=60
+WAITED=0
+until curl -sf "http://localhost:$EFFECTIVE_METRO_PORT/status" >/dev/null 2>&1; do
+  if [ "$WAITED" -ge "$MAX_WAIT" ]; then
+    echo "Warning: Metro did not become ready after ${MAX_WAIT}s — launching anyway"
+    break
+  fi
+  sleep 1
+  WAITED=$((WAITED + 1))
+done
+
 step "Launching $BUNDLE_ID..."
 xcrun simctl launch "$UDID" "$BUNDLE_ID"
 
-step "Starting Metro bundler on port $EFFECTIVE_METRO_PORT..."
-npx expo start --dev-client --port "$EFFECTIVE_METRO_PORT"
+wait "$METRO_PID"
