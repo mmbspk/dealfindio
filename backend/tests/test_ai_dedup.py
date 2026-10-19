@@ -487,3 +487,130 @@ class TestAdminAiFields:
         assert item["ai_confidence"] == pytest.approx(0.94)
         assert item["ai_keep"] == "a"
         assert item["ai_reason"] == "same item, same size"
+
+
+# ── ProductFacts metadata correctness (Gaps 1-3) ─────────────────────────────
+
+
+class TestProductFacts:
+    """Verify that ProductFacts.from_product() reads the right attributes after
+    the schema migration that moved external fields onto ProductRetailerListing."""
+
+    def _make_product(self, **kwargs):
+        from app.models import Product
+
+        p = Product(id=uuid4(), name="Milk 2L", brand="Coles")
+        for k, v in kwargs.items():
+            setattr(p, k, v)
+        return p
+
+    @pytest.mark.unit
+    def test_package_size_reads_package_size_norm(self):
+        """Gap 1: ProductFacts.package_size must map to Product.package_size_norm."""
+        p = self._make_product(package_size_norm="2L")
+        facts = ProductFacts.from_product(p)
+        assert facts.package_size == "2L"
+
+    @pytest.mark.unit
+    def test_package_size_norm_none_returns_none(self):
+        """Gap 1: when package_size_norm is unset, package_size is None — not an AttributeError."""
+        p = self._make_product()
+        facts = ProductFacts.from_product(p)
+        assert facts.package_size is None
+
+    @pytest.mark.unit
+    def test_unit_price_label_populated(self):
+        """Gap 2: unit_price_label must flow from Product into ProductFacts."""
+        p = self._make_product(unit_price=1.5, unit_price_label="100ml")
+        facts = ProductFacts.from_product(p)
+        assert facts.unit_price_label == "100ml"
+
+    @pytest.mark.unit
+    def test_unit_price_label_in_prompt(self):
+        """Gap 2: unit_price_label must appear in the AI judge prompt."""
+        a = ProductFacts(
+            id=str(uuid4()),
+            name="Coke No Sugar 375mL",
+            brand="Coca-Cola",
+            category="drinks",
+            gtin=None,
+            price_aud=2.50,
+            chain="coles",
+            size_hint="375ml",
+            unit_price=0.67,
+            unit_price_label="100ml",
+        )
+        b = ProductFacts(
+            id=str(uuid4()),
+            name="Coca-Cola No Sugar 375mL",
+            brand="Coca-Cola",
+            category="drinks",
+            gtin=None,
+            price_aud=2.60,
+            chain="woolworths",
+            size_hint="375ml",
+            unit_price=0.67,
+            unit_price_label="100ml",
+        )
+        _, user = build_judge_prompt(a, b)
+        assert "unit_price_label" in user
+        assert "100ml" in user
+
+    @pytest.mark.unit
+    def test_package_size_in_prompt_when_set(self):
+        """Gap 1: package_size (from package_size_norm) must appear in the judge prompt."""
+        a = ProductFacts(
+            id=str(uuid4()),
+            name="Milk",
+            brand="Coles",
+            category="dairy",
+            gtin=None,
+            price_aud=3.0,
+            chain="coles",
+            size_hint=None,
+            package_size="2L",
+        )
+        b = ProductFacts(
+            id=str(uuid4()),
+            name="Milk",
+            brand="Woolworths",
+            category="dairy",
+            gtin=None,
+            price_aud=3.2,
+            chain="woolworths",
+            size_hint=None,
+            package_size="2L",
+        )
+        _, user = build_judge_prompt(a, b)
+        assert "package_size" in user
+        assert "2L" in user
+
+    @pytest.mark.unit
+    def test_chain_kwarg_respected(self):
+        """Gap 3: chain passed as kwarg must be used; Product has no external_source column."""
+        p = self._make_product()
+        facts = ProductFacts.from_product(p, chain="coles")
+        assert facts.chain == "coles"
+
+    @pytest.mark.unit
+    def test_chain_none_when_not_passed(self):
+        """Gap 3: chain is None when not supplied — no AttributeError from missing column."""
+        p = self._make_product()
+        facts = ProductFacts.from_product(p)
+        assert facts.chain is None
+
+    @pytest.mark.unit
+    def test_store_url_built_from_chain_external_id(self):
+        """Gap 3: store_url must be constructable when chain + external_id are passed."""
+        p = self._make_product(name="Coke No Sugar 375mL")
+        facts = ProductFacts.from_product(p, chain="woolworths", external_id="123456")
+        assert facts.store_url is not None
+        assert "woolworths" in facts.store_url
+        assert "123456" in facts.store_url
+
+    @pytest.mark.unit
+    def test_store_url_none_without_chain(self):
+        """Gap 3: store_url is None when neither chain nor external_id is available."""
+        p = self._make_product()
+        facts = ProductFacts.from_product(p)
+        assert facts.store_url is None

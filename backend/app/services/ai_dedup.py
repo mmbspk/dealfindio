@@ -41,6 +41,7 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.models import Product
+from app.models.product_retailer_listing import ProductRetailerListing
 from app.services.oft_image_enricher import (
     _OFF_SEARCH_URL,
     OFTRateLimiter,
@@ -95,19 +96,23 @@ class ProductFacts:
     category: Optional[str]
     gtin: Optional[str]
     price_aud: Optional[float]
-    chain: Optional[str]  # derived from external_source: "catalog_coles" -> "coles"
+    chain: Optional[str]  # resolved from primary ProductRetailerListing.chain
     size_hint: Optional[str]  # parsed from name, e.g. "2L" / "500g"
     has_image: bool = False
     store_url: Optional[str] = None  # constructable from external_id + chain
-    package_size: Optional[str] = None  # raw size field from scraper e.g. "375mL 24 Pack"
+    package_size: Optional[str] = None  # canonical package_size_norm e.g. "375mL"
     unit_price: Optional[float] = None  # comparable price per standard unit
+    unit_price_label: Optional[str] = None  # unit label e.g. "100g", "100ml", "ea"
 
     @classmethod
-    def from_product(cls, p: "Product", price_aud: Optional[float] = None) -> "ProductFacts":
-        chain = None
-        src = getattr(p, "external_source", None)
-        if src and src.startswith("catalog_"):
-            chain = src[len("catalog_") :]
+    def from_product(
+        cls,
+        p: "Product",
+        price_aud: Optional[float] = None,
+        *,
+        chain: Optional[str] = None,
+        external_id: Optional[str] = None,
+    ) -> "ProductFacts":
         return cls(
             id=str(p.id),
             name=p.name,
@@ -118,9 +123,10 @@ class ProductFacts:
             chain=chain,
             size_hint=extract_size_hint(p.name),
             has_image=bool(getattr(p, "image_url", None)),
-            store_url=_build_store_url(chain, getattr(p, "external_id", None), p.name),
-            package_size=getattr(p, "package_size", None),
+            store_url=_build_store_url(chain, external_id, p.name),
+            package_size=getattr(p, "package_size_norm", None),
             unit_price=getattr(p, "unit_price", None),
+            unit_price_label=getattr(p, "unit_price_label", None),
         )
 
 
@@ -222,6 +228,8 @@ def _facts_dict(p: ProductFacts) -> dict:
         d["package_size"] = p.package_size
     if p.unit_price is not None:
         d["unit_price"] = p.unit_price
+    if p.unit_price_label:
+        d["unit_price_label"] = p.unit_price_label
     if p.store_url:
         d["store_url"] = p.store_url
     return d
@@ -466,10 +474,36 @@ async def search_gtin_by_name_brand(
 def facts_for_product_id(
     session: Session, product_id: str, price_aud: Optional[float] = None
 ) -> Optional[ProductFacts]:
-    """Load a fresh ``ProductFacts`` by id, or None if the row is gone."""
+    """Load a fresh ``ProductFacts`` by id, or None if the row is gone.
+
+    Resolves chain and external_id from the primary ProductRetailerListing so the
+    AI judge sees the correct chain label and store URL. Primary listing = most
+    recently seen (catalog_last_seen_at DESC NULLS LAST), breaking ties by id ASC.
+    """
     p = session.execute(
         select(Product).where(Product.id == UUID(str(product_id)))
     ).scalar_one_or_none()
     if p is None:
         return None
-    return ProductFacts.from_product(p, price_aud)
+
+    listing = session.execute(
+        select(ProductRetailerListing)
+        .where(ProductRetailerListing.product_id == p.id)
+        .order_by(
+            ProductRetailerListing.catalog_last_seen_at.desc().nulls_last(),
+            ProductRetailerListing.id.asc(),
+        )
+        .limit(1)
+    ).scalar_one_or_none()
+
+    chain: Optional[str] = None
+    external_id: Optional[str] = None
+    if listing is not None:
+        src = listing.external_source or ""
+        if src.startswith("catalog_"):
+            chain = src[len("catalog_") :]
+        elif listing.chain:
+            chain = listing.chain
+        external_id = listing.external_id
+
+    return ProductFacts.from_product(p, price_aud, chain=chain, external_id=external_id)

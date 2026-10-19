@@ -386,6 +386,46 @@ class TestColesPackageSize:
         }
         assert self._fn(item) == "350g"
 
+    @pytest.mark.unit
+    def test_size_at_start_of_name(self):
+        """Gap 5: size token at the START of the name must be extracted.
+
+        Previously the trailing-anchor-only regex missed these cases.
+        Regression example: "2L Farmhouse Gold Full Cream Milk".
+        """
+        item = {"name": "2L Farmhouse Gold Full Cream Milk"}
+        assert self._fn(item) == "2L"
+
+    @pytest.mark.unit
+    def test_multipack_nx_unit_format_preserved(self):
+        """Gap 5 / review fix: NxUnit format (e.g. '6x375mL') must not lose the count.
+
+        Previously the regex would match '375mL' from '6x375mL', discarding the
+        '6x' pack count. An NxUnit alternative is now tried first.
+        """
+        item = {"name": "6x375mL Soft Drink Cans"}
+        assert self._fn(item) == "6x375mL"
+
+    @pytest.mark.unit
+    def test_multipack_nx_unit_at_end_preserved(self):
+        """Gap 5 / review fix: NxUnit at the end of the name is also captured."""
+        item = {"name": "Soft Drink Cans 24x375mL"}
+        assert self._fn(item) == "24x375mL"
+
+    @pytest.mark.unit
+    def test_size_trailing_takes_priority_over_leading_number(self):
+        """Gap 5 regression guard: when size is at the end the trailing-anchor wins.
+
+        For a name like "12 Pack Soft Drink Cans 375mL", the leading "12 Pack"
+        must NOT win — the canonical size at the end ("375mL") should be returned
+        because the trailing regex fires first.
+        """
+        item = {"name": "12 Pack Soft Drink Cans 375mL"}
+        result = self._fn(item)
+        # The trailing regex matches "375mL" at the end before the unanchored
+        # fallback has a chance to match "12 Pack".
+        assert result == "375mL"
+
 
 # ── catalog_ingest ───────────────────────────────────────────────────────────
 

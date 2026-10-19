@@ -701,13 +701,15 @@ def _extract_coles_package_size(item: dict) -> Optional[str]:
         # Normalise LITRE / LITRES → L, MILLILITRE → mL so the regex matches.
         normalised = re.sub(r"\bLITRES?\b", "L", desc, flags=re.IGNORECASE)
         normalised = re.sub(r"\bMILLILITRES?\b", "mL", normalised, flags=re.IGNORECASE)
-        m = _COLES_PACKAGE_SIZE_RE.search(normalised)
+        m = _COLES_PACKAGE_SIZE_RE_TRAILING.search(normalised) or _COLES_PACKAGE_SIZE_RE.search(
+            normalised
+        )
         if m:
             return m.group(0).strip()
 
     # 3. Short display name — fallback for products that embed size in name.
     name = (item.get("name") or "").strip()
-    m = _COLES_PACKAGE_SIZE_RE.search(name)
+    m = _COLES_PACKAGE_SIZE_RE_TRAILING.search(name) or _COLES_PACKAGE_SIZE_RE.search(name)
     if m:
         return m.group(0).strip()
 
@@ -715,8 +717,19 @@ def _extract_coles_package_size(item: dict) -> Optional[str]:
 
 
 _COLES_UNIT_PRICE_RE = re.compile(r"\$?([\d.]+)\s*/\s*(.+)", re.IGNORECASE)
+# NxUnit alternative (e.g. "6x375mL") must be tried BEFORE the bare-unit alternative
+# so "6x375mL Soft Drink Cans" returns "6x375mL" and not just "375mL".
+# Trailing-anchor version is tried first; unanchored is the fallback for size at start/middle.
+_COLES_PACKAGE_SIZE_RE_TRAILING = re.compile(
+    r"(\d+\s*[xX]\s*\d+\.?\d*\s*(?:ml|L|kg|g|oz)\b"
+    r"|\d+\.?\d*\s*(?:ml|L|kg|g|oz)\b(?:\s+\d+\s*(?:pack|pk))?"
+    r"|\d+\s*(?:pack|pk))\s*$",
+    re.IGNORECASE,
+)
 _COLES_PACKAGE_SIZE_RE = re.compile(
-    r"(\d+\.?\d*\s*(?:ml|L|kg|g|oz)\b(?:\s+\d+\s*(?:pack|pk))?|\d+\s*(?:pack|pk))\s*$",
+    r"(\d+\s*[xX]\s*\d+\.?\d*\s*(?:ml|L|kg|g|oz)\b"
+    r"|\d+\.?\d*\s*(?:ml|L|kg|g|oz)\b(?:\s+\d+\s*(?:pack|pk))?"
+    r"|\d+\s*(?:pack|pk))",
     re.IGNORECASE,
 )
 
