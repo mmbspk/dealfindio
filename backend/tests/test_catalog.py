@@ -330,6 +330,40 @@ class TestColesPackageSize:
         assert self._fn(item) == "1.5L"
 
     @pytest.mark.unit
+    def test_dedicated_size_augmented_with_pack_count_from_name(self):
+        """Code-review fix: dedicated size='375mL' + name has pack count → augmented.
+
+        If Coles provides size='375mL' alongside name='12 Pack Soft Drink Cans 375mL',
+        the old path returned '375mL' immediately, creating a single-vs-multipack
+        collision under the size-variant veto.  After this fix, the pack count from
+        the name is combined with the dedicated size.
+        """
+        item = {
+            "name": "12 Pack Soft Drink Cans 375mL",
+            "size": "375mL",
+        }
+        assert self._fn(item) == "375mL 12 Pack"
+
+    @pytest.mark.unit
+    def test_dedicated_size_not_augmented_when_name_has_no_pack_count(self):
+        """No augmentation when the name carries no pack-count information."""
+        item = {
+            "name": "Special Fried Rice",
+            "description": "COLES KITCHEN SPECIAL FRIED RICE 350G",
+            "size": "350g",
+        }
+        assert self._fn(item) == "350g"
+
+    @pytest.mark.unit
+    def test_dedicated_size_not_augmented_when_already_multipack(self):
+        """No double-augmentation when the dedicated size already contains multipack info."""
+        item = {
+            "name": "Soft Drink Cans 6 Pack 375mL",
+            "size": "6x375mL",
+        }
+        assert self._fn(item) == "6x375mL"
+
+    @pytest.mark.unit
     def test_dedicated_size_various_units(self):
         for size in ("350g", "180g", "420g", "375mL", "2kg"):
             item = {"name": "Product", "size": size}

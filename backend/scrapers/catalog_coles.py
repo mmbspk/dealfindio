@@ -684,22 +684,29 @@ def _extract_coles_package_size(item: dict) -> Optional[str]:
     """Extract package size from a Coles API product item.
 
     Priority:
-      1. item["size"] — dedicated size field (e.g. "350g", "1.5L", "375mL")
+      1. item["size"] — dedicated size field (e.g. "350g", "1.5L", "375mL");
+         augmented with a pack count from item["name"] when present
+         (e.g. size="375mL", name="12 Pack Cans 375mL" → "375mL 12 Pack")
       2. item["description"] — full UPPERCASE title, e.g. "PAULS FARMHOUSE GOLD
          FULL CREAM MILK 1.5 LITRE"; parse the trailing size token from here
       3. item["name"] — short display name; only some products embed the size
          (e.g. "Coca-Cola No Sugar 375mL 24 Pack")
 
-    For paths 2 and 3, after extracting a bare unit (e.g. "375mL"), the full
-    source text is also scanned for a standalone "N Pack/pk" count that the main
-    regex couldn't capture together with the unit.  The two fragments are combined
-    so that normalize_package_size can produce the correct canonical form:
+    For all three paths, after extracting a bare unit (e.g. "375mL"), the source
+    text is also scanned for a standalone "N Pack/pk" count that the main regex
+    couldn't capture together with the unit.  The two fragments are combined so
+    that normalize_package_size can produce the correct canonical form:
       "12 Pack Soft Drink Cans 375mL" → "375mL 12 Pack" → "12x375mL"
     """
     # 1. Dedicated size field — fastest path, most reliable.
     dedicated = (item.get("size") or "").strip()
     if dedicated:
-        return dedicated
+        # Even with a dedicated unit size, the Coles API often omits the pack count
+        # from item["size"] (e.g. size="375mL") while item["name"] carries it
+        # (e.g. "12 Pack Soft Drink Cans 375mL").  Augment so the canonical norm
+        # becomes "12x375mL" not just "375mL".
+        name_text = (item.get("name") or "").strip()
+        return _augment_with_pack_count(name_text, dedicated)
 
     # 2. Full description (uppercase, e.g. "PAULS ... 1.5 LITRE").
     desc = (item.get("description") or "").strip()
