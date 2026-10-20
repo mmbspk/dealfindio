@@ -215,3 +215,102 @@ class TestNumericValidation:
 
     def test_zero_pack_size_in_multipack_returns_none(self):
         assert normalize_package_size("6 x 0mL") is None
+
+
+class TestCountBeforeUnit:
+    """Story #99: 'N Pack/pk/ct unit' adjacent format → 'NxUnit'."""
+
+    @pytest.mark.parametrize(
+        "raw, expected",
+        [
+            # Basic pack-then-unit
+            ("12 Pack 375mL", "12x375mL"),
+            ("12pk 375mL", "12x375mL"),
+            ("4 Pack 100g", "4x100g"),
+            ("6 pack 250mL", "6x250mL"),
+            ("24 Pack 375mL", "24x375mL"),
+            # With whitespace variations
+            ("12  Pack  375mL", "12x375mL"),
+            # Weight units
+            ("12 Pack 1.25kg", "12x1.25kg"),
+            ("6 Pack 1L", "6x1L"),
+            # Count word variations
+            ("4 ct 375mL", "4x375mL"),
+            ("4 count 375mL", "4x375mL"),
+            ("4 pcs 375mL", "4x375mL"),
+            ("4 pc 375mL", "4x375mL"),
+        ],
+    )
+    def test_count_before_unit(self, raw, expected):
+        assert normalize_package_size(raw) == expected
+
+    def test_zero_count_returns_none(self):
+        assert normalize_package_size("0 Pack 375mL") is None
+
+    def test_zero_size_in_count_before_unit_returns_none(self):
+        assert normalize_package_size("12 Pack 0mL") is None
+
+
+class TestSizeThenExplicitCount:
+    """Story #99: 'unit × N' format → 'NxUnit'."""
+
+    @pytest.mark.parametrize(
+        "raw, expected",
+        [
+            # Ascii x
+            ("375mL x 12", "12x375mL"),
+            ("375mL x 6", "6x375mL"),
+            ("1.25L x 4", "4x1.25L"),
+            ("500g x 3", "3x500g"),
+            # Unicode ×
+            ("375mL × 12", "12x375mL"),
+            ("250mL × 24", "24x250mL"),
+            # Uppercase X
+            ("375mL X 12", "12x375mL"),
+            # With spaces
+            ("375mL  x  12", "12x375mL"),
+            # Litres
+            ("1L x 6", "6x1L"),
+            ("2L × 4", "4x2L"),
+        ],
+    )
+    def test_size_then_count(self, raw, expected):
+        assert normalize_package_size(raw) == expected
+
+    def test_zero_count_returns_none(self):
+        assert normalize_package_size("375mL x 0") is None
+
+    def test_does_not_match_size_times_size(self):
+        # "375mL x 1.5 kg" — the token after × is itself a unit-bearing number,
+        # so this should NOT be interpreted as "unit × count".
+        result = normalize_package_size("375mL x 1.5 kg")
+        # Should fall through to single: picks 375mL (leftmost)
+        assert result == "375mL"
+
+
+class TestMultipackDistinctProducts:
+    """Dedup integrity: products with different counts must not normalise identically."""
+
+    def test_single_vs_6pack_are_distinct(self):
+        assert normalize_package_size("375mL") != normalize_package_size("6x375mL")
+        assert normalize_package_size("6x375mL") == "6x375mL"
+
+    def test_6pack_vs_12pack_are_distinct(self):
+        assert normalize_package_size("6x375mL") != normalize_package_size("12x375mL")
+
+    def test_12pack_vs_24pack_are_distinct(self):
+        assert normalize_package_size("12x375mL") != normalize_package_size("24x375mL")
+
+    def test_multipack_not_flattened_to_total_volume(self):
+        # 6 × 250 mL = 1500 mL = 1.5 L, but "6x250mL" ≠ "1.5L"
+        assert normalize_package_size("6x250mL") != normalize_package_size("1.5L")
+        assert normalize_package_size("6x250mL") == "6x250mL"
+
+    def test_count_before_unit_normalises_same_as_nx_unit(self):
+        assert normalize_package_size("12 Pack 375mL") == normalize_package_size("12x375mL")
+        assert normalize_package_size("12 Pack 375mL") == normalize_package_size("375mL 12 Pack")
+        assert normalize_package_size("375mL x 12") == normalize_package_size("12x375mL")
+
+    def test_unicode_times_normalises_same_as_ascii(self):
+        assert normalize_package_size("24 × 375mL") == normalize_package_size("24 x 375mL")
+        assert normalize_package_size("375mL × 24") == normalize_package_size("24x375mL")
