@@ -47,6 +47,9 @@ export default function ProfileScreen() {
   // On mount: check for a stored token from a previous session
   useEffect(() => {
     void restoreSession()
+    // restoreSession is defined in the same scope and never changes; adding it
+    // to deps would require useCallback wrapping with no runtime benefit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   async function restoreSession() {

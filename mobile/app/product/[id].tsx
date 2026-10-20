@@ -49,6 +49,9 @@ export default function ProductDetailScreen() {
   useEffect(() => {
     if (!id) return
     load()
+    // load is defined in the same scope; wrapping in useCallback would add
+    // complexity without benefit — id is the only real dependency here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id])
 
   async function load() {

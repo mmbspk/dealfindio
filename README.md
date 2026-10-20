@@ -4,6 +4,22 @@
 
 ---
 
+## Mobile quick-start
+
+DealFindio is primarily a **mobile app** (Expo / React Native). Get the iOS Simulator running in three steps:
+
+```bash
+make doctor        # check prerequisites
+make setup-mobile  # install Node dependencies
+make ios           # build + launch on iOS Simulator
+```
+
+**Xcode 27 / Device Hub users:** `Simulator.app` is gone — `make ios` handles Device Hub automatically.
+
+Full guide → [docs/local-mobile-development.md](docs/local-mobile-development.md)
+
+---
+
 ## Table of Contents
 
 1. [Product Overview](#1-product-overview)
@@ -179,7 +195,7 @@ Store catalogues / flyers
 | Layer | Technology |
 |-------|-----------|
 | Language | TypeScript (strict) |
-| Framework | React Native 0.74 + Expo SDK 51 |
+| Framework | React Native 0.81.5 + Expo SDK 54 |
 | Navigation | Expo Router (file-based) |
 | State management | Zustand |
 | HTTP client | Axios + AsyncStorage token |
@@ -258,8 +274,20 @@ dealfindio/
 │   │   ├── api/client.ts
 │   │   ├── store/store.ts
 │   │   └── types/
-│   ├── app.json                # Expo config + permissions
+│   ├── plugins/
+│   │   └── withFixPodsDeploymentTarget.js  # CocoaPods deployment-target fix
+│   ├── app.config.js           # Dynamic Expo config (API URL + plugins)
+│   ├── app.json                # Static Expo config (base)
 │   └── eas.json                # EAS Build config
+│
+├── scripts/
+│   └── dev/
+│       ├── doctor.sh           # Environment health check
+│       ├── ios.sh              # iOS Simulator build + launch
+│       └── ios-test.sh         # Simulator smoke tests
+│
+├── docs/
+│   └── local-mobile-development.md
 │
 ├── infra/
 │   └── railway.toml            # Railway service definitions
