@@ -537,6 +537,23 @@ class TestRunAudit:
         findings = run_audit(test_db_session, limit=1)
         assert len(findings["5_gtin"]) <= 1
 
+    def test_limit_selection_is_deterministic(self, test_db_session: Session):
+        """limit= always picks the same products across runs (IDs are ordered)."""
+        for i in range(3):
+            p = _product(test_db_session, name=f"Drink {i}", norm="375mL")
+            _listing(
+                test_db_session,
+                product=p,
+                chain="coles",
+                external_id=f"coles-det-{i}",
+                raw="375mL 12 Pack",
+            )
+
+        findings_a = run_audit(test_db_session, limit=1)
+        findings_b = run_audit(test_db_session, limit=1)
+
+        assert findings_a["2_raw_vs_canonical"] == findings_b["2_raw_vs_canonical"]
+
 
 # ── shared helper ─────────────────────────────────────────────────────────────
 

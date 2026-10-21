@@ -147,18 +147,28 @@ def _get_auditable_product_ids(
 ) -> list:
     """Return product IDs (UUID objects) to include in the audit.
 
+    Results are ordered by ID so ``--limit`` selects the same products on
+    every run, making partial audits reproducible and comparable across runs.
+
     When *chains* is given, only products that have at least one listing in
     those chains are returned so the GTIN audit scope matches the listing
     scope.  When *chains* is None every product ID is returned.
+
+    Memory note: the full list of IDs is held in memory.  At 100 000 products
+    this is roughly 16 MB of UUID objects — comfortably within typical limits.
+    If the catalog grows significantly, replace this call with a keyset-
+    paginated cursor and stream findings directly to CSV rather than
+    accumulating them in ``run_audit``.
     """
     if chains:
         stmt = (
             select(ProductRetailerListing.product_id)
             .where(ProductRetailerListing.chain.in_(chains))
             .distinct()
+            .order_by(ProductRetailerListing.product_id)
         )
     else:
-        stmt = select(Product.id)
+        stmt = select(Product.id).order_by(Product.id)
     return [row[0] for row in session.execute(stmt).all()]
 
 
