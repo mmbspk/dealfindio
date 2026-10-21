@@ -51,6 +51,22 @@ _RE_SIZE_THEN_COUNT = re.compile(
     re.I,
 )
 
+# "12 Pack 375mL" — bare count word before size (adjacent)
+# Handles "12 Pack 375mL", "12pk 1.25L", "4 Pack 100g"
+_RE_COUNT_THEN_SIZE = re.compile(
+    rf"(?<![\d.])(\d+)\s*(?:pack|pk|ct|count|pcs?|pieces?)\b\s*({_NUM})\s*({_UNIT})",
+    re.I,
+)
+
+# "375mL × 12" or "375mL x 12" — unit then explicit × count
+# The negative lookahead prevents matching the size half of "24 × 375mL × 6" (handled by
+# _RE_MULTI_EXPLICIT first); also prevents false matches like "375mL x 1.5 kg" where the
+# token after × is itself followed by a unit.
+_RE_SIZE_THEN_EXPLICIT_COUNT = re.compile(
+    rf"({_NUM})\s*({_UNIT})\s*[xX×]\s*(\d+)\b(?!\s*\.?\d*\s*(?:{_UNIT}))",
+    re.I,
+)
+
 # Simple "375mL" or "1.5 L"
 _RE_SINGLE = re.compile(rf"({_NUM})\s*({_UNIT})", re.I)
 
@@ -133,6 +149,8 @@ def normalize_package_size(raw: str | None) -> str | None:
       "2500g"        → "2.5kg"
       "24 x 375mL"   → "24x375mL"
       "375mL 24 Pack"→ "24x375mL"
+      "12 Pack 375mL"→ "12x375mL"
+      "375mL × 12"   → "12x375mL"
       "12 oz"        → None (imperial not supported)
       "assorted"     → None
     """
@@ -140,7 +158,7 @@ def normalize_package_size(raw: str | None) -> str | None:
         return None
     s = raw.strip()
 
-    # 1. Explicit multipack: "24 x 375mL"
+    # 1. Explicit multipack: "24 x 375mL", "24 × 375mL"
     m = _RE_MULTI_EXPLICIT.search(s)
     if m:
         count_f = float(m.group(1))
@@ -170,7 +188,36 @@ def normalize_package_size(raw: str | None) -> str | None:
             return None
         return f"{count}x{inner}"
 
-    # 3. Single size: "375mL", "1.5 L", "500g"
+    # 3. Count-before-unit (adjacent): "12 Pack 375mL", "4 Pack 100g"
+    m = _RE_COUNT_THEN_SIZE.search(s)
+    if m:
+        count = int(m.group(1))
+        size_val = float(m.group(2))
+        unit = _normalise_unit(m.group(3))
+        if not unit or count == 0 or size_val == 0:
+            return None
+        inner = _format_single(size_val, unit)
+        if inner is None:
+            return None
+        return f"{count}x{inner}"
+
+    # 4. Unit-then-count via × / x: "375mL × 12", "1.25L x 4"
+    m = _RE_SIZE_THEN_EXPLICIT_COUNT.search(s)
+    if m:
+        size_val = float(m.group(1))
+        unit = _normalise_unit(m.group(2))
+        count_f = float(m.group(3))
+        if count_f != int(count_f):
+            return None
+        count = int(count_f)
+        if not unit or count == 0 or size_val == 0:
+            return None
+        inner = _format_single(size_val, unit)
+        if inner is None:
+            return None
+        return f"{count}x{inner}"
+
+    # 5. Single size: "375mL", "1.5 L", "500g"
     m = _RE_SINGLE.search(s)
     if m:
         size_val = float(m.group(1))

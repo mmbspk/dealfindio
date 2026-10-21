@@ -684,16 +684,29 @@ def _extract_coles_package_size(item: dict) -> Optional[str]:
     """Extract package size from a Coles API product item.
 
     Priority:
-      1. item["size"] — dedicated size field (e.g. "350g", "1.5L", "375mL")
+      1. item["size"] — dedicated size field (e.g. "350g", "1.5L", "375mL");
+         augmented with a pack count from item["name"] when present
+         (e.g. size="375mL", name="12 Pack Cans 375mL" → "375mL 12 Pack")
       2. item["description"] — full UPPERCASE title, e.g. "PAULS FARMHOUSE GOLD
          FULL CREAM MILK 1.5 LITRE"; parse the trailing size token from here
       3. item["name"] — short display name; only some products embed the size
          (e.g. "Coca-Cola No Sugar 375mL 24 Pack")
+
+    For all three paths, after extracting a bare unit (e.g. "375mL"), the source
+    text is also scanned for a standalone "N Pack/pk" count that the main regex
+    couldn't capture together with the unit.  The two fragments are combined so
+    that normalize_package_size can produce the correct canonical form:
+      "12 Pack Soft Drink Cans 375mL" → "375mL 12 Pack" → "12x375mL"
     """
     # 1. Dedicated size field — fastest path, most reliable.
     dedicated = (item.get("size") or "").strip()
     if dedicated:
-        return dedicated
+        # Even with a dedicated unit size, the Coles API often omits the pack count
+        # from item["size"] (e.g. size="375mL") while item["name"] carries it
+        # (e.g. "12 Pack Soft Drink Cans 375mL").  Augment so the canonical norm
+        # becomes "12x375mL" not just "375mL".
+        name_text = (item.get("name") or "").strip()
+        return _augment_with_pack_count(name_text, dedicated)
 
     # 2. Full description (uppercase, e.g. "PAULS ... 1.5 LITRE").
     desc = (item.get("description") or "").strip()
@@ -701,17 +714,23 @@ def _extract_coles_package_size(item: dict) -> Optional[str]:
         # Normalise LITRE / LITRES → L, MILLILITRE → mL so the regex matches.
         normalised = re.sub(r"\bLITRES?\b", "L", desc, flags=re.IGNORECASE)
         normalised = re.sub(r"\bMILLILITRES?\b", "mL", normalised, flags=re.IGNORECASE)
-        m = _COLES_PACKAGE_SIZE_RE_TRAILING.search(normalised) or _COLES_PACKAGE_SIZE_RE.search(
-            normalised
-        )
+        m = _COLES_PACKAGE_SIZE_RE_TRAILING.search(normalised)
+        if not m:
+            # Prefer unit-bearing match (NxUnit or bare unit) over a bare "N Pack" count
+            # so "6 Pack 250mL Juice" returns "250mL" (augmentable) not "6 Pack".
+            m = _COLES_UNIT_BEARING_RE.search(normalised) or _COLES_PACKAGE_SIZE_RE.search(
+                normalised
+            )
         if m:
-            return m.group(0).strip()
+            return _augment_with_pack_count(normalised, m.group(0).strip())
 
     # 3. Short display name — fallback for products that embed size in name.
     name = (item.get("name") or "").strip()
-    m = _COLES_PACKAGE_SIZE_RE_TRAILING.search(name) or _COLES_PACKAGE_SIZE_RE.search(name)
+    m = _COLES_PACKAGE_SIZE_RE_TRAILING.search(name)
+    if not m:
+        m = _COLES_UNIT_BEARING_RE.search(name) or _COLES_PACKAGE_SIZE_RE.search(name)
     if m:
-        return m.group(0).strip()
+        return _augment_with_pack_count(name, m.group(0).strip())
 
     return None
 
@@ -726,12 +745,48 @@ _COLES_PACKAGE_SIZE_RE_TRAILING = re.compile(
     r"|\d+\s*(?:pack|pk))\s*$",
     re.IGNORECASE,
 )
+# Full unanchored fallback — includes bare "N Pack" as a last resort.
 _COLES_PACKAGE_SIZE_RE = re.compile(
     r"(\d+\s*[xX]\s*\d+\.?\d*\s*(?:ml|L|kg|g|oz)\b"
     r"|\d+\.?\d*\s*(?:ml|L|kg|g|oz)\b(?:\s+\d+\s*(?:pack|pk))?"
     r"|\d+\s*(?:pack|pk))",
     re.IGNORECASE,
 )
+# Unit-bearing subset: NxUnit or bare unit (no bare "N Pack" alternative).
+# Used as a preferred fallback so a unit is found even when a bare pack count
+# appears earlier in the string (e.g. "6 Pack 250mL Juice" → "250mL" not "6 Pack").
+_COLES_UNIT_BEARING_RE = re.compile(
+    r"(\d+\s*[xX]\s*\d+\.?\d*\s*(?:ml|L|kg|g|oz)\b"
+    r"|\d+\.?\d*\s*(?:ml|L|kg|g|oz)\b(?:\s+\d+\s*(?:pack|pk))?)",
+    re.IGNORECASE,
+)
+# Matches a bare "N Pack" or "N pk" that is NOT preceded by a unit (e.g. NOT part of
+# "375mL 12 Pack" or "6x375mL").  Used to augment a unit-only match with a pack count
+# that appears elsewhere in the product name — e.g. "12 Pack Soft Drink Cans 375mL".
+_COLES_BARE_PACK_COUNT_RE = re.compile(
+    r"(?<!\d)(\d+)\s*(?:pack|pk)\b",
+    re.IGNORECASE,
+)
+
+
+def _augment_with_pack_count(text: str, raw: str) -> str:
+    """Append a bare 'N Pack/pk' count to a unit-only size string.
+
+    Story #99: when the Coles product name leads with a pack count that the
+    main size regex misses (e.g. "12 Pack Soft Drink Cans 375mL" → raw="375mL"),
+    this function finds the count in *text* and returns "375mL 12 Pack" so that
+    normalize_package_size can produce the canonical "12x375mL".
+
+    Leaves *raw* unchanged if it already contains pack/multipack information
+    (i.e. already has "pack"/"pk" text or an "Nx" prefix).
+    """
+    # Already has pack info — nothing to add.
+    if re.search(r"\b(?:pack|pk)\b", raw, re.I) or re.search(r"\d+\s*[xX×]", raw, re.I):
+        return raw
+    pack_m = _COLES_BARE_PACK_COUNT_RE.search(text)
+    if pack_m:
+        return f"{raw} {pack_m.group(0)}"
+    return raw
 
 
 def _extract_coles_unit_price(pricing: dict) -> Optional[float]:

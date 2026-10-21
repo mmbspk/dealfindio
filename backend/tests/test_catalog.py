@@ -330,6 +330,40 @@ class TestColesPackageSize:
         assert self._fn(item) == "1.5L"
 
     @pytest.mark.unit
+    def test_dedicated_size_augmented_with_pack_count_from_name(self):
+        """Code-review fix: dedicated size='375mL' + name has pack count → augmented.
+
+        If Coles provides size='375mL' alongside name='12 Pack Soft Drink Cans 375mL',
+        the old path returned '375mL' immediately, creating a single-vs-multipack
+        collision under the size-variant veto.  After this fix, the pack count from
+        the name is combined with the dedicated size.
+        """
+        item = {
+            "name": "12 Pack Soft Drink Cans 375mL",
+            "size": "375mL",
+        }
+        assert self._fn(item) == "375mL 12 Pack"
+
+    @pytest.mark.unit
+    def test_dedicated_size_not_augmented_when_name_has_no_pack_count(self):
+        """No augmentation when the name carries no pack-count information."""
+        item = {
+            "name": "Special Fried Rice",
+            "description": "COLES KITCHEN SPECIAL FRIED RICE 350G",
+            "size": "350g",
+        }
+        assert self._fn(item) == "350g"
+
+    @pytest.mark.unit
+    def test_dedicated_size_not_augmented_when_already_multipack(self):
+        """No double-augmentation when the dedicated size already contains multipack info."""
+        item = {
+            "name": "Soft Drink Cans 6 Pack 375mL",
+            "size": "6x375mL",
+        }
+        assert self._fn(item) == "6x375mL"
+
+    @pytest.mark.unit
     def test_dedicated_size_various_units(self):
         for size in ("350g", "180g", "420g", "375mL", "2kg"):
             item = {"name": "Product", "size": size}
@@ -413,18 +447,52 @@ class TestColesPackageSize:
         assert self._fn(item) == "24x375mL"
 
     @pytest.mark.unit
-    def test_size_trailing_takes_priority_over_leading_number(self):
-        """Gap 5 regression guard: when size is at the end the trailing-anchor wins.
+    def test_pack_before_unit_preserved_in_name(self):
+        """Story #99: 'N Pack … unit' must combine them so the pack count is not lost.
 
-        For a name like "12 Pack Soft Drink Cans 375mL", the leading "12 Pack"
-        must NOT win — the canonical size at the end ("375mL") should be returned
-        because the trailing regex fires first.
+        Previously "12 Pack Soft Drink Cans 375mL" returned "375mL" — the trailing
+        regex found the unit but discarded the leading "12 Pack".  After Story #99
+        the extractor combines them so normalize_package_size can produce "12x375mL".
         """
         item = {"name": "12 Pack Soft Drink Cans 375mL"}
-        result = self._fn(item)
-        # The trailing regex matches "375mL" at the end before the unanchored
-        # fallback has a chance to match "12 Pack".
-        assert result == "375mL"
+        assert self._fn(item) == "375mL 12 Pack"
+
+    @pytest.mark.unit
+    def test_pack_before_unit_preserved_in_description(self):
+        """Story #99: description path also augments unit with pack count."""
+        item = {"description": "12 PACK SOFT DRINK CANS 375ML"}
+        # Description is uppercase so the preserved raw is uppercase too; the
+        # important thing is that normalize_package_size sees "12x375mL".
+        assert self._fn(item) == "375ML 12 PACK"
+
+    @pytest.mark.unit
+    def test_pack_count_not_added_when_already_present(self):
+        """No double-augmentation when the unit match already includes pack info."""
+        # "375mL 24 Pack" is captured as a whole by the trailing regex —
+        # _augment_with_pack_count should leave it unchanged.
+        item = {"name": "Coca-Cola No Sugar 375mL 24 Pack"}
+        assert self._fn(item) == "375mL 24 Pack"
+
+    @pytest.mark.unit
+    def test_various_pack_count_formats_before_unit(self):
+        """Different pack-count phrases before the unit are all captured."""
+        cases = [
+            ({"name": "4 Pack Soft Drink 375mL"}, "375mL 4 Pack"),
+            ({"name": "24pk Soft Drink 375mL"}, "375mL 24pk"),
+            # "6 pack" before a mid-word unit: trailing regex fails, unit-bearing
+            # fallback finds "250mL", augmentation adds the pack count.
+            ({"name": "6 pack 250mL Juice"}, "250mL 6 pack"),
+        ]
+        for item, expected in cases:
+            assert self._fn(item) == expected, f"Failed for {item}"
+
+    @pytest.mark.unit
+    def test_end_to_end_pack_before_unit_normalizes_to_canonical(self):
+        """Full pipeline: '12 Pack Soft Drink Cans 375mL' → canonical '12x375mL'."""
+        from app.services.package_size import normalize_package_size
+
+        raw = self._fn({"name": "12 Pack Soft Drink Cans 375mL"})
+        assert normalize_package_size(raw) == "12x375mL"
 
 
 # ── catalog_ingest ───────────────────────────────────────────────────────────
