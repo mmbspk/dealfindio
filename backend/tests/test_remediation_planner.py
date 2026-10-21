@@ -500,6 +500,44 @@ class TestClassifyConflictingEvidence:
         assert cls["approval_status"] == APPROVAL_MANUAL
         assert cls["proposed_norm"] is None
 
+    def test_mixed_name_evidence_prevents_safe_candidate(self, test_db_session: Session):
+        """One name matches raw 6x375mL but another says 12x375mL — partial agreement must not grant safe_candidate."""
+        p = _product(test_db_session, name="Fanta Mix", norm="375mL")
+        lst_ww = _listing(
+            test_db_session,
+            product=p,
+            chain="woolworths",
+            raw="375mL x 6 pack",
+            ext_name="Fanta 6 Pack 375mL",
+        )
+        lst_coles = _listing(
+            test_db_session,
+            product=p,
+            chain="coles",
+            raw=None,
+            ext_name="Fanta 12 Pack 375mL",
+        )
+        cls = classify_product(p, [lst_ww, lst_coles])
+        assert cls is not None
+        assert cls["classification"] == "conflicting_evidence"
+        assert cls["approval_status"] == APPROVAL_MANUAL
+
+    def test_stored_multipack_contradicted_by_name_evidence(self, test_db_session: Session):
+        """Stored 6x375mL, no conflicting raws, but a name says 12 Pack → conflicting_evidence."""
+        p = _product(test_db_session, name="Fanta Name Conflict", norm="6x375mL")
+        lst = _listing(
+            test_db_session,
+            product=p,
+            chain="drakes",
+            raw=None,
+            ext_name="Fanta 12 Pack 375mL",
+        )
+        cls = classify_product(p, [lst])
+        assert cls is not None
+        assert cls["classification"] == "conflicting_evidence"
+        assert cls["approval_status"] == APPROVAL_MANUAL
+        assert cls["proposed_norm"] is None
+
 
 # ── unit: manifest row ────────────────────────────────────────────────────────
 

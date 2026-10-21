@@ -274,6 +274,26 @@ def classify_product(
                 "evidence_name": differing[0][0].external_name or "",
                 "conflict_listing_norms": _fmt_conflict_norms(differing),
             }
+        # Raws are consistent (or absent) — still check name evidence against
+        # the stored multipack norm before declaring the product clean.
+        name_proposed_vol = {n for _, n in name_vol_multi}
+        if name_proposed_vol and name_proposed_vol != {stored_norm}:
+            best_name_lst = name_vol_multi[0][0]
+            return {
+                "classification": "conflicting_evidence",
+                "proposed_norm": None,
+                "confidence": "low",
+                "approval_status": APPROVAL_MANUAL,
+                "justification": (
+                    f"Stored multipack '{stored_norm}' contradicted by name evidence"
+                    f" {sorted(name_proposed_vol)}"
+                ),
+                "evidence_chain": best_name_lst.chain,
+                "evidence_listing_id": best_name_lst.external_id,
+                "evidence_raw": best_name_lst.package_size_raw or "",
+                "evidence_name": best_name_lst.external_name or "",
+                "conflict_listing_norms": _fmt_conflict_norms(list(name_vol_multi)),
+            }
         return None
 
     # ── primary: raw → multipack ──────────────────────────────────────────────
@@ -285,8 +305,9 @@ def classify_product(
 
         # When name evidence suggests a different multipack norm than raw evidence,
         # treat the disagreement as a conflict rather than auto-approving raw.
+        # Every explicit name proposal must agree with the raw norm, not just one.
         name_proposed_vol = {n for _, n in name_vol_multi}
-        if name_proposed_vol and proposed_norm not in name_proposed_vol:
+        if name_proposed_vol and name_proposed_vol != {proposed_norm}:
             all_conflict = raw_multipack + list(name_vol_multi)
             return {
                 "classification": "conflicting_evidence",
