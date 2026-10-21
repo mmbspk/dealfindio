@@ -351,6 +351,29 @@ def classify_product(
     # Only consider single-unit raw norms that differ from stored norm.
     raw_single_mismatch = [(lst, n) for lst, n in raw_single if stored_norm and n != stored_norm]
     if raw_single_mismatch:
+        # Name multipack evidence contradicts a single-unit raw proposal — listing
+        # data is split between "single unit" (raw) and "multipack" (name), so we
+        # cannot safely propose either direction without human verification.
+        if name_vol_multi:
+            all_conflict = raw_single_mismatch + list(name_vol_multi)
+            best = raw_single_mismatch[0][0]
+            return {
+                "classification": "conflicting_evidence",
+                "proposed_norm": None,
+                "confidence": "low",
+                "approval_status": APPROVAL_MANUAL,
+                "justification": (
+                    f"Raw gives single-unit {sorted({n for _, n in raw_single_mismatch})}"
+                    f" but name evidence suggests multipack"
+                    f" {sorted({n for _, n in name_vol_multi})}"
+                ),
+                "evidence_chain": best.chain,
+                "evidence_listing_id": best.external_id,
+                "evidence_raw": best.package_size_raw or "",
+                "evidence_name": best.external_name or "",
+                "conflict_listing_norms": _fmt_conflict_norms(all_conflict),
+            }
+
         # Most common proposed norm from raw (prefer most recent listing data).
         norm_votes = Counter(n for _, n in raw_single_mismatch)
         proposed_norm = norm_votes.most_common(1)[0][0]
@@ -374,9 +397,28 @@ def classify_product(
 
     # ── tertiary: name → volume-based multipack ───────────────────────────────
     if name_vol_multi:
-        norm_votes = Counter(n for _, n in name_vol_multi)
-        proposed_norm = norm_votes.most_common(1)[0][0]
-        best_evidence = next(lst for lst, n in name_vol_multi if n == proposed_norm)
+        distinct_name_norms = {n for _, n in name_vol_multi}
+        if len(distinct_name_norms) > 1:
+            # Multiple name proposals disagree — picking one and auto-approving
+            # would be unsafe; require human review instead.
+            best = name_vol_multi[0][0]
+            return {
+                "classification": "conflicting_evidence",
+                "proposed_norm": None,
+                "confidence": "low",
+                "approval_status": APPROVAL_MANUAL,
+                "justification": (
+                    f"Name evidence disagrees across listings: {sorted(distinct_name_norms)}"
+                ),
+                "evidence_chain": best.chain,
+                "evidence_listing_id": best.external_id,
+                "evidence_raw": best.package_size_raw or "",
+                "evidence_name": best.external_name or "",
+                "conflict_listing_norms": _fmt_conflict_norms(list(name_vol_multi)),
+            }
+
+        proposed_norm = next(iter(distinct_name_norms))
+        best_evidence = name_vol_multi[0][0]
 
         if proposed_norm == stored_norm:
             return None

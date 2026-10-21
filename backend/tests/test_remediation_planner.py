@@ -538,6 +538,53 @@ class TestClassifyConflictingEvidence:
         assert cls["approval_status"] == APPROVAL_MANUAL
         assert cls["proposed_norm"] is None
 
+    def test_disagreeing_name_vol_norms_produce_conflict(self, test_db_session: Session):
+        """Coles name says 6 Pack and Drakes name says 12 Pack, no raw → conflicting_evidence."""
+        p = _product(test_db_session, name="Fanta Name Disagreement", norm="375mL")
+        lst_coles = _listing(
+            test_db_session,
+            product=p,
+            chain="coles",
+            raw=None,
+            ext_name="Fanta 6 Pack 375mL",
+        )
+        lst_drakes = _listing(
+            test_db_session,
+            product=p,
+            chain="drakes",
+            raw=None,
+            ext_name="Fanta 12 Pack 375mL",
+        )
+        cls = classify_product(p, [lst_coles, lst_drakes])
+        assert cls is not None
+        assert cls["classification"] == "conflicting_evidence"
+        assert cls["approval_status"] == APPROVAL_MANUAL
+        assert cls["proposed_norm"] is None
+
+    def test_single_raw_mismatch_cannot_override_name_multipack_evidence(
+        self, test_db_session: Session
+    ):
+        """Raw gives a different single-unit norm but another listing's name says multipack."""
+        p = _product(test_db_session, name="Fanta Raw-Single Conflict", norm="375mL")
+        lst_raw = _listing(
+            test_db_session,
+            product=p,
+            chain="coles",
+            raw="1.5L",
+            ext_name=None,
+        )
+        lst_name = _listing(
+            test_db_session,
+            product=p,
+            chain="drakes",
+            raw=None,
+            ext_name="Fanta 6 Pack 375mL",
+        )
+        cls = classify_product(p, [lst_raw, lst_name])
+        assert cls is not None
+        assert cls["classification"] == "conflicting_evidence"
+        assert cls["approval_status"] == APPROVAL_MANUAL
+
 
 # ── unit: manifest row ────────────────────────────────────────────────────────
 
