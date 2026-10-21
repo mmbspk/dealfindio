@@ -393,8 +393,13 @@ class TestClassifyTotalPackageWeight:
 
 
 class TestClassifyConflictingEvidence:
-    def test_multipack_raw_and_single_raw_conflict(self, test_db_session: Session):
-        """One listing has multipack raw, another has single-unit raw → conflicting_evidence."""
+    def test_two_different_single_unit_raws_conflict(self, test_db_session: Session):
+        """Two listings with different single-unit raw norms → conflicting_evidence.
+
+        Covers the Camembert case: Woolworths stores 200g while IGA stores 125g on the
+        same canonical product row.  Both raws parse to single-unit norms that disagree,
+        which signals a likely bad dedup merge — manual review is required.
+        """
         p = _product(test_db_session, name="Camembert Cheese", norm="200g")
         lst_ww = _listing(
             test_db_session,
@@ -412,18 +417,11 @@ class TestClassifyConflictingEvidence:
             raw="125 g",
             ext_name="Tasmanian Heritage Camembert 125g",
         )
-        # Both raws parse to single-unit but disagree (200g vs 125g)
-        # → recoverable_from_raw conflict between 200g and 125g
         cls = classify_product(p, [lst_ww, lst_iga])
-        # stored is 200g, raw norms are 200g and 125g
-        # 200g == stored so it's not in raw_single_mismatch for ww listing
-        # 125g != stored so it IS a mismatch for iga listing
-        # No multipack involved → should be recoverable_from_raw for 125g vs stored 200g
         assert cls is not None
-        # The iga listing disagrees with stored norm → recovery is possible (not conflicting)
-        # because the two listings don't BOTH have raw norms; one matches stored
-        # This is the actual Camembert case: different sizes, likely a bad merge
-        assert cls["classification"] in ("recoverable_from_raw", "conflicting_evidence")
+        assert cls["classification"] == "conflicting_evidence"
+        assert cls["approval_status"] == APPROVAL_MANUAL
+        assert cls["proposed_norm"] is None
 
     def test_two_different_multipack_raws_conflict(self, test_db_session: Session):
         """Two listings with different multipack raw norms → conflicting_evidence."""
@@ -465,6 +463,43 @@ class TestClassifyConflictingEvidence:
         assert cls["classification"] == "conflicting_evidence"
         assert cls["approval_status"] == APPROVAL_MANUAL
 
+    def test_stored_multipack_contradicted_by_different_multipack_listing(
+        self, test_db_session: Session
+    ):
+        """Stored 6x375mL but one listing raw gives 12x375mL → conflicting_evidence."""
+        p = _product(test_db_session, name="Fanta Mislabeled", norm="6x375mL")
+        lst = _listing(test_db_session, product=p, chain="coles", raw="375mL x 12 pack")
+        cls = classify_product(p, [lst])
+        assert cls is not None
+        assert cls["classification"] == "conflicting_evidence"
+        assert cls["approval_status"] == APPROVAL_MANUAL
+        assert cls["proposed_norm"] is None
+
+    def test_stored_multipack_contradicted_by_single_unit_listing(self, test_db_session: Session):
+        """Stored 6x375mL but one listing raw is single-unit 375mL → conflicting_evidence."""
+        p = _product(test_db_session, name="Fanta Mislabeled Single", norm="6x375mL")
+        lst = _listing(test_db_session, product=p, chain="drakes", raw="375mL")
+        cls = classify_product(p, [lst])
+        assert cls is not None
+        assert cls["classification"] == "conflicting_evidence"
+        assert cls["approval_status"] == APPROVAL_MANUAL
+
+    def test_name_contradicts_raw_multipack_norm(self, test_db_session: Session):
+        """Raw says 6x375mL but name says 12 Pack → conflicting_evidence."""
+        p = _product(test_db_session, name="Soda", norm="375mL")
+        lst = _listing(
+            test_db_session,
+            product=p,
+            chain="woolworths",
+            raw="375mL x 6 pack",
+            ext_name="Soda 12 Pack 375mL",
+        )
+        cls = classify_product(p, [lst])
+        assert cls is not None
+        assert cls["classification"] == "conflicting_evidence"
+        assert cls["approval_status"] == APPROVAL_MANUAL
+        assert cls["proposed_norm"] is None
+
 
 # ── unit: manifest row ────────────────────────────────────────────────────────
 
@@ -497,6 +532,22 @@ class TestManifestRow:
         assert cls is not None
         row = _to_manifest_row(p, cls, [lst])
         assert row["remediation_action"] == "none"
+
+    def test_recoverable_from_name_action_is_source_recovery(self, test_db_session: Session):
+        """recoverable_from_name requires a fresh scrape — recompute alone cannot help."""
+        p = _product(test_db_session, name="Fanta 375mL 6 Pack", norm="375mL")
+        lst = _listing(
+            test_db_session,
+            product=p,
+            chain="drakes",
+            raw=None,
+            ext_name="Fanta 375mL 6 Pack",
+        )
+        cls = classify_product(p, [lst])
+        assert cls is not None
+        assert cls["classification"] == "recoverable_from_name"
+        row = _to_manifest_row(p, cls, [lst])
+        assert row["remediation_action"] == "source_recovery_or_rescrape"
 
     def test_all_raw_norms_aggregated(self, test_db_session: Session):
         p = _product(test_db_session, name="Fanta", norm="375mL")
@@ -587,7 +638,7 @@ class TestRunPlan:
         assert rows == []
 
     def test_already_multipack_norm_excluded(self, test_db_session: Session):
-        """Products already showing multipack norm are not re-flagged."""
+        """Products with multipack norm and consistent listing raws produce no findings."""
         p = _product(test_db_session, name="Fanta 6-Pack", norm="6x375mL")
         _listing(
             test_db_session,
@@ -732,3 +783,13 @@ class TestRunPlan:
                 f"Row with classification={row['classification']} must never be "
                 f"approval_status=safe_candidate"
             )
+
+    def test_stored_multipack_with_conflicting_raw_in_manifest(self, test_db_session: Session):
+        """Stored multipack norm but listing raw gives different multipack → manifest row."""
+        p = _product(test_db_session, name="Mislabeled Fanta", norm="6x375mL")
+        _listing(test_db_session, product=p, chain="coles", raw="375mL x 12 pack")
+        rows = run_plan(test_db_session)
+        assert len(rows) == 1
+        assert rows[0]["classification"] == "conflicting_evidence"
+        assert rows[0]["approval_status"] == APPROVAL_MANUAL
+        assert rows[0]["proposed_norm"] == ""

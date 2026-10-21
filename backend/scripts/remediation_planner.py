@@ -198,11 +198,6 @@ def classify_product(
     """
     stored_norm = product.package_size_norm
 
-    # Products already showing a multipack norm are not flagged — they may have
-    # been corrected already, and their stored norm may be authoritative.
-    if _is_multipack_norm(stored_norm):
-        return None
-
     # ── collect evidence ──────────────────────────────────────────────────────
 
     raw_multipack: list[tuple] = []  # (listing, norm) from raw → multipack
@@ -237,34 +232,70 @@ def classify_product(
         return None
 
     # ── conflict detection ────────────────────────────────────────────────────
-    # A conflict exists when raw norms disagree across listings:
-    #   - Multipack raw from one listing coexists with any single-unit raw from
-    #     another.  A Coles listing with "375mL" (single) alongside a Woolworths
-    #     listing with "375mL x 6 pack" (multipack) indicates the canonical
-    #     product association may span different pack sizes — manual review needed.
-    #   - Two different multipack sizes (e.g. "6x375mL" vs "4x375mL") also conflict.
+    # Any disagreement among parseable raw norms triggers a conflict — this
+    # catches multipack-vs-single disagreements AND same-type norms that differ
+    # (e.g. Woolworths 200g vs IGA 125g on the same canonical product row).
+    all_parseable_raws = raw_multipack + raw_single
+    distinct_raw_norms = {n for _, n in all_parseable_raws}
 
-    multipack_raw_norms = {n for _, n in raw_multipack}
-    multi_norm_disagreement = len(multipack_raw_norms) > 1
-    # Mix: any multipack raw + any single-unit raw = conflict
-    has_raw_conflict = bool(raw_multipack) and bool(raw_single)
+    if len(distinct_raw_norms) > 1:
+        best_evidence = all_parseable_raws[0][0]
+        return {
+            "classification": "conflicting_evidence",
+            "proposed_norm": None,
+            "confidence": "low",
+            "approval_status": APPROVAL_MANUAL,
+            "justification": (f"Listings have conflicting raw norms: {sorted(distinct_raw_norms)}"),
+            "evidence_chain": best_evidence.chain,
+            "evidence_listing_id": best_evidence.external_id,
+            "evidence_raw": best_evidence.package_size_raw or "",
+            "evidence_name": best_evidence.external_name or "",
+            "conflict_listing_norms": _fmt_conflict_norms(all_parseable_raws),
+        }
 
-    # ── primary: raw → multipack ──────────────────────────────────────────────
-    if raw_multipack:
-        norm_votes = Counter(n for _, n in raw_multipack)
-        proposed_norm = norm_votes.most_common(1)[0][0]
-        best_evidence = next(lst for lst, n in raw_multipack if n == proposed_norm)
-
-        if multi_norm_disagreement or has_raw_conflict:
-            all_conflict = raw_multipack + raw_single
+    # Products already showing a multipack norm: check consistency with listing
+    # raws.  If every parseable raw matches stored → clean.  If any raw diverges
+    # (e.g. stored "6x375mL" but a listing reports "12x375mL") → flag conflict.
+    if _is_multipack_norm(stored_norm):
+        differing = [(lst, n) for lst, n in all_parseable_raws if n != stored_norm]
+        if differing:
             return {
                 "classification": "conflicting_evidence",
                 "proposed_norm": None,
                 "confidence": "low",
                 "approval_status": APPROVAL_MANUAL,
                 "justification": (
-                    f"Raw norms disagree: multipack={sorted(multipack_raw_norms)}"
-                    + (f" single={sorted({n for _, n in raw_single})}" if raw_single else "")
+                    f"Stored multipack '{stored_norm}' but listing raw(s) give:"
+                    f" {sorted({n for _, n in differing})}"
+                ),
+                "evidence_chain": differing[0][0].chain,
+                "evidence_listing_id": differing[0][0].external_id,
+                "evidence_raw": differing[0][0].package_size_raw or "",
+                "evidence_name": differing[0][0].external_name or "",
+                "conflict_listing_norms": _fmt_conflict_norms(differing),
+            }
+        return None
+
+    # ── primary: raw → multipack ──────────────────────────────────────────────
+    # No inter-listing conflict; stored_norm is single-unit (or None).
+    if raw_multipack:
+        norm_votes = Counter(n for _, n in raw_multipack)
+        proposed_norm = norm_votes.most_common(1)[0][0]
+        best_evidence = next(lst for lst, n in raw_multipack if n == proposed_norm)
+
+        # When name evidence suggests a different multipack norm than raw evidence,
+        # treat the disagreement as a conflict rather than auto-approving raw.
+        name_proposed_vol = {n for _, n in name_vol_multi}
+        if name_proposed_vol and proposed_norm not in name_proposed_vol:
+            all_conflict = raw_multipack + list(name_vol_multi)
+            return {
+                "classification": "conflicting_evidence",
+                "proposed_norm": None,
+                "confidence": "low",
+                "approval_status": APPROVAL_MANUAL,
+                "justification": (
+                    f"Raw norm '{proposed_norm}' contradicted by name evidence"
+                    f" {sorted(name_proposed_vol)}"
                 ),
                 "evidence_chain": best_evidence.chain,
                 "evidence_listing_id": best_evidence.external_id,
@@ -432,7 +463,7 @@ def _to_manifest_row(
     action_map = {
         ("confirmed_norm_mismatch", APPROVAL_SAFE): "recompute",
         ("recoverable_from_raw", APPROVAL_SAFE): "recompute",
-        ("recoverable_from_name", APPROVAL_SAFE): "recompute",
+        ("recoverable_from_name", APPROVAL_SAFE): "source_recovery_or_rescrape",
         ("conflicting_evidence", APPROVAL_MANUAL): "manual_unmerge_or_split",
         ("total_package_weight", APPROVAL_MANUAL): "manual_verify_then_update",
         ("count_only", APPROVAL_INSUFFICIENT): "none",
