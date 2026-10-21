@@ -40,7 +40,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 os.environ.setdefault("REDIS_URL", "redis://localhost/0")
 os.environ.setdefault("SECRET_KEY", "audit-script")
 
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, event, select, text
 from sqlalchemy.orm import Session
 
 from app.models.product import Product
@@ -136,27 +136,57 @@ _FIELDS_5 = [
     "product_package_size_norm",
 ]
 
-# ── data loading ──────────────────────────────────────────────────────────────
+# ── data loading (batched) ────────────────────────────────────────────────────
+
+BATCH_SIZE = 10_000
 
 
-def _load_data(
+def _get_auditable_product_ids(
     session: Session,
     chains: set[str] | None,
+) -> list:
+    """Return product IDs (UUID objects) to include in the audit.
+
+    When *chains* is given, only products that have at least one listing in
+    those chains are returned so the GTIN audit scope matches the listing
+    scope.  When *chains* is None every product ID is returned.
+    """
+    if chains:
+        stmt = (
+            select(ProductRetailerListing.product_id)
+            .where(ProductRetailerListing.chain.in_(chains))
+            .distinct()
+        )
+    else:
+        stmt = select(Product.id)
+    return [row[0] for row in session.execute(stmt).all()]
+
+
+def _load_batch(
+    session: Session,
+    product_ids: list,
+    chains: set[str] | None,
 ) -> tuple[dict, dict]:
-    """Return (products_by_id, listings_by_product_id)."""
-    products = session.execute(select(Product)).scalars().all()
+    """Load products and listings for one batch of product IDs.
+
+    Returns *(products_by_id, listings_by_product_id)* dicts.
+    Listings are filtered by *chains* when provided.
+    """
+    products = session.execute(select(Product).where(Product.id.in_(product_ids))).scalars().all()
     products_by_id = {str(p.id): p for p in products}
 
-    stmt = select(ProductRetailerListing)
+    lst_stmt = select(ProductRetailerListing).where(
+        ProductRetailerListing.product_id.in_(product_ids)
+    )
     if chains:
-        stmt = stmt.where(ProductRetailerListing.chain.in_(chains))
-    listings = session.execute(stmt).scalars().all()
+        lst_stmt = lst_stmt.where(ProductRetailerListing.chain.in_(chains))
+    listings = session.execute(lst_stmt).scalars().all()
 
     listings_by_product_id: dict[str, list] = defaultdict(list)
     for lst in listings:
         listings_by_product_id[str(lst.product_id)].append(lst)
 
-    return products_by_id, listings_by_product_id
+    return products_by_id, dict(listings_by_product_id)
 
 
 # ── audit categories ──────────────────────────────────────────────────────────
@@ -353,12 +383,24 @@ def audit_gtin_integrity(products_by_id: dict) -> list[dict]:
 
 # ── output helpers ────────────────────────────────────────────────────────────
 
+_CSV_FORMULA_PREFIXES = frozenset("=+-@\t\r\n")
+
+
+def _sanitize_csv_cell(value: str) -> str:
+    """Prevent spreadsheet formula injection when a cell starts with a formula prefix."""
+    if value and value[0] in _CSV_FORMULA_PREFIXES:
+        return "'" + value
+    return value
+
 
 def _write_csv(path: Path, fieldnames: list[str], rows: list[dict]) -> None:
     with path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
-        writer.writerows(rows)
+        for row in rows:
+            writer.writerow(
+                {k: _sanitize_csv_cell(v) if isinstance(v, str) else v for k, v in row.items()}
+            )
 
 
 def _write_summary(
@@ -402,11 +444,13 @@ def _write_summary(
         "",
         "```sql",
         "-- Identify Class A candidates (read-only):",
-        "SELECT p.id, p.name, p.package_size_norm, prl.package_size_raw",
+        "SELECT p.id, p.name, p.package_size_norm, prl.package_size_raw, prl.chain",
         "FROM products p",
         "JOIN product_retailer_listings prl ON prl.product_id = p.id",
-        "WHERE (prl.package_size_raw ~* '\\\\d+\\\\s*(pack|pk)'",
-        "       OR prl.package_size_raw ~* '\\\\d+x\\\\d+')",
+        "WHERE (",
+        "       prl.package_size_raw ~* '[0-9]+\\s*(pack|pk)'",
+        "    OR prl.package_size_raw ~* '[0-9]+\\s*x\\s*[0-9]+'",
+        "  )",
         "  AND (p.package_size_norm IS NULL OR p.package_size_norm NOT LIKE '%x%');",
         "```",
         "",
@@ -423,13 +467,15 @@ def _write_summary(
         "```sql",
         "-- Identify Class B candidates (read-only):",
         "SELECT p.id, p.name, p.package_size_norm,",
-        "       prl.package_size_raw, prl.external_name",
+        "       prl.package_size_raw, prl.external_name, prl.chain",
         "FROM products p",
         "JOIN product_retailer_listings prl ON prl.product_id = p.id",
-        "WHERE prl.external_name ~* '\\\\b\\\\d+\\\\s*(pack|pk)\\\\b'",
-        "  AND (prl.package_size_raw IS NULL",
-        "       OR prl.package_size_raw NOT LIKE '%pack%'",
-        "       AND prl.package_size_raw NOT LIKE '%x%')",
+        "WHERE prl.external_name ~* '[0-9]+\\s*(pack|pk)'",
+        "  AND (",
+        "        prl.package_size_raw IS NULL",
+        "     OR (prl.package_size_raw !~* '[0-9]+\\s*(pack|pk)'",
+        "         AND prl.package_size_raw NOT LIKE '%x%')",
+        "  )",
         "  AND (p.package_size_norm IS NULL OR p.package_size_norm NOT LIKE '%x%');",
         "```",
         "",
@@ -468,28 +514,48 @@ def run_audit(
     session: Session,
     chains: set[str] | None = None,
     limit: int = 0,
+    batch_size: int = BATCH_SIZE,
 ) -> dict[str, list[dict]]:
     """Run all audit categories and return findings keyed by category name.
 
-    ``session`` is used read-only. ``chains`` restricts to specific retailer
-    chains. ``limit`` caps the number of products analysed (0 = unlimited;
-    useful for development only).
+    *session* is used read-only.  *chains* restricts analysis to listings from
+    specific retailer chains and also restricts the GTIN audit to the same
+    product scope.  *limit* caps the total number of products analysed (0 =
+    unlimited; for development use only).  *batch_size* controls how many
+    products are loaded per round-trip (default: 10 000).
     """
-    products_by_id, listings_by_product_id = _load_data(session, chains)
+    product_ids = _get_auditable_product_ids(session, chains)
 
     if limit:
-        product_ids = list(listings_by_product_id.keys())[:limit]
-        listings_by_product_id = {k: listings_by_product_id[k] for k in product_ids}
+        product_ids = product_ids[:limit]
 
-    return {
-        "1_name_vs_norm": audit_name_vs_norm(products_by_id, listings_by_product_id),
-        "2_raw_vs_canonical": audit_raw_vs_canonical(products_by_id, listings_by_product_id),
-        "3_cross_retailer": audit_cross_retailer_conflicts(products_by_id, listings_by_product_id),
-        "4_single_multipack": audit_single_multipack_collision(
-            products_by_id, listings_by_product_id
-        ),
-        "5_gtin": audit_gtin_integrity(products_by_id),
+    findings: dict[str, list[dict]] = {
+        "1_name_vs_norm": [],
+        "2_raw_vs_canonical": [],
+        "3_cross_retailer": [],
+        "4_single_multipack": [],
+        "5_gtin": [],
     }
+
+    for start in range(0, max(len(product_ids), 1), batch_size):
+        batch = product_ids[start : start + batch_size]
+        if not batch:
+            break
+        products_by_id, listings_by_pid = _load_batch(session, batch, chains)
+
+        findings["1_name_vs_norm"].extend(audit_name_vs_norm(products_by_id, listings_by_pid))
+        findings["2_raw_vs_canonical"].extend(
+            audit_raw_vs_canonical(products_by_id, listings_by_pid)
+        )
+        findings["3_cross_retailer"].extend(
+            audit_cross_retailer_conflicts(products_by_id, listings_by_pid)
+        )
+        findings["4_single_multipack"].extend(
+            audit_single_multipack_collision(products_by_id, listings_by_pid)
+        )
+        findings["5_gtin"].extend(audit_gtin_integrity(products_by_id))
+
+    return findings
 
 
 # ── CLI entry point ───────────────────────────────────────────────────────────
@@ -536,7 +602,17 @@ def main() -> None:
         sys.exit(1)
 
     engine = create_engine(db_url, echo=False)
+
+    # Enforce read-only at the PostgreSQL session level so accidental writes
+    # are rejected by the database itself, not just by convention.
+    @event.listens_for(engine, "connect")
+    def _set_readonly(dbapi_conn, _record):
+        if hasattr(dbapi_conn, "set_session"):  # psycopg2
+            dbapi_conn.set_session(readonly=True)
+
     with Session(engine) as session:
+        if engine.dialect.name == "postgresql":
+            session.execute(text("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY"))
         print("Loading catalog data…")
         findings = run_audit(session, chains=chains, limit=args.limit)
 

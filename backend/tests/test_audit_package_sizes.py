@@ -493,8 +493,24 @@ class TestRunAudit:
                 f["listing_chain"] == "coles"
             ), f"Expected only coles listings but got: {f['listing_chain']}"
 
+    def test_chains_filter_also_restricts_gtin_audit(self, test_db_session: Session):
+        """GTIN findings are only reported for products with listings in specified chains."""
+        # Product A: woolworths-only, bad GTIN — must NOT appear when filtering for coles
+        pa = _product(test_db_session, name="Product A Wool", gtin="5000112637923")
+        _listing(test_db_session, product=pa, chain="woolworths", external_id="ww-300", raw="375mL")
+
+        # Product B: coles-only, bad GTIN — MUST appear when filtering for coles
+        pb = _product(test_db_session, name="Product B Coles", gtin="5000112637930")
+        _listing(test_db_session, product=pb, chain="coles", external_id="coles-300", raw="375mL")
+
+        findings = run_audit(test_db_session, chains={"coles"})
+        gtin_findings = findings["5_gtin"]
+
+        assert len(gtin_findings) == 1
+        assert gtin_findings[0]["product_name"] == "Product B Coles"
+
     def test_limit_caps_products_analysed(self, test_db_session: Session):
-        """Passing limit=1 analyses at most 1 product's listings."""
+        """Passing limit=1 analyses at most 1 product across all categories."""
         for i in range(3):
             p = _product(test_db_session, name=f"Drink {i}", norm="375mL")
             _listing(
@@ -508,6 +524,18 @@ class TestRunAudit:
         findings = run_audit(test_db_session, limit=1)
         # Category 2 raw-vs-canonical should have at most 1 finding (1 product × 1 listing)
         assert len(findings["2_raw_vs_canonical"]) <= 1
+
+    def test_limit_also_restricts_gtin_audit(self, test_db_session: Session):
+        """limit= cap applies to the GTIN audit as well as listing audits."""
+        for gtin in ("5000112637923", "5000112637930"):
+            p = _product(test_db_session, name=f"Product {gtin}", gtin=gtin)
+            _listing(
+                test_db_session, product=p, chain="coles", external_id=f"coles-{gtin}", raw="375mL"
+            )
+
+        # Both products have bad GTINs but limit=1 → only 1 product audited
+        findings = run_audit(test_db_session, limit=1)
+        assert len(findings["5_gtin"]) <= 1
 
 
 # ── shared helper ─────────────────────────────────────────────────────────────
