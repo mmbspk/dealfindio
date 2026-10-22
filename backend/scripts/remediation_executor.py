@@ -26,12 +26,14 @@ Safety contract (invariants enforced at runtime, not just by convention):
      value.  This catches a new conflicting listing added by a concurrent ingest.
   6. LOCKING PROTOCOL (PostgreSQL only) — the product row and all its listing
      rows are locked with SELECT … FOR UPDATE before any evidence is read.
-     This prevents concurrent catalog ingestion from updating a listing's
-     package_size_raw or the product's package_size_norm between the validation
-     check and the commit.  New listing INSERTs from concurrent ingest are not
-     blocked (no pre-existing row to lock), but they ARE visible in the
-     reclassification query (READ COMMITTED) so any new conflicting evidence
-     will still be detected.
+     Concurrent UPDATEs to locked rows block until this transaction completes.
+     Concurrent INSERTs of new listings for the locked product are ALSO blocked:
+     PostgreSQL FK validation (product_retailer_listings.product_id → products.id)
+     requires FOR KEY SHARE on the referenced product row, which is incompatible
+     with FOR UPDATE.  A concurrent ingest INSERT will wait until this
+     transaction commits or rolls back.  This gives a complete safety guarantee —
+     no concurrent listing change (UPDATE or INSERT) for the locked product can
+     interleave with the executor's classify-and-write phase on PostgreSQL.
   7. TRANSACTION + ROLLBACK — every batch runs inside BEGIN/COMMIT; an
      unexpected error triggers a full batch rollback.  Counters are applied
      to the caller's dict only after a successful commit.
@@ -193,10 +195,10 @@ def _execute_batch(
 
     Locking protocol (PostgreSQL):
       Both the product row and all its listing rows are locked with
-      SELECT … FOR UPDATE before any evidence is inspected.  This ensures a
-      concurrent catalog ingest that tries to UPDATE an existing listing's
-      package_size_raw will wait until this transaction completes rather than
-      racing with the reclassification step.
+      SELECT … FOR UPDATE before any evidence is inspected.  Concurrent UPDATEs
+      to locked rows block until this transaction completes.  Concurrent INSERTs
+      of new listings are ALSO blocked: PostgreSQL FK validation requires FOR KEY
+      SHARE on the parent product row, which is incompatible with FOR UPDATE.
     """
     use_for_update = engine.dialect.name == "postgresql"
 
@@ -249,8 +251,9 @@ def _execute_batch(
                 continue
 
             # Fetch and lock all listings for this product.  The FOR UPDATE lock
-            # prevents concurrent ingestion from updating any existing listing's
-            # package_size_raw between our validation and the write.
+            # on the product row also blocks concurrent listing INSERTs (FK validation
+            # needs FOR KEY SHARE on the product, incompatible with FOR UPDATE).
+            # So no new listing can be committed for this product until we commit.
             listings_stmt = select(ProductRetailerListing).where(
                 ProductRetailerListing.product_id == product_uuid
             )
@@ -259,11 +262,9 @@ def _execute_batch(
             all_listings = session.execute(listings_stmt).scalars().all()
 
             # Live reclassification: re-run the full planner classification
-            # against the locked current listings.  This catches any new
-            # conflicting listing that was inserted by concurrent ingest after
-            # the manifest was generated (INSERT is not blocked by row locks,
-            # but the new row is visible under READ COMMITTED and will cause
-            # reclassification to fail).
+            # against the locked current listings.  Because the product row is held
+            # FOR UPDATE, no concurrent ingest can commit a new listing (FK validation
+            # would block) or update an existing one (row lock) before we commit.
             live = classify_product(product, list(all_listings))
 
             if (
