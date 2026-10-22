@@ -16,6 +16,7 @@ Models:
 from .app_config import AppConfig
 from .base import Base, BaseModel
 from .catalog_run import CatalogCrawlRun
+from .package_size_remediation_log import PackageSizeRemediationLog
 from .notification import Notification
 from .prediction import PricePrediction
 from .price_report import PriceReport
@@ -43,4 +44,5 @@ __all__ = [
     "Notification",
     "PricePrediction",
     "CatalogCrawlRun",
+    "PackageSizeRemediationLog",
 ]
