@@ -12,23 +12,29 @@ Safety contract (invariants enforced at runtime, not just by convention):
   1. DRY-RUN BY DEFAULT — no database writes without --approve.
   2. EXPLICIT APPROVAL — --approve requires --approved-ids <file>.
      There is no "approve all" mode.
-  3. PRE-WRITE REVALIDATION — immediately before each write the executor
-     re-reads the product and its listings, re-runs the normaliser, and
-     verifies the result exactly matches the manifest's proposed_norm.
-     Any product whose evidence has changed is skipped (not failed).
-  4. NORMALISER AGREEMENT — the executor calls recompute_product_package_size_norm
-     and rejects any product where the result ≠ proposed_norm from the manifest.
-  5. SELECT FOR UPDATE — the product row is locked during the write to prevent
-     concurrent catalog ingestion from overwriting the correction immediately.
-  6. TRANSACTION + ROLLBACK — every batch runs inside BEGIN/COMMIT; an
+  3. APPROVAL INTEGRITY — the approved-ids file must not contain duplicate
+     product IDs, and every ID must appear in the eligible manifest rows.
+  4. STALE-PLAN GUARD — after locking the product row, the executor verifies
+     that its current package_size_norm still matches the current_norm recorded
+     in the manifest.  A changed norm indicates something acted on this product
+     since planning; such rows are skipped and require a fresh plan cycle.
+  5. LIVE RECLASSIFICATION — under the write transaction the executor re-fetches
+     all current listings and re-runs classify_product().  It proceeds only when
+     the live classification is still confirmed_norm_mismatch / safe_candidate
+     and the proposed norm still matches the approved manifest value.  This
+     catches a new conflicting listing added by a concurrent catalog ingest.
+  6. SELECT FOR UPDATE — the product row is locked for the duration of the
+     write transaction to prevent concurrent catalog ingestion from overwriting
+     the correction immediately.
+  7. TRANSACTION + ROLLBACK — every batch runs inside BEGIN/COMMIT; an
      unexpected error triggers a full batch rollback.
-  7. IDEMPOTENT — if a product's norm already equals proposed_norm it is
+  8. IDEMPOTENT — if a product's norm already equals proposed_norm it is
      counted as "already correct" and skipped without writing a log record.
-  8. NO LISTING MUTATIONS — only product.package_size_norm is written.
+  9. NO LISTING MUTATIONS — only product.package_size_norm is written.
      Listings, price_reports, watchlist_items, and predictions are untouched.
-  9. AUDIT TRAIL — every corrected product gets an immutable
-     package_size_remediation_log row (before_norm, after_norm, batch_id, …).
-  10. PHASE 1 SCOPE — only confirmed_norm_mismatch / safe_candidate / recompute
+  10. AUDIT TRAIL — every corrected product gets an immutable
+      package_size_remediation_log row (before_norm, after_norm, batch_id, …).
+  11. PHASE 1 SCOPE — only confirmed_norm_mismatch / safe_candidate / recompute
       rows from the manifest are considered.
 
 Usage:
@@ -36,14 +42,15 @@ Usage:
     DATABASE_URL=postgresql://... python3 scripts/remediation_executor.py \\
         --manifest remediation_output/20261021/remediation_manifest.csv
 
-    # Approve a small batch:
+    # Approve a reviewed subset:
     DATABASE_URL=postgresql://... python3 scripts/remediation_executor.py \\
         --manifest remediation_output/20261021/remediation_manifest.csv \\
-        --approved-ids /tmp/batch1_ids.txt \\
+        --approved-ids /tmp/reviewed_batch.txt \\
         --approve \\
         --approved-by "bilal@example.com"
 
-    # Format of --approved-ids file: one product UUID per line, blank lines ignored.
+    # Format of --approved-ids file: one product UUID per line, blank lines ignored,
+    # no duplicates allowed.
 """
 
 from __future__ import annotations
@@ -61,12 +68,13 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 os.environ.setdefault("REDIS_URL", "redis://localhost/0")
 os.environ.setdefault("SECRET_KEY", "remediation-executor")
 
-from sqlalchemy import create_engine, select, text
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from app.models.package_size_remediation_log import PackageSizeRemediationLog
 from app.models.product import Product
-from app.services.catalog_ingest import recompute_product_package_size_norm
+from app.models.product_retailer_listing import ProductRetailerListing
+from scripts.remediation_planner import APPROVAL_SAFE, classify_product
 
 # ── phase 1 filter constants ──────────────────────────────────────────────────
 
@@ -94,13 +102,27 @@ def _load_manifest(path: Path) -> list[dict]:
 
 
 def _load_approved_ids(path: Path) -> frozenset[str]:
-    """Load product UUIDs from a file, one per line."""
-    ids = set()
+    """Load product UUIDs from a file, one per line.
+
+    Raises ValueError if the file contains duplicate IDs — duplicates indicate
+    a data-preparation error in the approval file and must be resolved before
+    the executor runs.
+    """
+    ids: list[str] = []
     with open(path, encoding="utf-8") as f:
         for line in f:
             pid = line.strip()
             if pid:
-                ids.add(pid)
+                ids.append(pid)
+
+    seen: set[str] = set()
+    dupes = [pid for pid in ids if pid in seen or seen.add(pid)]  # type: ignore[func-returns-value]
+    if dupes:
+        raise ValueError(
+            f"Duplicate product IDs in approved-ids file ({len(dupes)} dupes): "
+            + ", ".join(sorted(set(dupes))[:5])
+        )
+
     return frozenset(ids)
 
 
@@ -151,6 +173,8 @@ def _execute_batch(
         for row in rows:
             product_id_str = row["product_id"]
             manifest_proposed = row["proposed_norm"].strip()
+            # Normalize empty CSV string → None for comparison with the ORM field.
+            manifest_current = row.get("current_norm") or None
 
             try:
                 product_uuid = UUID(product_id_str)
@@ -173,25 +197,52 @@ def _execute_batch(
 
             before_norm = product.package_size_norm
 
-            # Idempotency: if already corrected, nothing to do.
+            # Idempotency: if already corrected by a prior run, nothing to do.
             if before_norm == manifest_proposed:
                 counters["skipped_already_correct"] += 1
                 print(f"  OK    {product_id_str}  {before_norm!r} already correct")
                 continue
 
-            # Pre-write revalidation: recompute from current listing evidence.
-            computed_norm = recompute_product_package_size_norm(session, product_uuid)
-
-            if computed_norm != manifest_proposed:
-                counters["skipped_revalidation"] += 1
+            # Stale-plan guard: the locked norm must still match what was recorded
+            # in the manifest.  A divergence means some other process changed the
+            # product between planning and execution; skip and require a fresh plan.
+            if before_norm != manifest_current:
+                counters["skipped_stale_plan"] += 1
                 print(
-                    f"  SKIP  {product_id_str}  — revalidation mismatch: "
-                    f"computed={computed_norm!r}, manifest_proposed={manifest_proposed!r}"
+                    f"  SKIP  {product_id_str}  — stale plan: "
+                    f"locked={before_norm!r}, manifest_current={manifest_current!r}"
+                )
+                continue
+
+            # Live reclassification: re-fetch all current listings under this
+            # transaction and re-run the full planner classification.  This
+            # catches any new conflicting listing added by a concurrent ingest
+            # that occurred after the manifest was generated.
+            all_listings = session.execute(
+                select(ProductRetailerListing).where(
+                    ProductRetailerListing.product_id == product_uuid
+                )
+            ).scalars().all()
+
+            live = classify_product(product, list(all_listings))
+
+            if (
+                live is None
+                or live["classification"] != _ELIGIBLE_CLASSIFICATION
+                or live["approval_status"] != APPROVAL_SAFE
+                or live["proposed_norm"] != manifest_proposed
+            ):
+                live_cls = live["classification"] if live else "no_finding"
+                live_prop = live["proposed_norm"] if live else "—"
+                counters["skipped_reclassification"] += 1
+                print(
+                    f"  SKIP  {product_id_str}  — reclassification changed: "
+                    f"{live_cls}/{live_prop!r} (was {_ELIGIBLE_CLASSIFICATION}/{manifest_proposed!r})"
                 )
                 continue
 
             # Apply the correction.
-            product.package_size_norm = computed_norm
+            product.package_size_norm = manifest_proposed
 
             # Write immutable audit record.
             session.add(
@@ -199,7 +250,7 @@ def _execute_batch(
                     product_id=product_id_str,
                     batch_id=batch_id,
                     before_norm=before_norm,
-                    after_norm=computed_norm,
+                    after_norm=manifest_proposed,
                     manifest_proposed_norm=manifest_proposed,
                     manifest_generated_at=manifest_generated_at,
                     classification=row["classification"],
@@ -209,7 +260,7 @@ def _execute_batch(
 
             counters["corrected"] += 1
             name = row.get("product_name", "")[:50]
-            print(f"  FIX   {product_id_str}  {before_norm!r} → {computed_norm!r}  ({name})")
+            print(f"  FIX   {product_id_str}  {before_norm!r} → {manifest_proposed!r}  ({name})")
 
 
 # ── dry-run report ────────────────────────────────────────────────────────────
@@ -248,7 +299,7 @@ def main() -> None:
     parser.add_argument(
         "--approved-ids",
         dest="approved_ids",
-        help="File containing approved product UUIDs, one per line",
+        help="File containing approved product UUIDs, one per line (no duplicates)",
     )
     parser.add_argument(
         "--approve",
@@ -284,8 +335,26 @@ def main() -> None:
 
     approved_ids: frozenset[str] | None = None
     if args.approved_ids:
-        approved_ids = _load_approved_ids(Path(args.approved_ids))
+        try:
+            approved_ids = _load_approved_ids(Path(args.approved_ids))
+        except ValueError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            sys.exit(1)
         print(f"Approved IDs:    {len(approved_ids)}")
+
+        # Verify every approved ID exists in the eligible manifest.
+        manifest_ids = frozenset(r["product_id"] for r in rows)
+        unknown = approved_ids - manifest_ids
+        if unknown:
+            print(
+                f"ERROR: {len(unknown)} approved ID(s) not found in eligible manifest rows:",
+                file=sys.stderr,
+            )
+            for uid in sorted(unknown)[:10]:
+                print(f"  {uid}", file=sys.stderr)
+            if len(unknown) > 10:
+                print(f"  … ({len(unknown) - 10} more)", file=sys.stderr)
+            sys.exit(1)
 
     if not args.approve:
         _print_dry_run(rows, approved_ids)
@@ -316,7 +385,8 @@ def main() -> None:
         "corrected": 0,
         "skipped_not_found": 0,
         "skipped_already_correct": 0,
-        "skipped_revalidation": 0,
+        "skipped_stale_plan": 0,
+        "skipped_reclassification": 0,
     }
 
     for chunk in _chunks(to_process, args.batch_size):
@@ -332,11 +402,12 @@ def main() -> None:
     total = len(to_process)
     print()
     print("── Results ──────────────────────────────────────────────────────────")
-    print(f"  Corrected             : {counters['corrected']} / {total}")
-    print(f"  Skipped (not found)   : {counters['skipped_not_found']}")
-    print(f"  Skipped (already OK)  : {counters['skipped_already_correct']}")
-    print(f"  Skipped (revalidation): {counters['skipped_revalidation']}")
-    print(f"  batch_id              : {batch_id}")
+    print(f"  Corrected                   : {counters['corrected']} / {total}")
+    print(f"  Skipped (not found)         : {counters['skipped_not_found']}")
+    print(f"  Skipped (already correct)   : {counters['skipped_already_correct']}")
+    print(f"  Skipped (stale plan)        : {counters['skipped_stale_plan']}")
+    print(f"  Skipped (reclassification)  : {counters['skipped_reclassification']}")
+    print(f"  batch_id                    : {batch_id}")
 
 
 if __name__ == "__main__":

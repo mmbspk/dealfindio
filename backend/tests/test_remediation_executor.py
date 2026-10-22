@@ -1,5 +1,5 @@
 """
-Tests for scripts/remediation_executor.py — Story #105.
+Tests for scripts/remediation_executor.py — Story #105 (review pass 2).
 
 Uses SQLite in-memory for fast integration tests.  The executor's
 revalidation and audit trail logic is tested end-to-end by calling
@@ -8,13 +8,17 @@ _execute_batch directly against a real in-memory session.
 Test coverage:
   * _load_manifest — phase 1 filter, missing proposed_norm rows excluded
   * _load_approved_ids — parses UUIDs, ignores blank lines
+  * _load_approved_ids — raises ValueError on duplicate IDs (Finding 4)
   * _execute_batch — successful correction, audit record written
   * _execute_batch — product not found → skip (not error)
-  * _execute_batch — already correct (idempotent) → skip
-  * _execute_batch — revalidation mismatch → skip
+  * _execute_batch — already correct (idempotent) → skip, no log row
+  * _execute_batch — stale plan (locked norm ≠ manifest current_norm) → skip (Finding 3)
+  * _execute_batch — live reclassification fails → skip (Finding 2)
   * _execute_batch — batch rollback on unexpected exception
   * _execute_batch — approved IDs filter respected
+  * _execute_batch — mixed skip + correction in one batch
   * _print_dry_run — writes nothing, prints preview
+  * main() — exits if approved ID not in eligible manifest (Finding 4)
 """
 
 from __future__ import annotations
@@ -126,10 +130,16 @@ def _write_manifest(rows: list[dict]) -> Path:
     return Path(tmp.name)
 
 
-def _manifest_row(product_id: str, current_norm: str, proposed_norm: str) -> dict:
+def _manifest_row(
+    product_id: str,
+    current_norm: str,
+    proposed_norm: str,
+    *,
+    name: str = "Test Product",
+) -> dict:
     return {
         "product_id": product_id,
-        "product_name": "Test Product",
+        "product_name": name,
         "current_norm": current_norm,
         "proposed_norm": proposed_norm,
         "evidence_chain": "woolworths",
@@ -145,7 +155,8 @@ def _batch_counters():
         "corrected": 0,
         "skipped_not_found": 0,
         "skipped_already_correct": 0,
-        "skipped_revalidation": 0,
+        "skipped_stale_plan": 0,
+        "skipped_reclassification": 0,
     }
 
 
@@ -204,6 +215,15 @@ class TestLoadApprovedIds:
         f.write_text("id-1\n\n  \nid-2\n")
         result = _load_approved_ids(f)
         assert result == frozenset({"id-1", "id-2"})
+
+    def test_raises_on_duplicate_ids(self, tmp_path):
+        """Finding 4: duplicate IDs in approval file must be rejected."""
+        dup_id = str(uuid4())
+        other_id = str(uuid4())
+        f = tmp_path / "ids.txt"
+        f.write_text(f"{dup_id}\n{other_id}\n{dup_id}\n")
+        with pytest.raises(ValueError, match="Duplicate product IDs"):
+            _load_approved_ids(f)
 
 
 # ── _execute_batch ─────────────────────────────────────────────────────────────
@@ -268,6 +288,7 @@ class TestExecuteBatch:
         ex_session.commit()
 
         pid = str(p.id)
+        # manifest_proposed = "6x375mL" == current stored norm → already correct
         rows = [_manifest_row(pid, "375mL", "6x375mL")]
         counters = _batch_counters()
 
@@ -291,11 +312,47 @@ class TestExecuteBatch:
         ).scalars().all()
         assert log_count == []
 
-    def test_revalidation_mismatch_skips_product(self, ex_session: Session, executor_engine):
-        # Product was planned with proposed_norm="6x375mL" but the listing raw
-        # has since been updated to "250mL" (e.g. re-scraped as a different size).
+    def test_stale_plan_guard(self, ex_session: Session, executor_engine):
+        """Finding 3: locked norm ≠ manifest current_norm → skip."""
+        # Product was planned when norm was "375mL", but something else changed
+        # it to "500mL" after planning and before execution.
+        p = _make_product(ex_session, norm="500mL")
+        _make_listing(ex_session, product=p, raw="375mL x 6 pack")
+        ex_session.commit()
+
+        pid = str(p.id)
+        # manifest says current_norm was "375mL" at plan time, but it's now "500mL"
+        rows = [_manifest_row(pid, "375mL", "6x375mL")]
+        counters = _batch_counters()
+
+        _execute_batch(
+            rows,
+            executor_engine,
+            batch_id="batch-stale",
+            manifest_generated_at="20261021",
+            approved_by="test",
+            counters=counters,
+        )
+
+        assert counters["skipped_stale_plan"] == 1
+        assert counters["corrected"] == 0
+        # Norm must be unchanged.
+        ex_session.expire(p)
+        assert p.package_size_norm == "500mL"
+
+    def test_live_reclassification_detects_new_conflicting_listing(
+        self, ex_session: Session, executor_engine
+    ):
+        """Finding 2: a new listing added after planning creates a conflict.
+
+        At plan time the product had only one listing: Woolworths "375mL x 6 pack"
+        → proposed "6x375mL".  After planning, a Coles listing with raw "250mL"
+        was added.  The live reclassification must detect the conflict and skip.
+        """
         p = _make_product(ex_session, norm="375mL")
-        _make_listing(ex_session, product=p, raw="250mL")  # raw changed since planning
+        _make_listing(ex_session, product=p, raw="375mL x 6 pack", chain="woolworths")
+        # Conflicting listing added after the manifest was generated:
+        _make_listing(ex_session, product=p, raw="250mL", chain="coles")
         ex_session.commit()
 
         pid = str(p.id)
@@ -305,17 +362,47 @@ class TestExecuteBatch:
         _execute_batch(
             rows,
             executor_engine,
-            batch_id="batch-4",
+            batch_id="batch-conflict",
             manifest_generated_at="20261021",
             approved_by="test",
             counters=counters,
         )
 
-        assert counters["skipped_revalidation"] == 1
+        assert counters["skipped_reclassification"] == 1
         assert counters["corrected"] == 0
-        # Norm must not have changed.
+        # Norm must be unchanged.
         ex_session.expire(p)
         assert p.package_size_norm == "375mL"
+
+    def test_live_reclassification_detects_raw_changed_to_single_unit(
+        self, ex_session: Session, executor_engine
+    ):
+        """Finding 2: listing raw was updated to a single-unit value after planning.
+
+        At plan time: raw = "375mL x 6 pack" → proposed "6x375mL".
+        After planning: raw was updated to "375mL" (single-unit).
+        The reclassification now returns None (no actionable finding) → skip.
+        """
+        p = _make_product(ex_session, norm="375mL")
+        # Raw has been updated to single-unit after planning
+        _make_listing(ex_session, product=p, raw="375mL", chain="woolworths")
+        ex_session.commit()
+
+        pid = str(p.id)
+        rows = [_manifest_row(pid, "375mL", "6x375mL")]
+        counters = _batch_counters()
+
+        _execute_batch(
+            rows,
+            executor_engine,
+            batch_id="batch-raw-changed",
+            manifest_generated_at="20261021",
+            approved_by="test",
+            counters=counters,
+        )
+
+        assert counters["skipped_reclassification"] == 1
+        assert counters["corrected"] == 0
 
     def test_batch_rollback_on_unexpected_exception(self, executor_engine):
         """An unexpected mid-batch exception must roll back all prior writes."""
@@ -328,16 +415,13 @@ class TestExecuteBatch:
             p1_id = str(p1.id)
             p2_id = str(p2.id)
 
-        # Row 2 has an invalid proposed_norm that will cause a ValueError
-        # when we artificially inject a bad value into manifest_proposed.
         rows = [
             _manifest_row(p1_id, "375mL", "6x375mL"),
-            # Poison: this row's proposed_norm will be replaced to trigger an error.
             _manifest_row(p2_id, "250mL", "4x250mL"),
         ]
         counters = _batch_counters()
 
-        # Monkey-patch to raise after the first product is written but before commit.
+        # Monkey-patch: raise on the second audit-log insert.
         original_add = Session.add
 
         call_count = [0]
@@ -416,14 +500,15 @@ class TestExecuteBatch:
         """Skipped products do not roll back correctable products in the same batch."""
         p_good = _make_product(ex_session, norm="375mL", name="Good")
         _make_listing(ex_session, product=p_good, raw="375mL x 6 pack")
-        # This product's raw has changed — will fail revalidation.
-        p_changed = _make_product(ex_session, norm="375mL", name="Changed Raw")
-        _make_listing(ex_session, product=p_changed, raw="500mL")
+        # Stale plan: norm changed since planning
+        p_stale = _make_product(ex_session, norm="500mL", name="Stale")
+        _make_listing(ex_session, product=p_stale, raw="500mL x 6 pack")
         ex_session.commit()
 
         rows = [
             _manifest_row(str(p_good.id), "375mL", "6x375mL"),
-            _manifest_row(str(p_changed.id), "375mL", "6x375mL"),
+            # manifest says current was "375mL" but actual is "500mL" → stale
+            _manifest_row(str(p_stale.id), "375mL", "6x375mL"),
         ]
         counters = _batch_counters()
 
@@ -437,12 +522,12 @@ class TestExecuteBatch:
         )
 
         assert counters["corrected"] == 1
-        assert counters["skipped_revalidation"] == 1
+        assert counters["skipped_stale_plan"] == 1
 
         ex_session.expire(p_good)
-        ex_session.expire(p_changed)
+        ex_session.expire(p_stale)
         assert p_good.package_size_norm == "6x375mL"
-        assert p_changed.package_size_norm == "375mL"
+        assert p_stale.package_size_norm == "500mL"
 
 
 # ── _print_dry_run ─────────────────────────────────────────────────────────────
@@ -473,3 +558,32 @@ class TestPrintDryRun:
         _print_dry_run(rows, approved_ids=approved)
         captured = capsys.readouterr()
         assert "Would process" in captured.out or "1" in captured.out
+
+
+# ── main() approval-integrity validation ──────────────────────────────────────
+
+
+class TestMainApprovalIntegrity:
+    def test_unknown_approved_id_exits_nonzero(self, tmp_path, monkeypatch, capsys):
+        """Finding 4: approved ID not in eligible manifest must cause sys.exit(1)."""
+        import scripts.remediation_executor as exe
+
+        manifest_path = _write_manifest([_manifest_row("known-id", "375mL", "6x375mL")])
+        approved_path = tmp_path / "ids.txt"
+        approved_path.write_text("known-id\nunknown-id\n")
+
+        monkeypatch.setattr(
+            "sys.argv",
+            [
+                "remediation_executor.py",
+                "--manifest", str(manifest_path),
+                "--approved-ids", str(approved_path),
+            ],
+        )
+
+        with pytest.raises(SystemExit) as exc_info:
+            exe.main()
+
+        assert exc_info.value.code == 1
+        captured = capsys.readouterr()
+        assert "unknown-id" in captured.err or "not found" in captured.err.lower()
