@@ -7,6 +7,7 @@ _execute_batch directly against a real in-memory session.
 
 Test coverage:
   * _load_manifest — phase 1 filter, missing proposed_norm rows excluded
+  * _load_manifest — raises ValueError on duplicate product_id (round-2 finding)
   * _load_approved_ids — parses UUIDs, ignores blank lines
   * _load_approved_ids — raises ValueError on duplicate IDs (Finding 4)
   * _execute_batch — successful correction, audit record written
@@ -14,11 +15,13 @@ Test coverage:
   * _execute_batch — already correct (idempotent) → skip, no log row
   * _execute_batch — stale plan (locked norm ≠ manifest current_norm) → skip (Finding 3)
   * _execute_batch — live reclassification fails → skip (Finding 2)
-  * _execute_batch — batch rollback on unexpected exception
+  * _execute_batch — batch rollback on unexpected exception; counters stay 0 (round-2 finding)
   * _execute_batch — approved IDs filter respected
   * _execute_batch — mixed skip + correction in one batch
   * _print_dry_run — writes nothing, prints preview
   * main() — exits if approved ID not in eligible manifest (Finding 4)
+  * main() — exits if --approve used without --approved-by (round-2 finding)
+  * main() — exits if --batch-size 0 (round-2 finding)
 """
 
 from __future__ import annotations
@@ -105,23 +108,35 @@ def _make_listing(
 def _write_manifest(rows: list[dict]) -> Path:
     """Write a minimal manifest CSV to a temp file and return its path."""
     headers = [
-        "product_id", "product_name", "product_gtin", "gtin_valid",
-        "current_norm", "proposed_norm", "classification", "confidence",
-        "approval_status", "justification", "evidence_chain",
-        "evidence_listing_id", "evidence_raw", "evidence_name",
-        "all_raw_norms", "conflict_listing_norms", "remediation_action",
+        "product_id",
+        "product_name",
+        "product_gtin",
+        "gtin_valid",
+        "current_norm",
+        "proposed_norm",
+        "classification",
+        "confidence",
+        "approval_status",
+        "justification",
+        "evidence_chain",
+        "evidence_listing_id",
+        "evidence_raw",
+        "evidence_name",
+        "all_raw_norms",
+        "conflict_listing_norms",
+        "remediation_action",
     ]
     defaults = {h: "" for h in headers}
-    defaults.update({
-        "classification": "confirmed_norm_mismatch",
-        "approval_status": "safe_candidate",
-        "remediation_action": "recompute",
-        "confidence": "high",
-    })
-
-    tmp = tempfile.NamedTemporaryFile(
-        mode="w", suffix=".csv", delete=False, newline=""
+    defaults.update(
+        {
+            "classification": "confirmed_norm_mismatch",
+            "approval_status": "safe_candidate",
+            "remediation_action": "recompute",
+            "confidence": "high",
+        }
     )
+
+    tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False, newline="")
     writer = csv.DictWriter(tmp, fieldnames=headers)
     writer.writeheader()
     for row in rows:
@@ -165,38 +180,56 @@ def _batch_counters():
 
 class TestLoadManifest:
     def test_loads_eligible_rows(self, tmp_path):
-        path = _write_manifest([
-            _manifest_row("id-1", "375mL", "6x375mL"),
-            _manifest_row("id-2", "250mL", "4x250mL"),
-        ])
+        path = _write_manifest(
+            [
+                _manifest_row("id-1", "375mL", "6x375mL"),
+                _manifest_row("id-2", "250mL", "4x250mL"),
+            ]
+        )
         rows = _load_manifest(Path(path))
         assert len(rows) == 2
 
     def test_excludes_non_recompute_rows(self, tmp_path):
-        path = _write_manifest([
-            _manifest_row("id-1", "375mL", "6x375mL"),
-            {
-                "product_id": "id-2",
-                "product_name": "Manual",
-                "current_norm": "4x250mL",
-                "proposed_norm": "",
-                "classification": "conflicting_evidence",
-                "approval_status": "manual_review",
-                "remediation_action": "manual_unmerge_or_split",
-                "confidence": "high",
-                "evidence_chain": "aldi",
-            },
-        ])
+        path = _write_manifest(
+            [
+                _manifest_row("id-1", "375mL", "6x375mL"),
+                {
+                    "product_id": "id-2",
+                    "product_name": "Manual",
+                    "current_norm": "4x250mL",
+                    "proposed_norm": "",
+                    "classification": "conflicting_evidence",
+                    "approval_status": "manual_review",
+                    "remediation_action": "manual_unmerge_or_split",
+                    "confidence": "high",
+                    "evidence_chain": "aldi",
+                },
+            ]
+        )
         rows = _load_manifest(Path(path))
         assert len(rows) == 1
         assert rows[0]["product_id"] == "id-1"
 
     def test_excludes_rows_with_empty_proposed_norm(self, tmp_path):
-        path = _write_manifest([
-            {**_manifest_row("id-1", "375mL", ""), "proposed_norm": ""},
-        ])
+        path = _write_manifest(
+            [
+                {**_manifest_row("id-1", "375mL", ""), "proposed_norm": ""},
+            ]
+        )
         rows = _load_manifest(Path(path))
         assert rows == []
+
+    def test_raises_on_duplicate_manifest_ids(self, tmp_path):
+        """Round-2 finding: duplicate product_id in manifest must be rejected."""
+        dup_id = str(uuid4())
+        path = _write_manifest(
+            [
+                _manifest_row(dup_id, "375mL", "6x375mL"),
+                _manifest_row(dup_id, "375mL", "6x375mL"),
+            ]
+        )
+        with pytest.raises(ValueError, match="Duplicate product_id in manifest"):
+            _load_manifest(Path(path))
 
 
 # ── _load_approved_ids ─────────────────────────────────────────────────────────
@@ -253,9 +286,7 @@ class TestExecuteBatch:
         assert counters["corrected"] == 1
 
         log = ex_session.execute(
-            select(PackageSizeRemediationLog).where(
-                PackageSizeRemediationLog.product_id == pid
-            )
+            select(PackageSizeRemediationLog).where(PackageSizeRemediationLog.product_id == pid)
         ).scalar_one()
         assert log.before_norm == "375mL"
         assert log.after_norm == "6x375mL"
@@ -304,12 +335,16 @@ class TestExecuteBatch:
         assert counters["skipped_already_correct"] == 1
         assert counters["corrected"] == 0
         # No audit record written for already-correct product.
-        log_count = ex_session.execute(
-            select(PackageSizeRemediationLog).where(
-                PackageSizeRemediationLog.product_id == pid,
-                PackageSizeRemediationLog.batch_id == "batch-3",
+        log_count = (
+            ex_session.execute(
+                select(PackageSizeRemediationLog).where(
+                    PackageSizeRemediationLog.product_id == pid,
+                    PackageSizeRemediationLog.batch_id == "batch-3",
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert log_count == []
 
     def test_stale_plan_guard(self, ex_session: Session, executor_engine):
@@ -448,16 +483,24 @@ class TestExecuteBatch:
             Session.add = original_add
 
         # After rollback: both products must be unchanged, no log records.
+        # Round-2 finding: counters must also be 0 — per-batch accumulation means
+        # a rolled-back batch never merges into the caller's dict.
+        assert counters["corrected"] == 0
+
         with Session(executor_engine) as verify:
             p1_after = verify.get(Product, p1.id)
             p2_after = verify.get(Product, p2.id)
             assert p1_after.package_size_norm == "375mL"
             assert p2_after.package_size_norm == "250mL"
-            logs = verify.execute(
-                select(PackageSizeRemediationLog).where(
-                    PackageSizeRemediationLog.batch_id == "batch-rollback"
+            logs = (
+                verify.execute(
+                    select(PackageSizeRemediationLog).where(
+                        PackageSizeRemediationLog.batch_id == "batch-rollback"
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             assert logs == []
 
     def test_approved_ids_filter(self, ex_session: Session, executor_engine):
@@ -576,8 +619,10 @@ class TestMainApprovalIntegrity:
             "sys.argv",
             [
                 "remediation_executor.py",
-                "--manifest", str(manifest_path),
-                "--approved-ids", str(approved_path),
+                "--manifest",
+                str(manifest_path),
+                "--approved-ids",
+                str(approved_path),
             ],
         )
 
@@ -587,3 +632,60 @@ class TestMainApprovalIntegrity:
         assert exc_info.value.code == 1
         captured = capsys.readouterr()
         assert "unknown-id" in captured.err or "not found" in captured.err.lower()
+
+
+# ── main() argument validation ─────────────────────────────────────────────────
+
+
+class TestMainValidation:
+    def test_approved_by_required_with_approve(self, tmp_path, monkeypatch, capsys):
+        """Round-2 finding: --approve without --approved-by must exit(1)."""
+        import scripts.remediation_executor as exe
+
+        manifest_path = _write_manifest([_manifest_row("id-1", "375mL", "6x375mL")])
+        approved_path = tmp_path / "ids.txt"
+        approved_path.write_text("id-1\n")
+
+        monkeypatch.setattr(
+            "sys.argv",
+            [
+                "remediation_executor.py",
+                "--manifest",
+                str(manifest_path),
+                "--approved-ids",
+                str(approved_path),
+                "--approve",
+                # intentionally omitting --approved-by
+            ],
+        )
+
+        with pytest.raises(SystemExit) as exc_info:
+            exe.main()
+
+        assert exc_info.value.code == 1
+        captured = capsys.readouterr()
+        assert "approved-by" in captured.err.lower() or "identity" in captured.err.lower()
+
+    def test_batch_size_must_be_positive(self, tmp_path, monkeypatch, capsys):
+        """Round-2 finding: --batch-size 0 must exit(1)."""
+        import scripts.remediation_executor as exe
+
+        manifest_path = _write_manifest([_manifest_row("id-1", "375mL", "6x375mL")])
+
+        monkeypatch.setattr(
+            "sys.argv",
+            [
+                "remediation_executor.py",
+                "--manifest",
+                str(manifest_path),
+                "--batch-size",
+                "0",
+            ],
+        )
+
+        with pytest.raises(SystemExit) as exc_info:
+            exe.main()
+
+        assert exc_info.value.code == 1
+        captured = capsys.readouterr()
+        assert "batch-size" in captured.err.lower() or "positive" in captured.err.lower()

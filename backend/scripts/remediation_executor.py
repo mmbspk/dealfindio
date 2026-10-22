@@ -10,24 +10,31 @@ remediation planner (Story #103) classified as
 Safety contract (invariants enforced at runtime, not just by convention):
 
   1. DRY-RUN BY DEFAULT — no database writes without --approve.
-  2. EXPLICIT APPROVAL — --approve requires --approved-ids <file>.
-     There is no "approve all" mode.
+  2. EXPLICIT APPROVAL — --approve requires --approved-ids <file> and
+     --approved-by <identity>.  There is no "approve all" mode.
   3. APPROVAL INTEGRITY — the approved-ids file must not contain duplicate
      product IDs, and every ID must appear in the eligible manifest rows.
+     The manifest itself must not contain duplicate product IDs.
   4. STALE-PLAN GUARD — after locking the product row, the executor verifies
      that its current package_size_norm still matches the current_norm recorded
      in the manifest.  A changed norm indicates something acted on this product
      since planning; such rows are skipped and require a fresh plan cycle.
   5. LIVE RECLASSIFICATION — under the write transaction the executor re-fetches
-     all current listings and re-runs classify_product().  It proceeds only when
-     the live classification is still confirmed_norm_mismatch / safe_candidate
-     and the proposed norm still matches the approved manifest value.  This
-     catches a new conflicting listing added by a concurrent catalog ingest.
-  6. SELECT FOR UPDATE — the product row is locked for the duration of the
-     write transaction to prevent concurrent catalog ingestion from overwriting
-     the correction immediately.
+     and locks all current listings then re-runs classify_product().  It
+     proceeds only when the live classification is still confirmed_norm_mismatch
+     / safe_candidate and the proposed norm still matches the approved manifest
+     value.  This catches a new conflicting listing added by a concurrent ingest.
+  6. LOCKING PROTOCOL (PostgreSQL only) — the product row and all its listing
+     rows are locked with SELECT … FOR UPDATE before any evidence is read.
+     This prevents concurrent catalog ingestion from updating a listing's
+     package_size_raw or the product's package_size_norm between the validation
+     check and the commit.  New listing INSERTs from concurrent ingest are not
+     blocked (no pre-existing row to lock), but they ARE visible in the
+     reclassification query (READ COMMITTED) so any new conflicting evidence
+     will still be detected.
   7. TRANSACTION + ROLLBACK — every batch runs inside BEGIN/COMMIT; an
-     unexpected error triggers a full batch rollback.
+     unexpected error triggers a full batch rollback.  Counters are applied
+     to the caller's dict only after a successful commit.
   8. IDEMPOTENT — if a product's norm already equals proposed_norm it is
      counted as "already correct" and skipped without writing a log record.
   9. NO LISTING MUTATIONS — only product.package_size_norm is written.
@@ -42,15 +49,15 @@ Usage:
     DATABASE_URL=postgresql://... python3 scripts/remediation_executor.py \\
         --manifest remediation_output/20261021/remediation_manifest.csv
 
-    # Approve a reviewed subset:
+    # Approve a reviewed subset (--approved-by is required with --approve):
     DATABASE_URL=postgresql://... python3 scripts/remediation_executor.py \\
         --manifest remediation_output/20261021/remediation_manifest.csv \\
         --approved-ids /tmp/reviewed_batch.txt \\
         --approve \\
         --approved-by "bilal@example.com"
 
-    # Format of --approved-ids file: one product UUID per line, blank lines ignored,
-    # no duplicates allowed.
+    # Format of --approved-ids file: one product UUID per line, blank lines
+    # ignored, no duplicates allowed.
 """
 
 from __future__ import annotations
@@ -87,8 +94,14 @@ _ELIGIBLE_ACTION = "recompute"
 
 
 def _load_manifest(path: Path) -> list[dict]:
-    """Load CSV manifest rows and filter to Phase 1 eligibles."""
+    """Load CSV manifest rows, filter to Phase 1 eligibles, reject duplicates.
+
+    Raises ValueError if the manifest contains more than one eligible row for
+    the same product_id — a duplicated product in the manifest indicates a
+    planning error that must be resolved before execution.
+    """
     rows = []
+    seen_ids: set[str] = set()
     with open(path, newline="", encoding="utf-8") as f:
         for row in csv.DictReader(f):
             if (
@@ -97,6 +110,13 @@ def _load_manifest(path: Path) -> list[dict]:
                 and row["remediation_action"] == _ELIGIBLE_ACTION
                 and row["proposed_norm"].strip()
             ):
+                pid = row["product_id"]
+                if pid in seen_ids:
+                    raise ValueError(
+                        f"Duplicate product_id in manifest: {pid!r}. "
+                        "Each product must appear at most once."
+                    )
+                seen_ids.add(pid)
                 rows.append(row)
     return rows
 
@@ -131,9 +151,7 @@ def _manifest_generated_at(manifest_path: Path) -> str:
     parent = manifest_path.parent.name
     if len(parent) == 8 and parent.isdigit():
         return parent  # e.g. "20261021"
-    return datetime.fromtimestamp(manifest_path.stat().st_mtime, tz=timezone.utc).strftime(
-        "%Y%m%d"
-    )
+    return datetime.fromtimestamp(manifest_path.stat().st_mtime, tz=timezone.utc).strftime("%Y%m%d")
 
 
 # ── batch execution ───────────────────────────────────────────────────────────
@@ -167,7 +185,23 @@ def _execute_batch(
     approved_by: str,
     counters: dict,
 ) -> None:
+    """Execute one batch of approved rows inside a single transaction.
+
+    Counters are applied to the caller's ``counters`` dict only after the
+    transaction commits successfully.  A rolled-back batch leaves ``counters``
+    unchanged so the final summary reflects only persisted corrections.
+
+    Locking protocol (PostgreSQL):
+      Both the product row and all its listing rows are locked with
+      SELECT … FOR UPDATE before any evidence is inspected.  This ensures a
+      concurrent catalog ingest that tries to UPDATE an existing listing's
+      package_size_raw will wait until this transaction completes rather than
+      racing with the reclassification step.
+    """
     use_for_update = engine.dialect.name == "postgresql"
+
+    # Accumulate into a per-batch dict; merge to caller only after commit.
+    batch_counters = {k: 0 for k in counters}
 
     with _session_scope(engine) as session:
         for row in rows:
@@ -179,7 +213,7 @@ def _execute_batch(
             try:
                 product_uuid = UUID(product_id_str)
             except ValueError:
-                counters["skipped_not_found"] += 1
+                batch_counters["skipped_not_found"] += 1
                 print(f"  SKIP  {product_id_str}  — invalid UUID in manifest")
                 continue
 
@@ -191,7 +225,7 @@ def _execute_batch(
             product = session.execute(stmt).scalar_one_or_none()
 
             if product is None:
-                counters["skipped_not_found"] += 1
+                batch_counters["skipped_not_found"] += 1
                 print(f"  SKIP  {product_id_str}  — product no longer exists")
                 continue
 
@@ -199,7 +233,7 @@ def _execute_batch(
 
             # Idempotency: if already corrected by a prior run, nothing to do.
             if before_norm == manifest_proposed:
-                counters["skipped_already_correct"] += 1
+                batch_counters["skipped_already_correct"] += 1
                 print(f"  OK    {product_id_str}  {before_norm!r} already correct")
                 continue
 
@@ -207,23 +241,29 @@ def _execute_batch(
             # in the manifest.  A divergence means some other process changed the
             # product between planning and execution; skip and require a fresh plan.
             if before_norm != manifest_current:
-                counters["skipped_stale_plan"] += 1
+                batch_counters["skipped_stale_plan"] += 1
                 print(
                     f"  SKIP  {product_id_str}  — stale plan: "
                     f"locked={before_norm!r}, manifest_current={manifest_current!r}"
                 )
                 continue
 
-            # Live reclassification: re-fetch all current listings under this
-            # transaction and re-run the full planner classification.  This
-            # catches any new conflicting listing added by a concurrent ingest
-            # that occurred after the manifest was generated.
-            all_listings = session.execute(
-                select(ProductRetailerListing).where(
-                    ProductRetailerListing.product_id == product_uuid
-                )
-            ).scalars().all()
+            # Fetch and lock all listings for this product.  The FOR UPDATE lock
+            # prevents concurrent ingestion from updating any existing listing's
+            # package_size_raw between our validation and the write.
+            listings_stmt = select(ProductRetailerListing).where(
+                ProductRetailerListing.product_id == product_uuid
+            )
+            if use_for_update:
+                listings_stmt = listings_stmt.with_for_update()
+            all_listings = session.execute(listings_stmt).scalars().all()
 
+            # Live reclassification: re-run the full planner classification
+            # against the locked current listings.  This catches any new
+            # conflicting listing that was inserted by concurrent ingest after
+            # the manifest was generated (INSERT is not blocked by row locks,
+            # but the new row is visible under READ COMMITTED and will cause
+            # reclassification to fail).
             live = classify_product(product, list(all_listings))
 
             if (
@@ -234,10 +274,11 @@ def _execute_batch(
             ):
                 live_cls = live["classification"] if live else "no_finding"
                 live_prop = live["proposed_norm"] if live else "—"
-                counters["skipped_reclassification"] += 1
+                batch_counters["skipped_reclassification"] += 1
                 print(
                     f"  SKIP  {product_id_str}  — reclassification changed: "
-                    f"{live_cls}/{live_prop!r} (was {_ELIGIBLE_CLASSIFICATION}/{manifest_proposed!r})"
+                    f"{live_cls}/{live_prop!r} "
+                    f"(was {_ELIGIBLE_CLASSIFICATION}/{manifest_proposed!r})"
                 )
                 continue
 
@@ -258,16 +299,22 @@ def _execute_batch(
                 )
             )
 
-            counters["corrected"] += 1
+            batch_counters["corrected"] += 1
             name = row.get("product_name", "")[:50]
             print(f"  FIX   {product_id_str}  {before_norm!r} → {manifest_proposed!r}  ({name})")
+
+    # Merge per-batch totals into caller's counters only after successful commit.
+    for k in counters:
+        counters[k] += batch_counters[k]
 
 
 # ── dry-run report ────────────────────────────────────────────────────────────
 
 
 def _print_dry_run(rows: list[dict], approved_ids: frozenset[str] | None) -> None:
-    to_process = rows if approved_ids is None else [r for r in rows if r["product_id"] in approved_ids]
+    to_process = (
+        rows if approved_ids is None else [r for r in rows if r["product_id"] in approved_ids]
+    )
     print("\nDRY-RUN — no database writes")
     print(f"  Phase 1 eligible rows in manifest : {len(rows)}")
     print(f"  Would process (approved subset)   : {len(to_process)}")
@@ -281,7 +328,7 @@ def _print_dry_run(rows: list[dict], approved_ids: frozenset[str] | None) -> Non
     if len(to_process) > 25:
         print(f"  … ({len(to_process) - 25} more)")
     print()
-    print("Re-run with --approve --approved-ids <file> to execute.")
+    print("Re-run with --approve --approved-ids <file> --approved-by <identity> to execute.")
 
 
 # ── entry point ───────────────────────────────────────────────────────────────
@@ -309,20 +356,32 @@ def main() -> None:
     parser.add_argument(
         "--approved-by",
         dest="approved_by",
-        default="batch",
-        help="Identity recorded in the audit log (e.g. admin email)",
+        default=None,
+        help="Identity recorded in the audit log — required when --approve is set",
     )
     parser.add_argument(
         "--batch-size",
         dest="batch_size",
         type=int,
         default=100,
-        help="Products per database transaction (default: 100)",
+        help="Products per database transaction (default: 100, must be > 0)",
     )
     args = parser.parse_args()
 
-    if args.approve and not args.approved_ids:
-        print("ERROR: --approve requires --approved-ids <file>", file=sys.stderr)
+    if args.approve:
+        if not args.approved_ids:
+            print("ERROR: --approve requires --approved-ids <file>", file=sys.stderr)
+            sys.exit(1)
+        if not args.approved_by:
+            print(
+                "ERROR: --approved-by <identity> is required when using --approve "
+                "(e.g. --approved-by user@example.com)",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+    if args.batch_size is not None and args.batch_size <= 0:
+        print("ERROR: --batch-size must be a positive integer", file=sys.stderr)
         sys.exit(1)
 
     manifest_path = Path(args.manifest)
@@ -330,7 +389,11 @@ def main() -> None:
         print(f"ERROR: manifest not found: {manifest_path}", file=sys.stderr)
         sys.exit(1)
 
-    rows = _load_manifest(manifest_path)
+    try:
+        rows = _load_manifest(manifest_path)
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        sys.exit(1)
     print(f"Loaded manifest: {len(rows)} Phase 1 eligible rows")
 
     approved_ids: frozenset[str] | None = None
@@ -361,7 +424,9 @@ def main() -> None:
         return
 
     # ── live execution path ───────────────────────────────────────────────────
-    to_process = rows if approved_ids is None else [r for r in rows if r["product_id"] in approved_ids]
+    to_process = (
+        rows if approved_ids is None else [r for r in rows if r["product_id"] in approved_ids]
+    )
 
     if not to_process:
         print("No eligible rows match the approved IDs. Nothing to do.")
@@ -379,6 +444,7 @@ def main() -> None:
     print(f"\nExecuting — batch_id={batch_id}")
     print(f"  Products to process: {len(to_process)}")
     print(f"  Batch size:          {args.batch_size}")
+    print(f"  Approved by:         {args.approved_by}")
     print()
 
     counters = {

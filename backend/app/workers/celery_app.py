@@ -167,6 +167,10 @@ celery_app.conf.task_routes = {
 celery_app.conf.update(
     worker_prefetch_multiplier=1,  # One task per worker slot — critical for long-running catalog crawls
     worker_max_tasks_per_child=50,  # Restart worker after 50 tasks (catalog crawls are memory-heavy)
+    # Skip cron tasks that are more than 10 minutes overdue on beat restart.
+    # Without this, restarting beat after days offline fires every missed
+    # weekly crawl immediately (catch-up behaviour).
+    beat_cron_starting_deadline=600,
 )
 
 # ============================================================================
