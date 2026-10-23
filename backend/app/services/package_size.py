@@ -136,6 +136,34 @@ def _format_single(value: float, unit: str) -> str | None:
 
 # ── public API ────────────────────────────────────────────────────────────────
 
+# Volume-only extraction pattern for name-based pack augmentation.
+# Intentionally excludes weight units (g, kg) — a weight in a product name
+# may describe the total package, not the per-unit mass (e.g. "8 Pack 560g").
+_RE_NAME_VOLUME = re.compile(
+    r"(\d+(?:\.\d+)?)\s*(millilitr(?:e|er)s?|mls?|litr(?:e|er)s?|l(?!\w))",
+    re.I,
+)
+
+
+def combine_count_with_volume(name: str, count: int) -> str | None:
+    """Return a raw size string combining *count* with the first volume unit found
+    in *name*, or None if no unambiguous volume unit is present.
+
+    Example: name="Corona Beer Bottle 6 Pack 355mL", count=6 → "355mL 6 Pack"
+    The caller should pass the result to normalize_package_size, which turns it
+    into the canonical form "6x355mL".
+
+    Only volume units (mL, L) are matched.  Weight units (g, kg) are never
+    combined because a name like "8 Pack Sausages 560g" may describe the total
+    package weight rather than a per-unit mass.
+    """
+    if not name or count < 2:
+        return None
+    m = _RE_NAME_VOLUME.search(name)
+    if not m:
+        return None
+    return f"{m.group(1)}{m.group(2)} {count} Pack"
+
 
 def normalize_package_size(raw: str | None) -> str | None:
     """

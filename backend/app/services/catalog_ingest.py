@@ -332,13 +332,14 @@ def _match_product(
         total_weight += W_PRICE
     score = weighted / total_weight
 
-    # Size-variant veto: when both sides have parseable canonical sizes that differ,
-    # the products are definitively different pack sizes.  Capping the score would
-    # still surface them as a review candidate — instead return early with no
-    # candidate so _propose_candidate() is never called.
-    if cp.package_size and matched.package_size_norm:
-        cp_norm = normalize_package_size(cp.package_size)
-        if cp_norm and cp_norm != matched.package_size_norm:
+    # Compute incoming norm once — used for both size-variant veto checks below.
+    cp_norm = normalize_package_size(cp.package_size) if cp.package_size else None
+
+    # Full veto: both sides have parseable canonical sizes that differ.  These are
+    # definitively different pack-size variants — return early with no candidate so
+    # _propose_candidate() is never called.
+    if cp_norm and matched.package_size_norm:
+        if cp_norm != matched.package_size_norm:
             logger.debug(
                 "Size variant veto: '%s' (%s) vs '%s' (%s) — not a match candidate",
                 cp.product_name,
@@ -347,6 +348,15 @@ def _match_product(
                 matched.package_size_norm,
             )
             return None, 0.0, None, ResolutionReason.NEW
+
+    # Soft veto: one side has a unit-bearing norm and the other is NULL.  Auto-merge
+    # is unsafe with asymmetric size evidence — cap the score to surface the pair as
+    # a review candidate regardless of ingestion order.  Products where *both* sides
+    # are NULL are not penalised; only asymmetric evidence triggers the cap.
+    if (cp_norm and not matched.package_size_norm) or (
+        matched.package_size_norm and not cp_norm
+    ):
+        score = min(score, 95.0)
 
     if score >= 100.0:
         # Perfect match — auto-merge

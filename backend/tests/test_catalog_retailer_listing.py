@@ -1429,3 +1429,133 @@ class TestUnmappedCategoryDiagnostic:
         chains = {r[0] for r in unmapped}
         assert chains == {"coles"}
         assert all(r[2] == 1 for r in unmapped)
+
+
+# ── Asymmetric size-variant veto ─────────────────────────────────────────────
+
+
+class TestAsymmetricSizeVeto:
+    """Requirement 3: a NULL-norm product must not auto-merge with a known-norm product.
+
+    The soft veto caps the fuzzy score at 95 whenever exactly one side of a match
+    has a parseable canonical size norm.  These tests verify both ingestion orders.
+    """
+
+    def _make_listing(self, session: Session, product_id, chain: str, ext_id: str) -> None:
+        session.add(
+            ProductRetailerListing(
+                product_id=product_id,
+                chain=chain,
+                external_id=ext_id,
+                external_source=f"catalog_{chain}",
+                external_name="Test Product",
+                in_stock=True,
+                is_online_only=False,
+            )
+        )
+
+    @pytest.mark.integration
+    def test_order_a_known_norm_first_null_norm_second_surfaces_candidate(
+        self, test_db_session: Session
+    ):
+        """Known-norm product (Coles '375mL') ingested first; Woolworths bare '6 Pack'
+        comes second. The soft veto must cap the score so no auto-merge occurs.
+        """
+        # Ingest A (Coles, known norm)
+        product_a = Product(id=uuid4(), name="Heineken Lager Beer Tall Cans")
+        product_a.package_size_norm = "375mL"
+        test_db_session.add(product_a)
+        test_db_session.flush()
+        self._make_listing(test_db_session, product_a.id, "coles", "VETO-A-COLES")
+        test_db_session.commit()
+
+        # Incoming B (Woolworths, NULL norm — "6 Pack" does not normalise)
+        cp_b = _cp(
+            "Heineken Lager Beer Tall Cans",
+            external_id="VETO-A-WW",
+            package_size="6 Pack",
+        )
+
+        exact, score, candidate, reason = _match_product(test_db_session, cp_b, "woolworths")
+
+        assert exact is None, "Soft veto must prevent auto-merge"
+        assert candidate is not None, "Asymmetric pair must surface as a review candidate"
+        assert candidate.id == product_a.id
+        assert score <= 95.0, f"Score must be capped by soft veto; got {score}"
+
+    @pytest.mark.integration
+    def test_order_b_null_norm_first_known_norm_second_surfaces_candidate(
+        self, test_db_session: Session
+    ):
+        """NULL-norm product (Woolworths bare '6 Pack') ingested first; Coles '375mL'
+        comes second. The soft veto must fire symmetrically regardless of order.
+        """
+        product_b = Product(id=uuid4(), name="Heineken Lager Beer Tall Cans")
+        # package_size_norm stays NULL (default)
+        test_db_session.add(product_b)
+        test_db_session.flush()
+        self._make_listing(test_db_session, product_b.id, "woolworths", "VETO-B-WW")
+        test_db_session.commit()
+
+        cp_a = _cp(
+            "Heineken Lager Beer Tall Cans",
+            external_id="VETO-B-COLES",
+            package_size="375mL",
+        )
+
+        exact, score, candidate, reason = _match_product(test_db_session, cp_a, "coles")
+
+        assert exact is None, "Soft veto must prevent auto-merge"
+        assert candidate is not None, "Asymmetric pair must surface as a review candidate"
+        assert candidate.id == product_b.id
+        assert score <= 95.0, f"Score must be capped by soft veto; got {score}"
+
+    @pytest.mark.integration
+    def test_equal_norms_still_auto_merge(self, test_db_session: Session):
+        """Regression: when both sides have the same norm, the soft veto must not fire
+        and an identical name must continue to produce an auto-merge.
+        """
+        product_multi = Product(id=uuid4(), name="Corona Extra Beer Bottle Six Pack")
+        product_multi.package_size_norm = "6x355mL"
+        test_db_session.add(product_multi)
+        test_db_session.flush()
+        self._make_listing(test_db_session, product_multi.id, "woolworths", "VETO-C-WW")
+        test_db_session.commit()
+
+        cp_coles = _cp(
+            "Corona Extra Beer Bottle Six Pack",
+            external_id="VETO-C-COLES",
+            package_size="355mL 6 Pack",  # normalises to "6x355mL"
+        )
+
+        exact, score, candidate, reason = _match_product(test_db_session, cp_coles, "coles")
+
+        assert exact is not None, "Equal norms must not be blocked by soft veto"
+        assert exact.id == product_multi.id
+        assert score >= 100.0
+
+    @pytest.mark.integration
+    def test_differing_norms_full_veto_no_candidate(self, test_db_session: Session):
+        """Regression: products with different unit-bearing norms must still trigger
+        the full veto (no review candidate created, score=0).
+        """
+        product_single = Product(id=uuid4(), name="Sparkling Mineral Water Bottle")
+        product_single.package_size_norm = "375mL"
+        test_db_session.add(product_single)
+        test_db_session.flush()
+        self._make_listing(test_db_session, product_single.id, "woolworths", "VETO-D-WW")
+        test_db_session.commit()
+
+        cp_multipack = _cp(
+            "Sparkling Mineral Water Bottle",
+            external_id="VETO-D-COLES",
+            package_size="1.25L",  # normalises to "1.25L" — differs from "375mL"
+        )
+
+        exact, score, candidate, reason = _match_product(
+            test_db_session, cp_multipack, "coles"
+        )
+
+        assert exact is None
+        assert candidate is None, "Full veto must produce no review candidate"
+        assert score == 0.0

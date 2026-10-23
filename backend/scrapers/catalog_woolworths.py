@@ -50,6 +50,7 @@ from tenacity import (
 )
 
 from app.services.category_normaliser import normalise_category as _normalise_category
+from app.services.package_size import combine_count_with_volume
 from scrapers.base import ScraperError
 from scrapers.catalog_base import (
     HTML_HEADERS as _HTML_HEADERS,
@@ -604,7 +605,14 @@ def _parse_item(item: dict, category: CategoryNode, today: date) -> Optional[Cat
         pk_m = re.match(r"^(\d+)\s*(?:ea|each|pk|pack)$", package_size, re.IGNORECASE)
         if pk_m:
             count = int(pk_m.group(1))
-            package_size = f"{count} Pack" if count > 1 else None
+            if count > 1:
+                # Try to combine the bare count with a volume unit from the product
+                # name (e.g. "6PK" + "Corona Beer Bottle 355mL" → "355mL 6 Pack").
+                # Weight units in the name are not combined — the weight may be the
+                # total package weight, not a per-unit mass.
+                package_size = combine_count_with_volume(name, count) or f"{count} Pack"
+            else:
+                package_size = None
     cup_price = item.get("CupPrice")
     cup_measure = item.get("CupMeasure") or ""
     unit_price: Optional[float] = None
