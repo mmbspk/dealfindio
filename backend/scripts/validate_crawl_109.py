@@ -62,6 +62,7 @@ import asyncio
 import importlib.util
 import logging
 import os
+import re
 import sys
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
@@ -91,6 +92,11 @@ logger = logging.getLogger("validate_crawl_109")
 
 # Database names that are recognised as safe dev/test targets.
 _SAFE_DB_FRAGMENTS = ("dev", "test", "local", "staging", "ci")
+
+# Woolworths raw API PackageSize values that contain only a count (no volume).
+# e.g. "6PK", "24PK", "12PK".  These are the products where combine_count_with_volume
+# is expected to fire — AC1 proves it actually did on real data.
+_RE_COUNT_ONLY_API_SIZE = re.compile(r"^\d+PK$", re.IGNORECASE)
 
 
 # ── Data structures ───────────────────────────────────────────────────────────
@@ -129,6 +135,11 @@ class ValidationResult:
     # Canonical product IDs created/used by this crawl (from first-ingest listings).
     # Used by AC2 (collision detection scoped to new products).
     new_product_ids: set[str] = field(default_factory=set)
+
+    # External IDs of scraped products whose raw API PackageSize was count-only
+    # (e.g. "6PK").  AC1 checks that at least one of these was enriched to a
+    # multipack norm by combine_count_with_volume.
+    count_only_external_ids: set[str] = field(default_factory=set)
 
     # Confirmed-norm-mismatch counts before and after ingest.
     # -1 means "not yet measured".  Used by AC5.
@@ -215,14 +226,32 @@ def _count_confirmed_mismatches(session: Session, chains: set[str]) -> int:
 # ── Crawl helpers ─────────────────────────────────────────────────────────────
 
 
+def _identify_count_only_external_ids(raw_products: list[dict]) -> set[str]:
+    """Return Stockcodes of raw items whose PackageSize is count-only (e.g. '6PK').
+
+    These are the candidates where combine_count_with_volume should fire.
+    AC1 verifies at least one was successfully enriched.
+    """
+    result: set[str] = set()
+    for item in raw_products:
+        size = item.get("PackageSize") or ""
+        if _RE_COUNT_ONLY_API_SIZE.match(str(size)):
+            ext_id = str(item.get("Stockcode", ""))
+            if ext_id:
+                result.add(ext_id)
+    return result
+
+
 async def _bounded_crawl(
     chain: str,
     category_name: str,
     max_pages: int,
-) -> tuple[list[CatalogProduct], list[str]]:
+) -> tuple[list[CatalogProduct], list[dict], list[str]]:
     """Authenticate, find target category, crawl up to *max_pages*.
 
-    Returns (products, errors).  Products are fully parsed CatalogProduct objects.
+    Returns (products, raw_products, errors).
+    Products are fully parsed CatalogProduct objects.
+    raw_products are the unmodified API dicts (used to identify count-only items).
     redis_client=None is intentional — auth is not cached for a one-shot run.
     """
     errors: list[str] = []
@@ -239,14 +268,14 @@ async def _bounded_crawl(
         auth = await scraper._get_or_refresh_auth()
     except Exception as exc:
         errors.append(f"Authentication failed: {exc}")
-        return [], errors
+        return [], [], errors
 
     logger.info("Discovering categories…")
     try:
         categories = await scraper.discover_categories()
     except Exception as exc:
         errors.append(f"Category discovery failed: {exc}")
-        return [], errors
+        return [], [], errors
 
     logger.info("Found %d categories", len(categories))
     target = next(
@@ -256,7 +285,7 @@ async def _bounded_crawl(
     if target is None:
         names = [c.name for c in categories[:20]]
         errors.append(f"Category '{category_name}' not found. Available (first 20): {names}")
-        return [], errors
+        return [], [], errors
 
     logger.info(
         "Crawling category '%s' (id=%s, max_pages=%d)…",
@@ -268,7 +297,7 @@ async def _bounded_crawl(
         raw = await scraper.crawl_category(target, auth)
     except Exception as exc:
         errors.append(f"crawl_category failed for '{target.name}': {exc}")
-        return [], errors
+        return [], [], errors
 
     raw_products = raw.get("products", [])
     logger.info("Received %d raw product dicts from '%s'", len(raw_products), target.name)
@@ -276,10 +305,10 @@ async def _bounded_crawl(
         products = await scraper.parse_products(raw_products, target)
     except Exception as exc:
         errors.append(f"parse_products failed: {exc}")
-        return [], errors
+        return [], raw_products, errors
 
     logger.info("Parsed %d CatalogProduct objects", len(products))
-    return products, errors
+    return products, raw_products, errors
 
 
 # ── Ingest helpers ────────────────────────────────────────────────────────────
@@ -303,15 +332,23 @@ def _evaluate_criteria(result: ValidationResult) -> None:
     products = result.scraped_products
 
     # ── AC1 ───────────────────────────────────────────────────────────────────
-    # At least one product scraped in this run was successfully enriched from a
-    # count-only API value to a multipack norm (e.g. "6PK" + "355mL in name" →
-    # norm "6x355mL").  This proves combine_count_with_volume fired on real data.
-    enriched_in_this_crawl = sum(
-        1
-        for p in products
-        if p.package_size and "x" in (normalize_package_size(p.package_size) or "")
-    )
-    result.criteria_results["ac1_enrichment_fired_on_scraped_data"] = enriched_in_this_crawl > 0
+    # At least one product that originally had a count-only API size (e.g. "6PK")
+    # was successfully enriched to a multipack norm by combine_count_with_volume.
+    # An API product already supplying a complete size string (e.g. "355mL 6 Pack")
+    # does not count — only products whose raw PackageSize was count-only qualify.
+    count_only_products = [p for p in products if p.external_id in result.count_only_external_ids]
+    if not count_only_products:
+        # No count-only products in this crawl — cannot prove enrichment fired.
+        result.criteria_results["ac1_enrichment_fired_on_scraped_data"] = False
+        logger.warning(
+            "AC1 FAIL: no count-only API products found in scraped set "
+            "(count_only_external_ids is empty — category may not have pack products)"
+        )
+    else:
+        enriched_count_only = sum(
+            1 for p in count_only_products if "x" in (normalize_package_size(p.package_size) or "")
+        )
+        result.criteria_results["ac1_enrichment_fired_on_scraped_data"] = enriched_count_only > 0
 
     # ── AC2 ───────────────────────────────────────────────────────────────────
     # No canonical product created/used by this crawl appears in the audit's
@@ -340,23 +377,32 @@ def _evaluate_criteria(result: ValidationResult) -> None:
     ac3_pass = True
     for canonical_id, group in products_by_canonical.items():
         norms = {normalize_package_size(p.package_size) for p in group}
-        known_norms = {n for n in norms if n is not None}
-        if None in norms and known_norms:
+        if len(norms) > 1:
+            # More than one distinct norm (including None) in the same canonical
+            # product — the symmetric soft veto should have prevented this.
             ac3_pass = False
             logger.warning(
-                "AC3 FAIL: canonical product %s holds both null-norm and known-norm "
-                "listings from this crawl — soft veto may have failed. Known norms: %s",
+                "AC3 FAIL: canonical product %s holds listings with different norms "
+                "from this crawl — soft veto may have failed. Norms found: %s",
                 canonical_id,
-                known_norms,
+                norms,
             )
             break
     result.criteria_results["ac3_separate_products"] = ac3_pass
 
     # ── AC4 ───────────────────────────────────────────────────────────────────
-    # After repeat ingest, every listing still points to the same canonical
-    # product it was assigned on the first run.  A mismatch means a listing was
-    # reassigned — a true regression.
+    # Two independent checks, both must pass:
+    #   (a) Repeat ingest created zero new canonical products.
+    #       A non-zero count means a duplicate was introduced.
+    #   (b) Every listing still points to the same canonical product it was
+    #       assigned on the first run.  A mismatch means a listing was reassigned.
     if result.listing_map_first and result.listing_map_repeat:
+        repeat_created = result.ingest_counts_repeat.get("created", 0)
+        if repeat_created > 0:
+            logger.warning(
+                "AC4 FAIL: repeat ingest created %d new canonical products",
+                repeat_created,
+            )
         moved = {
             eid: (result.listing_map_first[eid], result.listing_map_repeat.get(eid))
             for eid in result.listing_map_first
@@ -364,9 +410,11 @@ def _evaluate_criteria(result: ValidationResult) -> None:
         }
         if moved:
             logger.warning("AC4 FAIL: listings reassigned after repeat ingest: %s", moved)
-        result.criteria_results["ac4_idempotent_repeat_ingest"] = not bool(moved)
+        result.criteria_results["ac4_idempotent_repeat_ingest"] = repeat_created == 0 and not bool(
+            moved
+        )
     else:
-        # No listing data available (e.g. dry-run or ingestion errors)
+        # No listing data available (e.g. ingestion errors)
         result.criteria_results["ac4_idempotent_repeat_ingest"] = None
 
     # ── AC5 ───────────────────────────────────────────────────────────────────
@@ -608,8 +656,11 @@ def main() -> int:
         args.category_name,
         args.max_pages,
     )
-    products, crawl_errors = asyncio.run(_bounded_crawl(chain, args.category_name, args.max_pages))
+    products, raw_products, crawl_errors = asyncio.run(
+        _bounded_crawl(chain, args.category_name, args.max_pages)
+    )
     result.scraped_products = products
+    result.count_only_external_ids = _identify_count_only_external_ids(raw_products)
     result.errors.extend(crawl_errors)
 
     if not products:
@@ -627,14 +678,15 @@ def main() -> int:
 
     if args.dry_run:
         logger.info("Dry run: %d products parsed. Skipping DB writes.", len(products))
-        # Only AC1 can be evaluated without a DB
+        # Only AC1 can be evaluated without a DB; uses count_only_external_ids.
+        count_only_products = [
+            p for p in products if p.external_id in result.count_only_external_ids
+        ]
         enriched = sum(
-            1
-            for p in products
-            if p.package_size and "x" in (normalize_package_size(p.package_size) or "")
+            1 for p in count_only_products if "x" in (normalize_package_size(p.package_size) or "")
         )
         result.criteria_results = {
-            "ac1_enrichment_fired_on_scraped_data": enriched > 0,
+            "ac1_enrichment_fired_on_scraped_data": bool(count_only_products) and enriched > 0,
             "ac2_no_unexpected_merges": None,
             "ac3_separate_products": None,
             "ac4_idempotent_repeat_ingest": None,
