@@ -74,10 +74,9 @@ _BACKEND = _HERE.parent
 if str(_BACKEND) not in sys.path:
     sys.path.insert(0, str(_BACKEND))
 
-from sqlalchemy import select, text
-from sqlalchemy.orm import Session
+from sqlalchemy import create_engine, select, text
+from sqlalchemy.orm import Session, sessionmaker
 
-from app.deps import _SessionLocal
 from app.models import Product, ProductRetailerListing
 from app.services.catalog_ingest import ingest_catalog_products
 from app.services.package_size import normalize_package_size
@@ -348,7 +347,7 @@ async def _bounded_crawl(
     raw_products = raw.get("products", [])
     logger.info("Received %d raw product dicts from '%s'", len(raw_products), target.name)
     try:
-        products = await scraper.parse_products(raw_products, target)
+        products = await scraper.parse_products(raw, target)  # parse_products expects the full dict
     except Exception as exc:
         errors.append(f"parse_products failed: {exc}")
         return [], raw_products, errors
@@ -737,6 +736,12 @@ def main() -> int:
     if not db_url:
         logger.error("DATABASE_URL is not set. Aborting.")
         return 1
+
+    # Build a dedicated engine for this script run — we do not go through
+    # app.deps.init_database because the script runs standalone and does not
+    # start the FastAPI app lifecycle.
+    _engine = create_engine(db_url, pool_pre_ping=True, echo=False)
+    _SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=_engine)
 
     result = ValidationResult()
 
