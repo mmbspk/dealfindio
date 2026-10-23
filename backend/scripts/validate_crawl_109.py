@@ -65,7 +65,7 @@ import os
 import re
 import sys
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 # ── sys.path bootstrap (run from backend/) ───────────────────────────────────
@@ -81,7 +81,7 @@ from app.deps import _SessionLocal
 from app.models import Product, ProductRetailerListing
 from app.services.catalog_ingest import ingest_catalog_products
 from app.services.package_size import normalize_package_size
-from scrapers.catalog_base import CatalogProduct, CategoryNode
+from scrapers.catalog_base import CatalogProduct
 from scrapers.catalog_registry import get_catalog_scraper
 
 logging.basicConfig(
