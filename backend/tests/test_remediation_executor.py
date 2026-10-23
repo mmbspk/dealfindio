@@ -22,6 +22,8 @@ Test coverage:
   * main() — exits if approved ID not in eligible manifest (Finding 4)
   * main() — exits if --approve used without --approved-by (round-2 finding)
   * main() — exits if --batch-size 0 (round-2 finding)
+  * TestPostgresqlConcurrency (1, skipped unless TEST_POSTGRESQL_CONCURRENCY_URL set):
+    FOR UPDATE on product row blocks concurrent listing INSERT via FK FOR KEY SHARE
 """
 
 from __future__ import annotations
@@ -693,43 +695,59 @@ class TestMainValidation:
 
 # ── PostgreSQL concurrency (skipped in CI — requires real PostgreSQL) ──────────
 
+# Dedicated env var, distinct from DATABASE_URL (which CI sets to postgresql+asyncpg://...).
+# The test only activates when an explicit synchronous PostgreSQL URL is supplied.
+_CONCURRENCY_PG_URL = os.environ.get("TEST_POSTGRESQL_CONCURRENCY_URL", "")
+
 
 @pytest.mark.skipif(
-    not os.environ.get("DATABASE_URL", "").startswith("postgresql"),
+    not _CONCURRENCY_PG_URL,
     reason=(
-        "PostgreSQL concurrency test — requires "
-        "DATABASE_URL=postgresql://... pytest tests/test_remediation_executor.py::TestPostgresqlConcurrency -v"
+        "PostgreSQL concurrency test — set "
+        "TEST_POSTGRESQL_CONCURRENCY_URL=postgresql://user:pass@host/db "
+        "and run: pytest tests/test_remediation_executor.py::TestPostgresqlConcurrency -v"
     ),
 )
 class TestPostgresqlConcurrency:
     """End-to-end locking verification against a real PostgreSQL database.
 
-    Skipped in regular CI (SQLite).  Run manually against a dev/test PostgreSQL
-    instance before the first live executor run:
+    Skipped unless ``TEST_POSTGRESQL_CONCURRENCY_URL`` is set — a dedicated env
+    var that is never present in regular CI (which uses DATABASE_URL).  Run
+    manually against a dev/test PostgreSQL instance before the first live
+    executor run:
 
-        DATABASE_URL=postgresql://user:pass@host/db \\
+        TEST_POSTGRESQL_CONCURRENCY_URL=postgresql://user:pass@host/db \\
             pytest tests/test_remediation_executor.py::TestPostgresqlConcurrency -v
+
+    The URL must use a synchronous driver (psycopg2 or psycopg3).  Any async
+    driver suffix (+asyncpg, +aiopg, +psycopg_async) is automatically coerced
+    to the synchronous default; threading + synchronous Session would otherwise
+    raise MissingGreenlet.
 
     Background: ``product_retailer_listings.product_id`` has a FK to
     ``products.id``.  In PostgreSQL, FK validation on INSERT requires
     ``FOR KEY SHARE`` on the referenced product row.  ``FOR KEY SHARE`` is
-    incompatible with ``FOR UPDATE``, so any concurrent INSERT for a locked
+    incompatible with ``FOR UPDATE``, so a concurrent INSERT for a locked
     product will block until the executor's transaction commits or rolls back.
-    This test verifies that behaviour directly, using two real connections and
+    This test verifies that behaviour directly with two real connections and
     threading synchronisation.
     """
 
     def test_for_update_on_product_blocks_concurrent_listing_insert(self):
-        """FOR UPDATE on product row blocks concurrent listing INSERT via FK lock.
-
-        Proves that new listing inserts cannot interleave with the executor's
-        classify-and-write phase when it holds a FOR UPDATE lock on the product.
-        """
+        """FOR UPDATE on product row blocks concurrent listing INSERT via FK lock."""
         import threading
         import time
 
-        pg_engine = create_engine(os.environ["DATABASE_URL"], echo=False)
+        # Coerce any async driver to synchronous — threading + Session + async = MissingGreenlet.
+        pg_url = _CONCURRENCY_PG_URL
+        for async_suffix in ("+asyncpg", "+aiopg", "+psycopg_async"):
+            if async_suffix in pg_url:
+                pg_url = pg_url.replace(async_suffix, "")
+                break
 
+        pg_engine = create_engine(pg_url, echo=False)
+
+        # Setup: insert the product row that will be the concurrency target.
         with Session(pg_engine) as setup:
             product = Product(id=uuid4(), name="ConcurrencyTestProduct", package_size_norm="375mL")
             setup.add(product)
@@ -751,6 +769,8 @@ class TestPostgresqlConcurrency:
                     session.commit()
             except Exception as exc:
                 thread_errors.append(("executor", exc))
+            finally:
+                allow_commit.set()  # unblock ingest thread even if executor errors
 
         def ingest_side() -> None:
             try:
@@ -764,7 +784,8 @@ class TestPostgresqlConcurrency:
                         package_size_raw="250mL",
                     )
                     session.add(new_lst)
-                    session.commit()  # blocks: FK needs FOR KEY SHARE on locked product
+                    # blocks: FK validation requires FOR KEY SHARE on locked product
+                    session.commit()
             except Exception as exc:
                 thread_errors.append(("ingest", exc))
             finally:
@@ -772,45 +793,53 @@ class TestPostgresqlConcurrency:
 
         t_exec = threading.Thread(target=executor_side, daemon=True)
         t_ingest = threading.Thread(target=ingest_side, daemon=True)
-        t_exec.start()
-        t_ingest.start()
 
-        assert lock_held.wait(timeout=5), "Executor never acquired FOR UPDATE lock"
+        try:
+            t_exec.start()
+            t_ingest.start()
 
-        # Give the ingest thread enough time to reach and block on the INSERT.
-        time.sleep(0.2)
+            assert lock_held.wait(timeout=5), "Executor never acquired FOR UPDATE lock"
 
-        # INSERT must still be blocked (insert_done not set yet).
-        assert not insert_done.is_set(), (
-            "Concurrent listing INSERT completed while executor held FOR UPDATE lock. "
-            "Expected blocking via FK FOR KEY SHARE requirement. "
-            "Verify product_retailer_listings.product_id FK references products.id."
-        )
+            # Give ingest thread time to reach and block on the INSERT.
+            time.sleep(0.2)
 
-        # Release executor lock; both threads should complete cleanly.
-        allow_commit.set()
-        t_exec.join(timeout=5)
-        t_ingest.join(timeout=5)
-
-        assert not thread_errors, f"Thread errors: {thread_errors}"
-        assert insert_done.is_set(), "Ingest INSERT never completed after executor committed"
-
-        # Cleanup test data.
-        with Session(pg_engine) as cleanup:
-            rows = (
-                cleanup.execute(
-                    select(ProductRetailerListing).where(
-                        ProductRetailerListing.product_id == product_id
-                    )
-                )
-                .scalars()
-                .all()
+            # INSERT must still be blocked while executor holds the lock.
+            assert not insert_done.is_set(), (
+                "Concurrent listing INSERT completed while executor held FOR UPDATE lock. "
+                "Expected blocking via FK FOR KEY SHARE requirement — "
+                "verify product_retailer_listings.product_id FK references products.id."
             )
-            for row in rows:
-                cleanup.delete(row)
-            prod = cleanup.get(Product, product_id)
-            if prod:
-                cleanup.delete(prod)
-            cleanup.commit()
 
-        pg_engine.dispose()
+            # Release executor lock; both threads should complete cleanly.
+            allow_commit.set()
+            t_exec.join(timeout=5)
+            t_ingest.join(timeout=5)
+
+            assert not thread_errors, f"Thread errors: {thread_errors}"
+            assert insert_done.is_set(), "Ingest INSERT never completed after executor committed"
+
+        finally:
+            # Ensure executor always commits/releases the lock even if assertions failed.
+            allow_commit.set()
+            t_exec.join(timeout=3)
+            t_ingest.join(timeout=3)
+
+            # Clean up test data regardless of outcome.
+            with Session(pg_engine) as cleanup:
+                rows = (
+                    cleanup.execute(
+                        select(ProductRetailerListing).where(
+                            ProductRetailerListing.product_id == product_id
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                for row in rows:
+                    cleanup.delete(row)
+                prod = cleanup.get(Product, product_id)
+                if prod:
+                    cleanup.delete(prod)
+                cleanup.commit()
+
+            pg_engine.dispose()
