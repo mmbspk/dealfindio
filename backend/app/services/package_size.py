@@ -144,14 +144,29 @@ _RE_NAME_VOLUME = re.compile(
     re.I,
 )
 
+# Explicit pack-count marker in a product name: "4 x", "4×", "4 Pack", "4PK".
+# Used to detect when the name itself carries a pack count that might contradict
+# the API-supplied count.
+_RE_NAME_EXPLICIT_COUNT = re.compile(
+    r"(?<!\d)(\d+)\s*(?:[x×]|(?:pack|pk|ct|pcs?|pieces?)\b)",
+    re.I,
+)
+
 
 def combine_count_with_volume(name: str, count: int) -> str | None:
-    """Return a raw size string combining *count* with the first volume unit found
-    in *name*, or None if no unambiguous volume unit is present.
+    """Return a raw size string combining *count* with a volume unit found in
+    *name*, or None if the evidence is absent or ambiguous.
 
-    Example: name="Corona Beer Bottle 6 Pack 355mL", count=6 → "355mL 6 Pack"
-    The caller should pass the result to normalize_package_size, which turns it
-    into the canonical form "6x355mL".
+    Example: name="Corona Beer Bottle 355mL", count=6 → "355mL 6 Pack"
+    The caller passes the result to normalize_package_size, which produces the
+    canonical form "6x355mL".
+
+    Returns None and refuses augmentation when:
+    - count < 2 or name is empty
+    - No volume unit (mL / L) is found in the name
+    - The name contains an explicit pack count that contradicts *count*
+      (e.g. "Drink 4 x 250mL" with count=6 — the two pieces of evidence conflict)
+    - The name contains multiple *different* volume quantities
 
     Only volume units (mL, L) are matched.  Weight units (g, kg) are never
     combined because a name like "8 Pack Sausages 560g" may describe the total
@@ -159,10 +174,25 @@ def combine_count_with_volume(name: str, count: int) -> str | None:
     """
     if not name or count < 2:
         return None
-    m = _RE_NAME_VOLUME.search(name)
-    if not m:
+
+    # Guard 1 — reject when the name carries an explicit pack count that differs
+    # from the API-supplied count (contradictory evidence).
+    explicit_m = _RE_NAME_EXPLICIT_COUNT.search(name)
+    if explicit_m and int(explicit_m.group(1)) != count:
         return None
-    return f"{m.group(1)}{m.group(2)} {count} Pack"
+
+    # Find every volume quantity in the name.
+    all_volumes = _RE_NAME_VOLUME.findall(name)  # list of (value_str, unit_str) tuples
+    if not all_volumes:
+        return None
+
+    # Guard 2 — reject when multiple different volume quantities are present;
+    # identical repetitions (e.g. "355mL … 355mL") are fine.
+    if len(set(all_volumes)) > 1:
+        return None
+
+    value, unit = all_volumes[0]
+    return f"{value}{unit} {count} Pack"
 
 
 def normalize_package_size(raw: str | None) -> str | None:

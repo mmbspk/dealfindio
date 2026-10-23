@@ -353,9 +353,7 @@ def _match_product(
     # is unsafe with asymmetric size evidence — cap the score to surface the pair as
     # a review candidate regardless of ingestion order.  Products where *both* sides
     # are NULL are not penalised; only asymmetric evidence triggers the cap.
-    if (cp_norm and not matched.package_size_norm) or (
-        matched.package_size_norm and not cp_norm
-    ):
+    if (cp_norm and not matched.package_size_norm) or (matched.package_size_norm and not cp_norm):
         score = min(score, 95.0)
 
     if score >= 100.0:

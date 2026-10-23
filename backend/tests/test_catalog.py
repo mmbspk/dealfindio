@@ -673,6 +673,37 @@ class TestCombineCountWithVolume:
         raw = self._fn("Pale Ale Cans 375mL", 6)
         assert normalize_package_size(raw) == "6x375mL"
 
+    @pytest.mark.unit
+    def test_contradictory_count_in_name_rejected(self):
+        """Requirement 1: never invent quantities from contradictory evidence.
+
+        API says 6 units; name says 4 x 250mL. The two pieces of evidence conflict
+        so augmentation must be refused.
+        """
+        assert self._fn("Drink 4 x 250mL", 6) is None
+
+    @pytest.mark.unit
+    def test_matching_count_in_name_allowed(self):
+        """When the name's explicit count agrees with the API count, augment normally."""
+        result = self._fn("Crown Lager 6 Pack 375mL", 6)
+        assert result == "375mL 6 Pack"
+
+    @pytest.mark.unit
+    def test_n_x_unit_format_count_mismatch_rejected(self):
+        """'24 x 355mL' in the name with API count=6 is contradictory."""
+        assert self._fn("Corona Extra 24 x 355mL", 6) is None
+
+    @pytest.mark.unit
+    def test_multiple_different_volumes_rejected(self):
+        """When the name contains two different volume quantities, evidence is ambiguous."""
+        assert self._fn("Mix 250mL serve and 355mL can", 6) is None
+
+    @pytest.mark.unit
+    def test_identical_repeated_volume_allowed(self):
+        """The same volume appearing twice is unambiguous — augment normally."""
+        result = self._fn("Beer 355mL Can Pack 355mL", 6)
+        assert result == "355mL 6 Pack"
+
 
 # ── Woolworths package-size extraction ───────────────────────────────────────
 
@@ -793,36 +824,44 @@ class TestIgaPackageSize:
 
     @pytest.mark.unit
     def test_count_pack_augmented_with_volume_from_name(self):
-        cp = self._parse(self._item(
-            name="Bundaberg Ginger Beer 375mL",
-            unitOfSize={"size": 6, "type": "pack"},
-        ))
+        cp = self._parse(
+            self._item(
+                name="Bundaberg Ginger Beer 375mL",
+                unitOfSize={"size": 6, "type": "pack"},
+            )
+        )
         assert cp is not None
         assert cp.package_size == "375mL 6 Pack"
 
     @pytest.mark.unit
     def test_count_pk_no_volume_stays_n_pack(self):
-        cp = self._parse(self._item(
-            name="Dog Biscuits Variety",
-            unitOfSize={"size": 6, "type": "pk"},
-        ))
+        cp = self._parse(
+            self._item(
+                name="Dog Biscuits Variety",
+                unitOfSize={"size": 6, "type": "pk"},
+            )
+        )
         assert cp is not None
         assert cp.package_size == "6 Pack"
 
     @pytest.mark.unit
     def test_weight_in_name_not_combined(self):
-        cp = self._parse(self._item(
-            name="Thin Lamb Sausages 560g",
-            unitOfSize={"size": 8, "type": "each"},
-        ))
+        cp = self._parse(
+            self._item(
+                name="Thin Lamb Sausages 560g",
+                unitOfSize={"size": 8, "type": "each"},
+            )
+        )
         assert cp is not None
         assert cp.package_size == "8 Pack"
 
     @pytest.mark.unit
     def test_ml_size_type_passes_through(self):
-        cp = self._parse(self._item(
-            name="Sparkling Water Can",
-            unitOfSize={"size": 330, "type": "millilitre"},
-        ))
+        cp = self._parse(
+            self._item(
+                name="Sparkling Water Can",
+                unitOfSize={"size": 330, "type": "millilitre"},
+            )
+        )
         assert cp is not None
         assert cp.package_size == "330 mL"

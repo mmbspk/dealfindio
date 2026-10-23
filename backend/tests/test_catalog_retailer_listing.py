@@ -1552,10 +1552,166 @@ class TestAsymmetricSizeVeto:
             package_size="1.25L",  # normalises to "1.25L" — differs from "375mL"
         )
 
-        exact, score, candidate, reason = _match_product(
-            test_db_session, cp_multipack, "coles"
-        )
+        exact, score, candidate, reason = _match_product(test_db_session, cp_multipack, "coles")
 
         assert exact is None
         assert candidate is None, "Full veto must produce no review candidate"
         assert score == 0.0
+
+
+
+# ── Asymmetric veto — end-to-end ingestion ────────────────────────────────────
+
+
+class TestAsymmetricVetoEndToEnd:
+    """End-to-end regression: separate product variants must remain as distinct
+    canonical records with stable retailer-listing associations after full ingest
+    and repeat ingest.  These tests go through ingest_catalog_products rather
+    than calling _match_product directly.
+    """
+
+    @pytest.mark.integration
+    def test_order_a_e2e_separate_products_and_listings(self, test_db_session: Session):
+        """Coles single-unit (known norm) ingested first; Woolworths multipack
+        (NULL norm) second.  Both must land as separate canonical products.
+        """
+        coles_cp = _cp(
+            "Cascade Premium Lager Beer",
+            external_id="E2E-A-COLES",
+            package_size="375mL",
+        )
+        c1 = ingest_catalog_products([coles_cp], "coles", test_db_session)
+        test_db_session.commit()
+        assert c1.created == 1
+
+        ww_cp = _cp(
+            "Cascade Premium Lager Beer",
+            external_id="E2E-A-WW",
+            package_size="6 Pack",  # normalises to None — soft veto must fire
+        )
+        c2 = ingest_catalog_products([ww_cp], "woolworths", test_db_session)
+        test_db_session.commit()
+        assert c2.created == 1, "Woolworths variant must create a NEW canonical product"
+
+        products = (
+            test_db_session.execute(
+                select(Product).where(Product.name == "Cascade Premium Lager Beer")
+            )
+            .scalars()
+            .all()
+        )
+        assert len(products) == 2, "Two separate canonical products must exist"
+
+        listings = (
+            test_db_session.execute(
+                select(ProductRetailerListing).where(
+                    ProductRetailerListing.external_id.in_(["E2E-A-COLES", "E2E-A-WW"])
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert {l.chain for l in listings} == {"coles", "woolworths"}
+
+        # Each listing must point to a different canonical product
+        assert len({l.product_id for l in listings}) == 2
+
+        norms = {p.package_size_norm for p in products}
+        assert "375mL" in norms
+        assert None in norms
+
+    @pytest.mark.integration
+    def test_order_b_e2e_separate_products_and_listings(self, test_db_session: Session):
+        """Woolworths NULL-norm multipack ingested first; Coles single-unit second."""
+        ww_cp = _cp(
+            "Hahn SuperDry Lager Beer",
+            external_id="E2E-B-WW",
+            package_size="6 Pack",
+        )
+        c1 = ingest_catalog_products([ww_cp], "woolworths", test_db_session)
+        test_db_session.commit()
+        assert c1.created == 1
+
+        coles_cp = _cp(
+            "Hahn SuperDry Lager Beer",
+            external_id="E2E-B-COLES",
+            package_size="375mL",
+        )
+        c2 = ingest_catalog_products([coles_cp], "coles", test_db_session)
+        test_db_session.commit()
+        assert c2.created == 1, "Coles variant must create a NEW canonical product"
+
+        products = (
+            test_db_session.execute(
+                select(Product).where(Product.name == "Hahn SuperDry Lager Beer")
+            )
+            .scalars()
+            .all()
+        )
+        assert len(products) == 2
+
+        listings = (
+            test_db_session.execute(
+                select(ProductRetailerListing).where(
+                    ProductRetailerListing.external_id.in_(["E2E-B-WW", "E2E-B-COLES"])
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert {l.chain for l in listings} == {"coles", "woolworths"}
+        assert len({l.product_id for l in listings}) == 2
+
+    @pytest.mark.integration
+    def test_e2e_repeat_ingest_preserves_listing_associations(
+        self, test_db_session: Session
+    ):
+        """Re-ingesting the same SKU must not move a listing to a different product
+        and must not create a third canonical product.
+        """
+        coles_cp = _cp(
+            "Coopers Pale Ale Tin Can",
+            external_id="E2E-C-COLES",
+            package_size="375mL",
+        )
+        ingest_catalog_products([coles_cp], "coles", test_db_session)
+        test_db_session.commit()
+
+        ww_cp = _cp(
+            "Coopers Pale Ale Tin Can",
+            external_id="E2E-C-WW",
+            package_size="6 Pack",
+        )
+        ingest_catalog_products([ww_cp], "woolworths", test_db_session)
+        test_db_session.commit()
+
+        coles_listing = test_db_session.execute(
+            select(ProductRetailerListing).where(
+                ProductRetailerListing.external_id == "E2E-C-COLES"
+            )
+        ).scalar_one()
+        ww_listing = test_db_session.execute(
+            select(ProductRetailerListing).where(
+                ProductRetailerListing.external_id == "E2E-C-WW"
+            )
+        ).scalar_one()
+        original_coles_pid = coles_listing.product_id
+        original_ww_pid = ww_listing.product_id
+        assert original_coles_pid != original_ww_pid
+
+        # Re-ingest both with identical data
+        ingest_catalog_products([coles_cp], "coles", test_db_session)
+        ingest_catalog_products([ww_cp], "woolworths", test_db_session)
+        test_db_session.commit()
+
+        test_db_session.refresh(coles_listing)
+        test_db_session.refresh(ww_listing)
+        assert coles_listing.product_id == original_coles_pid, "Coles listing must not move"
+        assert ww_listing.product_id == original_ww_pid, "WW listing must not move"
+
+        product_count = test_db_session.execute(
+            select(func.count())
+            .select_from(Product)
+            .where(Product.name == "Coopers Pale Ale Tin Can")
+        ).scalar()
+        assert product_count == 2, "Re-ingest must not create a third canonical product"
