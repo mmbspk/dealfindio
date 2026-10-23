@@ -17,33 +17,55 @@ Options:
 
 Connects to DATABASE_URL (dev database expected).  Never connects to production.
 
+IMPORTANT: This script commits changes on the first ingest and on the repeat
+ingest independently.  A failed validation (network error mid-run, unexpected
+crash) may leave partial data in the database.  Always run against a disposable
+development or test database.  The script queries SELECT current_database() to
+verify the target is a recognised dev/test database before any writes.
+
 Pipeline steps:
-  1. Capture baseline DB metrics for Woolworths products
-  2. Run bounded Woolworths crawl (one category, max N pages)
-  3. Ingest the scraped products into the dev database
-  4. Capture post-ingest metrics and compute diff
-  5. Re-ingest the same products (idempotency check)
-  6. Run package-size audit (scripts/audit_package_sizes.py)
-  7. Run remediation planner (scripts/remediation_planner.py)
-  8. Write Markdown validation report
+  1. Verify database name contains a safe suffix (dev / test / local / staging / ci)
+  2. Capture baseline DB metrics for Woolworths products
+  3. Capture baseline confirmed-norm-mismatch count (before ingest) for AC5
+  4. Run bounded Woolworths crawl (one category, max N pages)
+  5. Ingest the scraped products (first run); capture listing-to-product map
+  6. Capture post-ingest metrics and repeat run (idempotency)
+  7. Run package-size audit
+  8. Run remediation planner (post-ingest) and compare against baseline count
+  9. Evaluate the five acceptance criteria
+  10. Write Markdown report
+
+Acceptance criteria:
+  AC1  At least one scraped product was enriched from count-only to a multipack
+       norm (proves combine_count_with_volume fired on real data).
+  AC2  No canonical product created by this crawl appears in the audit's
+       single/multipack collision list.
+  AC3  No two scraped products with different norms were merged into the same
+       canonical product (proves the symmetric soft veto held).
+  AC4  After repeat ingest, every listing still points to the same canonical
+       product it was assigned on the first run (proves idempotency).
+  AC5  The count of confirmed_norm_mismatch rows did not increase after ingest
+       (proves no new normalisation defects were introduced).
+
+Errors in audit or planner are surfaced as failures — they are never silently
+ignored.
 
 Exit code:
-  0  All acceptance criteria met
-  1  One or more criteria failed (see report)
+  0  All acceptance criteria met and no errors
+  1  One or more criteria failed or an error occurred (see report)
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
-import json
+import importlib.util
 import logging
 import os
 import sys
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Optional
 
 # ── sys.path bootstrap (run from backend/) ───────────────────────────────────
 _HERE = Path(__file__).resolve().parent
@@ -51,11 +73,11 @@ _BACKEND = _HERE.parent
 if str(_BACKEND) not in sys.path:
     sys.path.insert(0, str(_BACKEND))
 
-from sqlalchemy import func, select, text
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.deps import _SessionLocal
-from app.models import Product, ProductRetailerListing
+from app.models import ProductRetailerListing
 from app.services.catalog_ingest import ingest_catalog_products
 from app.services.package_size import normalize_package_size
 from scrapers.catalog_base import CatalogProduct, CategoryNode
@@ -67,13 +89,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger("validate_crawl_109")
 
+# Database names that are recognised as safe dev/test targets.
+_SAFE_DB_FRAGMENTS = ("dev", "test", "local", "staging", "ci")
+
 
 # ── Data structures ───────────────────────────────────────────────────────────
 
 
 @dataclass
 class NormDistribution:
-    """Count of products in each package_size_norm bucket."""
+    """Count of products in each package_size_norm bucket for one chain."""
 
     total: int = 0
     with_norm: int = 0
@@ -85,22 +110,54 @@ class NormDistribution:
 class ValidationResult:
     """Accumulated results for one validation run."""
 
+    # Scraper output
+    scraped_products: list[CatalogProduct] = field(default_factory=list)
+
+    # DB state snapshots
     baseline: NormDistribution = field(default_factory=NormDistribution)
     post_ingest: NormDistribution = field(default_factory=NormDistribution)
-    scraped_products: list[CatalogProduct] = field(default_factory=list)
+
+    # Ingest counts
     ingest_counts_first: dict = field(default_factory=dict)
     ingest_counts_repeat: dict = field(default_factory=dict)
+
+    # Listing maps: {external_id: str(product_id)}, populated after each ingest.
+    # Used by AC3 (merge detection) and AC4 (stability check).
+    listing_map_first: dict[str, str] = field(default_factory=dict)
+    listing_map_repeat: dict[str, str] = field(default_factory=dict)
+
+    # Canonical product IDs created/used by this crawl (from first-ingest listings).
+    # Used by AC2 (collision detection scoped to new products).
+    new_product_ids: set[str] = field(default_factory=set)
+
+    # Confirmed-norm-mismatch counts before and after ingest.
+    # -1 means "not yet measured".  Used by AC5.
+    baseline_plan_confirmed_count: int = -1
+    post_plan_confirmed_count: int = -1
+
+    # Audit/plan output
     audit_findings: dict[str, list[dict]] = field(default_factory=dict)
     plan_findings: list[dict] = field(default_factory=list)
-    criteria_results: dict[str, bool] = field(default_factory=dict)
+
+    # Evaluation
+    criteria_results: dict[str, bool | None] = field(default_factory=dict)
     errors: list[str] = field(default_factory=list)
 
 
 # ── DB helpers ────────────────────────────────────────────────────────────────
 
 
+def _check_db_name(session: Session) -> str | None:
+    """Return the actual database name, or None if the query fails."""
+    try:
+        return session.execute(text("SELECT current_database()")).scalar()
+    except Exception as exc:
+        logger.warning("Could not query database name: %s", exc)
+        return None
+
+
 def _norm_distribution(session: Session, chain: str) -> NormDistribution:
-    """Query current norm distribution for products with a Woolworths listing."""
+    """Query current norm distribution for products with a listing in *chain*."""
     rows = session.execute(
         text(
             """
@@ -123,31 +180,36 @@ def _norm_distribution(session: Session, chain: str) -> NormDistribution:
     return dist
 
 
-def _listing_count(session: Session, external_ids: list[str], chain: str) -> int:
-    return (
-        session.execute(
-            select(func.count())
-            .select_from(ProductRetailerListing)
-            .where(
-                ProductRetailerListing.external_id.in_(external_ids),
-                ProductRetailerListing.chain == chain,
-            )
-        ).scalar()
-        or 0
-    )
-
-
-def _product_count_for_listings(session: Session, external_ids: list[str], chain: str) -> int:
-    """Number of distinct canonical products pointed to by these listings."""
+def _get_listing_map(session: Session, external_ids: list[str], chain: str) -> dict[str, str]:
+    """Return {external_id: str(product_id)} for listings in *chain*."""
+    if not external_ids:
+        return {}
     rows = session.execute(
-        select(ProductRetailerListing.product_id)
-        .where(
+        select(ProductRetailerListing.external_id, ProductRetailerListing.product_id).where(
             ProductRetailerListing.external_id.in_(external_ids),
             ProductRetailerListing.chain == chain,
         )
-        .distinct()
     ).fetchall()
-    return len(rows)
+    return {row[0]: str(row[1]) for row in rows}
+
+
+# ── Planner helper ────────────────────────────────────────────────────────────
+
+
+def _load_script(name: str):
+    """Load a script from the scripts/ directory by filename and return the module."""
+    path = _BACKEND / "scripts" / name
+    spec = importlib.util.spec_from_file_location(name.replace(".py", ""), path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _count_confirmed_mismatches(session: Session, chains: set[str]) -> int:
+    """Run the remediation planner and count confirmed_norm_mismatch rows."""
+    mod = _load_script("remediation_planner.py")
+    rows = mod.run_plan(session, chains=chains)
+    return sum(1 for r in rows if r.get("subtype") == "confirmed_norm_mismatch")
 
 
 # ── Crawl helpers ─────────────────────────────────────────────────────────────
@@ -158,18 +220,17 @@ async def _bounded_crawl(
     category_name: str,
     max_pages: int,
 ) -> tuple[list[CatalogProduct], list[str]]:
-    """Authenticate, find target category, crawl up to max_pages.
+    """Authenticate, find target category, crawl up to *max_pages*.
 
     Returns (products, errors).  Products are fully parsed CatalogProduct objects.
-    redis_client=None is fine — auth is not cached, which is acceptable for a
-    one-shot validation run.
+    redis_client=None is intentional — auth is not cached for a one-shot run.
     """
     errors: list[str] = []
     scraper = get_catalog_scraper(chain, redis_client=None)
 
     # Limit page depth for the validation run
     scraper.config.max_pages_per_category = max_pages
-    # Speed up delays for an interactive validation run while staying polite
+    # Tighter delays — still polite but faster for an interactive validation
     scraper.config.min_delay_s = 1.5
     scraper.config.max_delay_s = 3.5
 
@@ -188,7 +249,6 @@ async def _bounded_crawl(
         return [], errors
 
     logger.info("Found %d categories", len(categories))
-
     target = next(
         (c for c in categories if category_name.lower() in c.name.lower()),
         None,
@@ -212,7 +272,6 @@ async def _bounded_crawl(
 
     raw_products = raw.get("products", [])
     logger.info("Received %d raw product dicts from '%s'", len(raw_products), target.name)
-
     try:
         products = await scraper.parse_products(raw_products, target)
     except Exception as exc:
@@ -227,116 +286,110 @@ async def _bounded_crawl(
 
 
 def _run_ingest(products: list[CatalogProduct], chain: str, session: Session) -> dict:
-    """Ingest in one batch and return count summary."""
     counts = ingest_catalog_products(products, chain, session)
     session.commit()
     return {"created": counts.created, "updated": counts.updated}
-
-
-def _run_repeat_ingest(products: list[CatalogProduct], chain: str, session: Session) -> dict:
-    """Re-ingest the same products. Must produce created=0."""
-    counts = ingest_catalog_products(products, chain, session)
-    session.commit()
-    return {"created": counts.created, "updated": counts.updated}
-
-
-# ── Audit + planner ───────────────────────────────────────────────────────────
-
-
-def _run_audit_and_plan(session: Session, chains: set[str], result: ValidationResult) -> None:
-    """Run the read-only audit and remediation planner, restrict to our chains."""
-    # Import from scripts/ — they are not installed packages
-    import importlib.util
-
-    def _load(script_name: str):
-        path = _BACKEND / "scripts" / script_name
-        spec = importlib.util.spec_from_file_location(script_name.rstrip(".py"), path)
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        return mod
-
-    try:
-        audit_mod = _load("audit_package_sizes.py")
-        logger.info("Running package-size audit (chains=%s)…", chains)
-        result.audit_findings = audit_mod.run_audit(session, chains=chains)
-        total_findings = sum(len(v) for v in result.audit_findings.values())
-        logger.info(
-            "Audit complete — %d findings across %d categories",
-            total_findings,
-            len(result.audit_findings),
-        )
-    except Exception as exc:
-        logger.warning("Audit failed: %s", exc)
-        result.errors.append(f"Audit error: {exc}")
-
-    try:
-        planner_mod = _load("remediation_planner.py")
-        logger.info("Running remediation planner (chains=%s)…", chains)
-        result.plan_findings = planner_mod.run_plan(session, chains=chains)
-        logger.info("Planner complete — %d plan rows", len(result.plan_findings))
-    except Exception as exc:
-        logger.warning("Planner failed: %s", exc)
-        result.errors.append(f"Planner error: {exc}")
 
 
 # ── Acceptance criteria evaluation ────────────────────────────────────────────
 
 
-def _evaluate_criteria(result: ValidationResult, chain: str) -> None:
-    """Populate result.criteria_results based on collected data."""
+def _evaluate_criteria(result: ValidationResult) -> None:
+    """Populate result.criteria_results.
+
+    All checks operate exclusively on data from THIS crawl.  Nothing passes
+    by accident from historical database state.
+    """
     products = result.scraped_products
-    external_ids = [p.external_id for p in products if p.external_id]
 
-    # AC1 — count-only packs enriched where evidence supports it
-    enriched = [
-        p
+    # ── AC1 ───────────────────────────────────────────────────────────────────
+    # At least one product scraped in this run was successfully enriched from a
+    # count-only API value to a multipack norm (e.g. "6PK" + "355mL in name" →
+    # norm "6x355mL").  This proves combine_count_with_volume fired on real data.
+    enriched_in_this_crawl = sum(
+        1
         for p in products
-        if p.package_size
-        and normalize_package_size(p.package_size) is not None
-        and "x" in (normalize_package_size(p.package_size) or "")
-    ]
-    count_only_raw = [
-        p
-        for p in products
-        if p.package_size
-        and p.package_size.lower().endswith("pack")
-        and not p.package_size[0].isdigit()
-        or (p.package_size and p.package_size.lower().endswith("pack"))
-    ]
-    # Simplified: AC1 passes when at least one product has a multipack norm
-    # (proves the enrichment path fired at least once on real data)
-    result.criteria_results["ac1_multipack_norms_present"] = (
-        result.post_ingest.multipack_norm > result.baseline.multipack_norm
-        or result.post_ingest.multipack_norm > 0
+        if p.package_size and "x" in (normalize_package_size(p.package_size) or "")
     )
+    result.criteria_results["ac1_enrichment_fired_on_scraped_data"] = enriched_in_this_crawl > 0
 
-    # AC2 — conservative handling: no unexpected norms on known-ambiguous products
-    # Proxy: audit's "single_multipack_collision" category must be empty for new products
+    # ── AC2 ───────────────────────────────────────────────────────────────────
+    # No canonical product created/used by this crawl appears in the audit's
+    # single_multipack_collision list.  An empty new_product_ids set (e.g.
+    # dry-run or all products already existed) is handled as "no evidence of
+    # collision" — the check only has teeth when new_product_ids is populated.
     collisions = result.audit_findings.get("single_multipack_collision", [])
-    new_product_ids: set[str] = set()
-    result.criteria_results["ac2_no_unexpected_merges"] = len(collisions) == 0 or all(
-        c.get("product_id") not in new_product_ids for c in collisions
+    collision_ids = {str(c.get("product_id")) for c in collisions}
+    result.criteria_results["ac2_no_unexpected_merges"] = not bool(
+        result.new_product_ids & collision_ids
     )
 
-    # AC3 — single units and multipacks remain separate
-    # Checked via idempotency: if repeat ingest creates new products, something moved
-    result.criteria_results["ac3_separate_products"] = (
-        result.ingest_counts_repeat.get("created", 0) == 0
-    )
+    # ── AC3 ───────────────────────────────────────────────────────────────────
+    # Among the listings created by this crawl, no two products with different
+    # package_size_norms (one known, one null) were merged into the same
+    # canonical product.  A match would mean the symmetric soft veto failed.
+    products_by_canonical: dict[str, list[CatalogProduct]] = {}
+    for p in products:
+        if not p.external_id:
+            continue
+        canonical_id = result.listing_map_first.get(p.external_id)
+        if canonical_id is None:
+            continue
+        products_by_canonical.setdefault(canonical_id, []).append(p)
 
-    # AC4 — repeat ingest produces no duplicates or listing reassignments
-    result.criteria_results["ac4_idempotent_repeat_ingest"] = (
-        result.ingest_counts_repeat.get("created", 0) == 0
-    )
+    ac3_pass = True
+    for canonical_id, group in products_by_canonical.items():
+        norms = {normalize_package_size(p.package_size) for p in group}
+        known_norms = {n for n in norms if n is not None}
+        if None in norms and known_norms:
+            ac3_pass = False
+            logger.warning(
+                "AC3 FAIL: canonical product %s holds both null-norm and known-norm "
+                "listings from this crawl — soft veto may have failed. Known norms: %s",
+                canonical_id,
+                known_norms,
+            )
+            break
+    result.criteria_results["ac3_separate_products"] = ac3_pass
 
-    # AC5 — audit reports no new defects from our logic
-    # "new defect" proxy: conflicting_evidence and confirmed_norm_mismatch rows
-    confirmed_mismatches = [
-        r
-        for r in result.plan_findings
-        if r.get("subtype") == "confirmed_norm_mismatch" and r.get("chain") == chain
-    ]
-    result.criteria_results["ac5_no_new_audit_defects"] = len(confirmed_mismatches) == 0
+    # ── AC4 ───────────────────────────────────────────────────────────────────
+    # After repeat ingest, every listing still points to the same canonical
+    # product it was assigned on the first run.  A mismatch means a listing was
+    # reassigned — a true regression.
+    if result.listing_map_first and result.listing_map_repeat:
+        moved = {
+            eid: (result.listing_map_first[eid], result.listing_map_repeat.get(eid))
+            for eid in result.listing_map_first
+            if result.listing_map_first[eid] != result.listing_map_repeat.get(eid)
+        }
+        if moved:
+            logger.warning("AC4 FAIL: listings reassigned after repeat ingest: %s", moved)
+        result.criteria_results["ac4_idempotent_repeat_ingest"] = not bool(moved)
+    else:
+        # No listing data available (e.g. dry-run or ingestion errors)
+        result.criteria_results["ac4_idempotent_repeat_ingest"] = None
+
+    # ── AC5 ───────────────────────────────────────────────────────────────────
+    # The count of confirmed_norm_mismatch rows did not increase after ingest.
+    # If the planner failed to run (count == -1), the criterion is treated as
+    # failed rather than silently ignored.
+    if result.baseline_plan_confirmed_count == -1 or result.post_plan_confirmed_count == -1:
+        # Planner did not run — cannot certify; treat as failure
+        result.criteria_results["ac5_no_new_audit_defects"] = False
+        logger.warning(
+            "AC5 FAIL: planner did not run (baseline=%d post=%d); " "cannot certify no new defects",
+            result.baseline_plan_confirmed_count,
+            result.post_plan_confirmed_count,
+        )
+    else:
+        grew = result.post_plan_confirmed_count > result.baseline_plan_confirmed_count
+        if grew:
+            logger.warning(
+                "AC5 FAIL: confirmed_norm_mismatch count grew from %d to %d",
+                result.baseline_plan_confirmed_count,
+                result.post_plan_confirmed_count,
+            )
+        result.criteria_results["ac5_no_new_audit_defects"] = not grew
 
 
 # ── Report generation ─────────────────────────────────────────────────────────
@@ -350,71 +403,72 @@ def _write_report(
     max_pages: int,
     dry_run: bool,
 ) -> Path:
-    """Write a Markdown validation report and return its path."""
     out_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     report_path = out_dir / f"validation_{ts}_{chain}.md"
 
-    all_passed = all(result.criteria_results.values())
+    # A result is only a full PASS when all non-None criteria passed AND no errors.
+    definite_values = [v for v in result.criteria_results.values() if v is not None]
+    all_passed = bool(definite_values) and all(definite_values) and not result.errors
     status = "PASSED" if all_passed else "FAILED"
 
     lines = [
-        f"# Story #109 — Fresh Crawl Validation Report",
-        f"",
+        "# Story #109 — Fresh Crawl Validation Report",
+        "",
         f"**Chain:** {chain}  ",
         f"**Category:** {category_name}  ",
         f"**Max pages:** {max_pages} ({max_pages * 36} products max)  ",
         f"**Mode:** {'DRY RUN (no DB writes)' if dry_run else 'Live ingest'}  ",
         f"**Run at:** {datetime.now(timezone.utc).isoformat()}  ",
         f"**Overall result: {status}**",
-        f"",
-        f"---",
-        f"",
-        f"## Scraped products",
-        f"",
-        f"| Metric | Value |",
-        f"|---|---|",
+        "",
+        "---",
+        "",
+        "## Scraped products",
+        "",
+        "| Metric | Value |",
+        "|---|---|",
         f"| Products scraped | {len(result.scraped_products)} |",
         f"| With a package size | {sum(1 for p in result.scraped_products if p.package_size)} |",
         f"| Enriched (norm is multipack) | {sum(1 for p in result.scraped_products if p.package_size and 'x' in (normalize_package_size(p.package_size) or ''))} |",
         f"| Count-only fallback (norm=None) | {sum(1 for p in result.scraped_products if p.package_size and normalize_package_size(p.package_size) is None)} |",
         f"| No package size | {sum(1 for p in result.scraped_products if not p.package_size)} |",
-        f"",
+        "",
     ]
 
     if not dry_run:
         lines += [
-            f"## Database metrics",
-            f"",
-            f"| Metric | Baseline | Post-ingest | Delta |",
-            f"|---|---|---|---|",
+            "## Database metrics",
+            "",
+            "| Metric | Baseline | Post-ingest | Delta |",
+            "|---|---|---|---|",
             f"| Total {chain} products | {result.baseline.total} | {result.post_ingest.total} | +{result.post_ingest.total - result.baseline.total} |",
             f"| With norm | {result.baseline.with_norm} | {result.post_ingest.with_norm} | +{result.post_ingest.with_norm - result.baseline.with_norm} |",
             f"| Null norm | {result.baseline.null_norm} | {result.post_ingest.null_norm} | +{result.post_ingest.null_norm - result.baseline.null_norm} |",
             f"| Multipack norm (NxVol) | {result.baseline.multipack_norm} | {result.post_ingest.multipack_norm} | +{result.post_ingest.multipack_norm - result.baseline.multipack_norm} |",
-            f"",
-            f"## Ingest summary",
-            f"",
-            f"| Run | Created | Updated |",
-            f"|---|---|---|",
+            "",
+            "## Ingest summary",
+            "",
+            "| Run | Created | Updated |",
+            "|---|---|---|",
             f"| First ingest | {result.ingest_counts_first.get('created', '—')} | {result.ingest_counts_first.get('updated', '—')} |",
             f"| Repeat ingest | {result.ingest_counts_repeat.get('created', '—')} | {result.ingest_counts_repeat.get('updated', '—')} |",
-            f"",
+            f"| Confirmed-mismatch rows (baseline → post) | {result.baseline_plan_confirmed_count} → {result.post_plan_confirmed_count} | |",
+            "",
         ]
 
-    # Acceptance criteria table
     criteria_labels = {
-        "ac1_multipack_norms_present": "AC1 — Count-only packs enriched where evidence supports it",
-        "ac2_no_unexpected_merges": "AC2 — Ambiguous sizes handled conservatively (no unexpected merges)",
-        "ac3_separate_products": "AC3 — Single units and multipacks remain separate canonical products",
-        "ac4_idempotent_repeat_ingest": "AC4 — Repeat ingest creates no duplicates or listing reassignments",
-        "ac5_no_new_audit_defects": "AC5 — Audit reports no new defects from updated logic",
+        "ac1_enrichment_fired_on_scraped_data": "AC1 — Count-only pack enriched from real scraped products",
+        "ac2_no_unexpected_merges": "AC2 — No new canonical product appears in single/multipack collision list",
+        "ac3_separate_products": "AC3 — No two scraped products with different norms share a canonical product",
+        "ac4_idempotent_repeat_ingest": "AC4 — Listing associations unchanged after repeat ingest",
+        "ac5_no_new_audit_defects": "AC5 — Confirmed-norm-mismatch count did not increase",
     }
     lines += [
-        f"## Acceptance criteria",
-        f"",
-        f"| # | Criterion | Result |",
-        f"|---|---|---|",
+        "## Acceptance criteria",
+        "",
+        "| Key | Criterion | Result |",
+        "|---|---|---|",
     ]
     for key, label in criteria_labels.items():
         passed = result.criteria_results.get(key)
@@ -424,42 +478,36 @@ def _write_report(
             icon = "✅ Pass"
         else:
             icon = "❌ Fail"
-        lines.append(f"| {key[:3].upper()} | {label} | {icon} |")
+        lines.append(f"| {key} | {label} | {icon} |")
 
-    # Audit findings summary
     if result.audit_findings:
         lines += [
-            f"",
-            f"## Audit findings",
-            f"",
-            f"| Category | Findings |",
-            f"|---|---|",
+            "",
+            "## Audit findings",
+            "",
+            "| Category | Findings |",
+            "|---|---|",
         ]
         for cat, findings in result.audit_findings.items():
             lines.append(f"| {cat} | {len(findings)} |")
 
-    # Remediation plan summary
     if result.plan_findings:
         subtypes: dict[str, int] = {}
         for row in result.plan_findings:
             st = row.get("subtype", "unknown")
             subtypes[st] = subtypes.get(st, 0) + 1
         lines += [
-            f"",
-            f"## Remediation plan",
-            f"",
-            f"| Subtype | Count |",
-            f"|---|---|",
+            "",
+            "## Remediation plan",
+            "",
+            "| Subtype | Count |",
+            "|---|---|",
         ]
         for st, n in sorted(subtypes.items()):
             lines.append(f"| {st} | {n} |")
 
     if result.errors:
-        lines += [
-            f"",
-            f"## Errors",
-            f"",
-        ]
+        lines += ["", "## Errors", ""]
         for e in result.errors:
             lines.append(f"- {e}")
 
@@ -468,11 +516,10 @@ def _write_report(
     return report_path
 
 
-# ── Sample product display (dry-run) ─────────────────────────────────────────
+# ── Sample product display (dry-run / informational) ─────────────────────────
 
 
 def _print_sample(products: list[CatalogProduct], n: int = 20) -> None:
-    """Print a sample of scraped products with their parsed norms."""
     print(f"\n{'─'*80}")
     print(f"Sample products (first {min(n, len(products))} of {len(products)}):")
     print(f"{'─'*80}")
@@ -529,16 +576,32 @@ def main() -> int:
     if not db_url:
         logger.error("DATABASE_URL is not set. Aborting.")
         return 1
-    if "prod" in db_url.lower() or ("dealfindio" in db_url.lower() and "dev" not in db_url.lower()):
-        logger.error(
-            "DATABASE_URL appears to point to production. This script must only run "
-            "against a development or isolated database. Aborting."
-        )
-        return 1
 
     result = ValidationResult()
 
-    # ── Step 1: Crawl ─────────────────────────────────────────────────────────
+    # ── DB safety check ───────────────────────────────────────────────────────
+    # Open a throwaway session just to query the database name before doing
+    # anything else.  URL-text heuristics are not reliable (connection strings
+    # can be aliases); querying the server directly is authoritative.
+    _safety_session: Session = _SessionLocal()
+    try:
+        db_name = _check_db_name(_safety_session) or ""
+    finally:
+        _safety_session.close()
+
+    if not any(frag in db_name.lower() for frag in _SAFE_DB_FRAGMENTS):
+        logger.error(
+            "Database name '%s' does not contain a recognised safe fragment %s. "
+            "This script must only run against a development or isolated database. "
+            "If this is intentional, rename the database to include one of those "
+            "fragments.",
+            db_name,
+            _SAFE_DB_FRAGMENTS,
+        )
+        return 1
+    logger.info("Database safety check passed (name='%s').", db_name)
+
+    # ── Crawl ─────────────────────────────────────────────────────────────────
     logger.info(
         "Starting bounded %s crawl — category='%s', max_pages=%d",
         chain,
@@ -551,7 +614,6 @@ def main() -> int:
 
     if not products:
         logger.error("No products scraped. Errors: %s", crawl_errors)
-        # Still write a report so the failure is documented
         _print_sample([], 0)
         report_path = _write_report(
             result, out_dir, chain, args.category_name, args.max_pages, args.dry_run
@@ -561,16 +623,18 @@ def main() -> int:
 
     _print_sample(products)
 
+    external_ids = [p.external_id for p in products if p.external_id]
+
     if args.dry_run:
-        logger.info(
-            "Dry run: %d products parsed. Skipping DB writes.",
-            len(products),
+        logger.info("Dry run: %d products parsed. Skipping DB writes.", len(products))
+        # Only AC1 can be evaluated without a DB
+        enriched = sum(
+            1
+            for p in products
+            if p.package_size and "x" in (normalize_package_size(p.package_size) or "")
         )
-        # Evaluate criteria that don't require DB writes
         result.criteria_results = {
-            "ac1_multipack_norms_present": any(
-                "x" in (normalize_package_size(p.package_size) or "") for p in products
-            ),
+            "ac1_enrichment_fired_on_scraped_data": enriched > 0,
             "ac2_no_unexpected_merges": None,
             "ac3_separate_products": None,
             "ac4_idempotent_repeat_ingest": None,
@@ -582,10 +646,10 @@ def main() -> int:
         logger.info("Dry-run report: %s", report_path)
         return 0
 
-    # ── Steps 2–6: DB operations ──────────────────────────────────────────────
+    # ── Live DB operations ────────────────────────────────────────────────────
     session: Session = _SessionLocal()
     try:
-        # Step 2: Baseline
+        # Baseline metrics
         logger.info("Capturing baseline DB metrics…")
         result.baseline = _norm_distribution(session, chain)
         logger.info(
@@ -596,7 +660,22 @@ def main() -> int:
             result.baseline.multipack_norm,
         )
 
-        # Step 3: First ingest
+        # Baseline planner count for AC5 before/after comparison
+        logger.info("Capturing baseline confirmed-norm-mismatch count (for AC5)…")
+        try:
+            result.baseline_plan_confirmed_count = _count_confirmed_mismatches(
+                session, audit_chains
+            )
+            logger.info(
+                "Baseline confirmed_norm_mismatch count: %d",
+                result.baseline_plan_confirmed_count,
+            )
+        except Exception as exc:
+            logger.warning("Baseline planner failed: %s", exc)
+            result.errors.append(f"Baseline planner error: {exc}")
+            # Leave at -1 — AC5 will fail
+
+        # First ingest
         logger.info("Ingesting %d products (first run)…", len(products))
         result.ingest_counts_first = _run_ingest(products, chain, session)
         logger.info(
@@ -605,7 +684,11 @@ def main() -> int:
             result.ingest_counts_first["updated"],
         )
 
-        # Step 4: Post-ingest metrics
+        # Capture listing map and new product IDs after first ingest (for AC2, AC3, AC4)
+        result.listing_map_first = _get_listing_map(session, external_ids, chain)
+        result.new_product_ids = set(result.listing_map_first.values())
+
+        # Post-ingest distribution
         result.post_ingest = _norm_distribution(session, chain)
         logger.info(
             "Post-ingest: total=%d with_norm=%d null_norm=%d multipack=%d",
@@ -615,30 +698,69 @@ def main() -> int:
             result.post_ingest.multipack_norm,
         )
 
-        # Step 5: Repeat ingest (idempotency)
-        logger.info("Re-ingesting same %d products (idempotency check)…", len(products))
-        result.ingest_counts_repeat = _run_repeat_ingest(products, chain, session)
+        # Repeat ingest (idempotency)
+        logger.info("Re-ingesting %d products (idempotency check)…", len(products))
+        result.ingest_counts_repeat = _run_ingest(products, chain, session)
         logger.info(
             "Repeat ingest: created=%d updated=%d",
             result.ingest_counts_repeat["created"],
             result.ingest_counts_repeat["updated"],
         )
-        if result.ingest_counts_repeat["created"] > 0:
+        if result.ingest_counts_repeat.get("created", 0) > 0:
             logger.warning(
-                "IDEMPOTENCY FAILURE: repeat ingest created %d new products",
+                "IDEMPOTENCY ISSUE: repeat ingest created %d new products",
                 result.ingest_counts_repeat["created"],
             )
 
-        # Step 6: Audit + planner
-        _run_audit_and_plan(session, audit_chains, result)
+        # Capture listing map after repeat ingest (for AC4 comparison)
+        result.listing_map_repeat = _get_listing_map(session, external_ids, chain)
+
+        # Audit
+        logger.info("Running package-size audit (chains=%s)…", audit_chains)
+        try:
+            audit_mod = _load_script("audit_package_sizes.py")
+            result.audit_findings = audit_mod.run_audit(session, chains=audit_chains)
+            total_findings = sum(len(v) for v in result.audit_findings.values())
+            logger.info(
+                "Audit: %d findings across %d categories",
+                total_findings,
+                len(result.audit_findings),
+            )
+        except Exception as exc:
+            logger.warning("Audit failed: %s", exc)
+            result.errors.append(f"Audit error: {exc}")
+
+        # Post-ingest planner count for AC5
+        logger.info("Running post-ingest planner (chains=%s)…", audit_chains)
+        try:
+            result.post_plan_confirmed_count = _count_confirmed_mismatches(session, audit_chains)
+            # Also store full plan for the report
+            planner_mod = _load_script("remediation_planner.py")
+            result.plan_findings = planner_mod.run_plan(session, chains=audit_chains)
+            logger.info(
+                "Post-ingest confirmed_norm_mismatch count: %d",
+                result.post_plan_confirmed_count,
+            )
+        except Exception as exc:
+            logger.warning("Post-ingest planner failed: %s", exc)
+            result.errors.append(f"Post-ingest planner error: {exc}")
+            # Leave post_plan_confirmed_count at -1 — AC5 will fail
 
     finally:
         session.close()
 
-    # ── Step 7: Evaluate criteria and write report ────────────────────────────
-    _evaluate_criteria(result, chain)
+    # ── Criteria evaluation ───────────────────────────────────────────────────
+    _evaluate_criteria(result)
 
-    all_passed = all(v for v in result.criteria_results.values() if v is not None)
+    # Errors in audit/planner are surfaced as a hard failure
+    if result.errors:
+        logger.error("Errors occurred during validation: %s", result.errors)
+        # Criteria that depend on the failed components are already marked False
+        # (AC5 uses -1 sentinel); flag the whole run as failed regardless.
+        all_passed = False
+    else:
+        definite = [v for v in result.criteria_results.values() if v is not None]
+        all_passed = bool(definite) and all(definite)
 
     report_path = _write_report(
         result, out_dir, chain, args.category_name, args.max_pages, args.dry_run
