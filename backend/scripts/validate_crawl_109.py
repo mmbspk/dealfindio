@@ -141,10 +141,16 @@ class ValidationResult:
     # multipack norm by combine_count_with_volume.
     count_only_external_ids: set[str] = field(default_factory=set)
 
-    # Persisted package_size_norm values for the canonical products that received
-    # count-only listings from this crawl.  Populated after first ingest by querying
-    # the Product table directly so AC1 verifies the DB record, not just the parsed
-    # CatalogProduct.  Format: {str(canonical_product_id): package_size_norm}.
+    # Expected normalized size per count-only external ID.
+    # Populated in main() from CatalogProduct.package_size via normalize_package_size().
+    # Format: {external_id: normalize_package_size(cp.package_size)} — None when the
+    # scraper could not enrich (no mL/L volume in the product name).
+    count_only_expected_norms: dict[str, str | None] = field(default_factory=dict)
+
+    # Persisted package_size_norm per count-only external ID.
+    # Populated after first ingest by querying Product.package_size_norm via the listing
+    # map.  Keyed by external_id (not canonical product id) so AC1 can compare expected
+    # vs persisted per-SKU without aggregating by canonical.
     count_only_persisted_norms: dict[str, str | None] = field(default_factory=dict)
 
     # Confirmed-norm-mismatch counts before and after ingest.
@@ -215,21 +221,33 @@ def _get_count_only_persisted_norms(
     count_only_external_ids: set[str],
     listing_map: dict[str, str],
 ) -> dict[str, str | None]:
-    """Return {str(canonical_product_id): package_size_norm} from the Product table.
+    """Return {external_id: package_size_norm} from the Product table.
 
-    Only canonical products that received at least one listing from a count-only
-    raw API item are included.  Querying the DB directly (not the parsed
-    CatalogProduct) is what proves the ingest layer stored the correct value.
+    Keyed by external_id (not canonical product id) so AC1 can compare the
+    expected norm per-SKU against the persisted value without aggregating by
+    canonical.  Querying the DB directly (not the parsed CatalogProduct) is
+    what proves the ingest layer stored the correct value.
     """
-    canonical_ids = {
-        listing_map[ext_id] for ext_id in count_only_external_ids if ext_id in listing_map
-    }
-    if not canonical_ids:
+    canonical_to_ext: dict[str, list[str]] = {}
+    for ext_id in count_only_external_ids:
+        if ext_id in listing_map:
+            canonical_id = listing_map[ext_id]
+            canonical_to_ext.setdefault(canonical_id, []).append(ext_id)
+
+    if not canonical_to_ext:
         return {}
+
     rows = session.execute(
-        select(Product.id, Product.package_size_norm).where(Product.id.in_(canonical_ids))
+        select(Product.id, Product.package_size_norm).where(Product.id.in_(canonical_to_ext.keys()))
     ).fetchall()
-    return {str(row[0]): row[1] for row in rows}
+    canonical_norm: dict[str, str | None] = {str(row[0]): row[1] for row in rows}
+
+    result: dict[str, str | None] = {}
+    for canonical_id, ext_ids in canonical_to_ext.items():
+        norm = canonical_norm.get(canonical_id)
+        for ext_id in ext_ids:
+            result[ext_id] = norm
+    return result
 
 
 # ── Planner helper ────────────────────────────────────────────────────────────
@@ -361,29 +379,59 @@ def _evaluate_criteria(result: ValidationResult) -> None:
 
     # ── AC1 ───────────────────────────────────────────────────────────────────
     # At least one product that originally had a count-only API size (e.g. "6PK")
-    # was successfully enriched to a multipack norm by combine_count_with_volume,
-    # AND that enriched norm was persisted to package_size_norm in the database.
-    # Checking only the parsed CatalogProduct is insufficient: the ingest layer
-    # could silently fail to store the correct norm.  count_only_persisted_norms
-    # is populated after first ingest by querying Product.package_size_norm directly.
+    # was enriched by the scraper to a multipack norm AND that exact norm was
+    # persisted to package_size_norm in the database.  A persisted value that
+    # merely contains "x" is insufficient — it must match the expected norm for
+    # that specific SKU exactly, to rule out stale data from a prior ingest
+    # (e.g. an existing "4x375mL" would otherwise make AC1 pass falsely).
+    enriched_ext_ids = {
+        ext_id
+        for ext_id, expected in result.count_only_expected_norms.items()
+        if expected is not None and "x" in expected
+    }
     if not result.count_only_external_ids:
         result.criteria_results["ac1_enrichment_fired_on_scraped_data"] = False
         logger.warning(
             "AC1 FAIL: no count-only API products found in scraped set "
             "(count_only_external_ids is empty — category may not have pack products)"
         )
+    elif not enriched_ext_ids:
+        result.criteria_results["ac1_enrichment_fired_on_scraped_data"] = False
+        logger.warning(
+            "AC1 FAIL: scraper produced no multipack norms for count-only products "
+            "(combine_count_with_volume may not have fired or no volume was in product names)"
+        )
     elif not result.count_only_persisted_norms:
-        # Persisted norms not yet queried (dry-run or error before ingest completed).
         result.criteria_results["ac1_enrichment_fired_on_scraped_data"] = False
         logger.warning(
             "AC1 FAIL: count_only_persisted_norms not populated — "
             "cannot verify persisted package_size_norm values"
         )
     else:
-        enriched_persisted = sum(
-            1 for norm in result.count_only_persisted_norms.values() if "x" in (norm or "")
-        )
-        result.criteria_results["ac1_enrichment_fired_on_scraped_data"] = enriched_persisted > 0
+        mismatched: list[tuple[str, str | None, str | None]] = []
+        verified = 0
+        for ext_id in enriched_ext_ids:
+            expected = result.count_only_expected_norms[ext_id]
+            persisted = result.count_only_persisted_norms.get(ext_id)
+            if persisted == expected:
+                verified += 1
+            else:
+                mismatched.append((ext_id, expected, persisted))
+        if mismatched:
+            result.criteria_results["ac1_enrichment_fired_on_scraped_data"] = False
+            for ext_id, expected, persisted in mismatched:
+                logger.warning(
+                    "AC1 FAIL: external_id %s expected norm '%s' but DB has '%s'",
+                    ext_id,
+                    expected,
+                    persisted,
+                )
+        else:
+            result.criteria_results["ac1_enrichment_fired_on_scraped_data"] = True
+            logger.info(
+                "AC1 PASS: %d count-only product(s) verified with exact persisted norms",
+                verified,
+            )
 
     # ── AC2 ───────────────────────────────────────────────────────────────────
     # No canonical product created/used by this crawl appears in the audit's
@@ -764,6 +812,12 @@ def main() -> int:
     _print_sample(products)
 
     external_ids = [p.external_id for p in products if p.external_id]
+    _ext_id_to_cp = {cp.external_id: cp for cp in products if cp.external_id}
+    result.count_only_expected_norms = {
+        ext_id: normalize_package_size(_ext_id_to_cp[ext_id].package_size)
+        for ext_id in result.count_only_external_ids
+        if ext_id in _ext_id_to_cp
+    }
 
     if args.dry_run:
         logger.info("Dry run: %d products parsed. Skipping DB writes.", len(products))
@@ -834,11 +888,15 @@ def main() -> int:
             session, result.count_only_external_ids, result.listing_map_first
         )
         logger.info(
-            "Count-only products: %d identified, %d mapped to canonicals, "
-            "%d with enriched persisted norm",
+            "Count-only products: %d identified, %d with expected multipack norm, "
+            "%d with exact persisted match",
             len(result.count_only_external_ids),
-            len(result.count_only_persisted_norms),
-            sum(1 for n in result.count_only_persisted_norms.values() if "x" in (n or "")),
+            sum(1 for n in result.count_only_expected_norms.values() if n and "x" in n),
+            sum(
+                1
+                for ext_id, exp in result.count_only_expected_norms.items()
+                if exp and "x" in exp and result.count_only_persisted_norms.get(ext_id) == exp
+            ),
         )
 
         # Post-ingest distribution

@@ -49,38 +49,47 @@ def _cp(ext_id: str, package_size: str | None) -> CatalogProduct:
 
 
 class TestAC1EnrichmentFiredOnScrapedData:
-    """AC1: a count-only product was enriched AND the enriched norm was persisted in DB.
+    """AC1: a count-only product was enriched AND the exact expected norm was persisted in DB.
 
-    Checking only the parsed CatalogProduct is insufficient — count_only_persisted_norms
-    must be populated from Product.package_size_norm after first ingest.
+    Merely checking that the persisted value contains "x" is insufficient — an existing
+    "4x375mL" on the canonical would make AC1 pass even if the scraper just enriched
+    a "6PK" product to "6x355mL".  The persisted norm must exactly match the expected
+    norm for that specific external_id.
     """
 
     @pytest.mark.unit
     def test_passes_when_count_only_product_has_enriched_persisted_norm(self):
-        """E1 started as '6PK'; its canonical product has norm '6x355mL' in the DB."""
+        """E1 started as '6PK'; scraper enriched to '6x355mL'; DB confirms exact match."""
         result = ValidationResult(
             count_only_external_ids={"E1"},
-            count_only_persisted_norms={"canonical-A": "6x355mL"},  # DB value
+            count_only_expected_norms={"E1": "6x355mL"},
+            count_only_persisted_norms={"E1": "6x355mL"},
         )
         _evaluate_criteria(result)
         assert result.criteria_results["ac1_enrichment_fired_on_scraped_data"] is True
 
     @pytest.mark.unit
     def test_fails_when_count_only_product_has_null_persisted_norm(self):
-        """E1 started as '6PK'; the DB record has package_size_norm=None — not enriched."""
+        """Scraper enriched to '6x355mL' but the DB record has package_size_norm=None."""
         result = ValidationResult(
             count_only_external_ids={"E1"},
-            count_only_persisted_norms={"canonical-A": None},
+            count_only_expected_norms={"E1": "6x355mL"},
+            count_only_persisted_norms={"E1": None},
         )
         _evaluate_criteria(result)
         assert result.criteria_results["ac1_enrichment_fired_on_scraped_data"] is False
 
     @pytest.mark.unit
-    def test_fails_when_count_only_product_has_non_multipack_persisted_norm(self):
-        """Count-only product's canonical has norm '375mL' (no 'x') — not enriched."""
+    def test_fails_when_persisted_norm_differs_from_expected_norm(self):
+        """Scraper enriched E1 to '6x355mL' but the DB has a stale '4x375mL'.
+
+        This is the case from the PR review: a persisted value containing 'x'
+        must not be enough — it must exactly match the expected norm for that SKU.
+        """
         result = ValidationResult(
             count_only_external_ids={"E1"},
-            count_only_persisted_norms={"canonical-A": "375mL"},
+            count_only_expected_norms={"E1": "6x355mL"},
+            count_only_persisted_norms={"E1": "4x375mL"},
         )
         _evaluate_criteria(result)
         assert result.criteria_results["ac1_enrichment_fired_on_scraped_data"] is False
@@ -90,7 +99,8 @@ class TestAC1EnrichmentFiredOnScrapedData:
         """count_only_persisted_norms not populated (e.g. ingest failed before query)."""
         result = ValidationResult(
             count_only_external_ids={"E1"},
-            count_only_persisted_norms={},  # not yet queried
+            count_only_expected_norms={"E1": "6x355mL"},
+            count_only_persisted_norms={},
         )
         _evaluate_criteria(result)
         assert result.criteria_results["ac1_enrichment_fired_on_scraped_data"] is False
@@ -100,6 +110,7 @@ class TestAC1EnrichmentFiredOnScrapedData:
         """No count-only products scraped — enrichment cannot be proved."""
         result = ValidationResult(
             count_only_external_ids=set(),
+            count_only_expected_norms={},
             count_only_persisted_norms={},
         )
         _evaluate_criteria(result)
@@ -110,6 +121,7 @@ class TestAC1EnrichmentFiredOnScrapedData:
         result = ValidationResult(
             scraped_products=[],
             count_only_external_ids=set(),
+            count_only_expected_norms={},
             count_only_persisted_norms={},
         )
         _evaluate_criteria(result)
@@ -373,7 +385,8 @@ def _all_true_result() -> ValidationResult:
     m = {"E1": "canonical-A"}
     return ValidationResult(
         count_only_external_ids={"E1"},
-        count_only_persisted_norms={"canonical-A": "6x355mL"},
+        count_only_expected_norms={"E1": "6x355mL"},
+        count_only_persisted_norms={"E1": "6x355mL"},  # exact match, keyed by external_id
         new_product_ids={"canonical-A"},
         listing_map_first=dict(m),
         listing_map_repeat=dict(m),
