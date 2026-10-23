@@ -29,6 +29,7 @@ _spec.loader.exec_module(_mod)
 
 ValidationResult = _mod.ValidationResult
 _evaluate_criteria = _mod._evaluate_criteria
+_all_criteria_passed = _mod._all_criteria_passed
 
 
 def _cp(ext_id: str, package_size: str | None) -> CatalogProduct:
@@ -48,65 +49,69 @@ def _cp(ext_id: str, package_size: str | None) -> CatalogProduct:
 
 
 class TestAC1EnrichmentFiredOnScrapedData:
-    """AC1: at least one product that ORIGINALLY HAD A COUNT-ONLY API SIZE was enriched.
+    """AC1: a count-only product was enriched AND the enriched norm was persisted in DB.
 
-    Products whose API already supplied a complete size string (e.g. "355mL 6 Pack")
-    do NOT count — only products identified via count_only_external_ids qualify.
+    Checking only the parsed CatalogProduct is insufficient — count_only_persisted_norms
+    must be populated from Product.package_size_norm after first ingest.
     """
 
     @pytest.mark.unit
-    def test_passes_when_count_only_product_was_enriched(self):
-        """E1 started as '6PK' in the API (count-only) and was enriched to '355mL 6 Pack'."""
+    def test_passes_when_count_only_product_has_enriched_persisted_norm(self):
+        """E1 started as '6PK'; its canonical product has norm '6x355mL' in the DB."""
         result = ValidationResult(
-            scraped_products=[
-                _cp("E1", "355mL 6 Pack"),  # was "6PK"; enriched → norm "6x355mL"
-                _cp("E2", "375mL"),  # plain size; norm "375mL" (no 'x')
-            ],
-            count_only_external_ids={"E1"},  # E1 originally had count-only API size
+            count_only_external_ids={"E1"},
+            count_only_persisted_norms={"canonical-A": "6x355mL"},  # DB value
         )
         _evaluate_criteria(result)
         assert result.criteria_results["ac1_enrichment_fired_on_scraped_data"] is True
 
     @pytest.mark.unit
-    def test_fails_when_count_only_product_was_not_enriched(self):
-        """E1 started as '6PK' but volume couldn't be extracted — fell back to '6 Pack'."""
+    def test_fails_when_count_only_product_has_null_persisted_norm(self):
+        """E1 started as '6PK'; the DB record has package_size_norm=None — not enriched."""
         result = ValidationResult(
-            scraped_products=[
-                _cp("E1", "6 Pack"),  # was "6PK"; not enriched → norm None
-            ],
             count_only_external_ids={"E1"},
+            count_only_persisted_norms={"canonical-A": None},
+        )
+        _evaluate_criteria(result)
+        assert result.criteria_results["ac1_enrichment_fired_on_scraped_data"] is False
+
+    @pytest.mark.unit
+    def test_fails_when_count_only_product_has_non_multipack_persisted_norm(self):
+        """Count-only product's canonical has norm '375mL' (no 'x') — not enriched."""
+        result = ValidationResult(
+            count_only_external_ids={"E1"},
+            count_only_persisted_norms={"canonical-A": "375mL"},
+        )
+        _evaluate_criteria(result)
+        assert result.criteria_results["ac1_enrichment_fired_on_scraped_data"] is False
+
+    @pytest.mark.unit
+    def test_fails_when_count_only_persisted_norms_is_empty(self):
+        """count_only_persisted_norms not populated (e.g. ingest failed before query)."""
+        result = ValidationResult(
+            count_only_external_ids={"E1"},
+            count_only_persisted_norms={},  # not yet queried
         )
         _evaluate_criteria(result)
         assert result.criteria_results["ac1_enrichment_fired_on_scraped_data"] is False
 
     @pytest.mark.unit
     def test_fails_when_count_only_external_ids_is_empty(self):
-        """If no products had count-only API sizes, enrichment cannot be proved."""
+        """No count-only products scraped — enrichment cannot be proved."""
         result = ValidationResult(
-            scraped_products=[
-                _cp("E1", "355mL 6 Pack"),  # multipack norm present, but API was already complete
-            ],
-            count_only_external_ids=set(),  # empty — no count-only products found
-        )
-        _evaluate_criteria(result)
-        assert result.criteria_results["ac1_enrichment_fired_on_scraped_data"] is False
-
-    @pytest.mark.unit
-    def test_fails_when_api_complete_multipack_not_in_count_only_set(self):
-        """E1 was '355mL 6 Pack' directly from the API — its multipack norm must not count."""
-        result = ValidationResult(
-            scraped_products=[
-                _cp("E1", "355mL 6 Pack"),  # norm "6x355mL" — but API gave this directly
-                _cp("E2", "6 Pack"),  # count-only fallback
-            ],
-            count_only_external_ids={"E2"},  # only E2 was count-only; E2 was NOT enriched
+            count_only_external_ids=set(),
+            count_only_persisted_norms={},
         )
         _evaluate_criteria(result)
         assert result.criteria_results["ac1_enrichment_fired_on_scraped_data"] is False
 
     @pytest.mark.unit
     def test_fails_when_scraped_products_is_empty(self):
-        result = ValidationResult(scraped_products=[], count_only_external_ids=set())
+        result = ValidationResult(
+            scraped_products=[],
+            count_only_external_ids=set(),
+            count_only_persisted_norms={},
+        )
         _evaluate_criteria(result)
         assert result.criteria_results["ac1_enrichment_fired_on_scraped_data"] is False
 
@@ -361,3 +366,64 @@ class TestAC5NoNewAuditDefects:
         )
         _evaluate_criteria(result)
         assert result.criteria_results["ac5_no_new_audit_defects"] is True
+
+
+def _all_true_result() -> ValidationResult:
+    """Build a ValidationResult where every criterion will evaluate to True."""
+    m = {"E1": "canonical-A"}
+    return ValidationResult(
+        count_only_external_ids={"E1"},
+        count_only_persisted_norms={"canonical-A": "6x355mL"},
+        new_product_ids={"canonical-A"},
+        listing_map_first=dict(m),
+        listing_map_repeat=dict(m),
+        ingest_counts_repeat={"created": 0, "updated": 1},
+        audit_findings={},
+        baseline_plan_confirmed_count=0,
+        post_plan_confirmed_count=0,
+    )
+
+
+class TestAllCriteriaPassed:
+    """_all_criteria_passed requires every criterion to be explicitly True.
+
+    None results — even when all definite values are True — must block PASS.
+    This is the invariant that prevents incomplete validation from reporting
+    success.
+    """
+
+    @pytest.mark.unit
+    def test_passes_when_all_five_criteria_are_true(self):
+        result = _all_true_result()
+        _evaluate_criteria(result)
+        assert all(v is True for v in result.criteria_results.values())
+        assert _all_criteria_passed(result) is True
+
+    @pytest.mark.unit
+    def test_fails_when_any_criterion_is_false(self):
+        result = _all_true_result()
+        _evaluate_criteria(result)
+        result.criteria_results["ac2_no_unexpected_merges"] = False
+        assert _all_criteria_passed(result) is False
+
+    @pytest.mark.unit
+    def test_fails_when_any_criterion_is_none(self):
+        """A None criterion (missing evidence) must block PASS."""
+        result = _all_true_result()
+        _evaluate_criteria(result)
+        # Inject None to simulate listing maps unavailable (e.g. ingestion error)
+        result.criteria_results["ac4_idempotent_repeat_ingest"] = None
+        assert _all_criteria_passed(result) is False
+
+    @pytest.mark.unit
+    def test_fails_when_errors_present_even_if_all_criteria_true(self):
+        result = _all_true_result()
+        _evaluate_criteria(result)
+        result.errors.append("Audit script crashed")
+        assert _all_criteria_passed(result) is False
+
+    @pytest.mark.unit
+    def test_fails_when_criteria_results_is_empty(self):
+        """Empty criteria dict means evaluation never ran — must not be a PASS."""
+        result = ValidationResult()
+        assert _all_criteria_passed(result) is False

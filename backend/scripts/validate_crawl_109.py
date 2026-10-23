@@ -78,7 +78,7 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.deps import _SessionLocal
-from app.models import ProductRetailerListing
+from app.models import Product, ProductRetailerListing
 from app.services.catalog_ingest import ingest_catalog_products
 from app.services.package_size import normalize_package_size
 from scrapers.catalog_base import CatalogProduct, CategoryNode
@@ -141,6 +141,12 @@ class ValidationResult:
     # multipack norm by combine_count_with_volume.
     count_only_external_ids: set[str] = field(default_factory=set)
 
+    # Persisted package_size_norm values for the canonical products that received
+    # count-only listings from this crawl.  Populated after first ingest by querying
+    # the Product table directly so AC1 verifies the DB record, not just the parsed
+    # CatalogProduct.  Format: {str(canonical_product_id): package_size_norm}.
+    count_only_persisted_norms: dict[str, str | None] = field(default_factory=dict)
+
     # Confirmed-norm-mismatch counts before and after ingest.
     # -1 means "not yet measured".  Used by AC5.
     baseline_plan_confirmed_count: int = -1
@@ -202,6 +208,28 @@ def _get_listing_map(session: Session, external_ids: list[str], chain: str) -> d
         )
     ).fetchall()
     return {row[0]: str(row[1]) for row in rows}
+
+
+def _get_count_only_persisted_norms(
+    session: Session,
+    count_only_external_ids: set[str],
+    listing_map: dict[str, str],
+) -> dict[str, str | None]:
+    """Return {str(canonical_product_id): package_size_norm} from the Product table.
+
+    Only canonical products that received at least one listing from a count-only
+    raw API item are included.  Querying the DB directly (not the parsed
+    CatalogProduct) is what proves the ingest layer stored the correct value.
+    """
+    canonical_ids = {
+        listing_map[ext_id] for ext_id in count_only_external_ids if ext_id in listing_map
+    }
+    if not canonical_ids:
+        return {}
+    rows = session.execute(
+        select(Product.id, Product.package_size_norm).where(Product.id.in_(canonical_ids))
+    ).fetchall()
+    return {str(row[0]): row[1] for row in rows}
 
 
 # ── Planner helper ────────────────────────────────────────────────────────────
@@ -333,22 +361,29 @@ def _evaluate_criteria(result: ValidationResult) -> None:
 
     # ── AC1 ───────────────────────────────────────────────────────────────────
     # At least one product that originally had a count-only API size (e.g. "6PK")
-    # was successfully enriched to a multipack norm by combine_count_with_volume.
-    # An API product already supplying a complete size string (e.g. "355mL 6 Pack")
-    # does not count — only products whose raw PackageSize was count-only qualify.
-    count_only_products = [p for p in products if p.external_id in result.count_only_external_ids]
-    if not count_only_products:
-        # No count-only products in this crawl — cannot prove enrichment fired.
+    # was successfully enriched to a multipack norm by combine_count_with_volume,
+    # AND that enriched norm was persisted to package_size_norm in the database.
+    # Checking only the parsed CatalogProduct is insufficient: the ingest layer
+    # could silently fail to store the correct norm.  count_only_persisted_norms
+    # is populated after first ingest by querying Product.package_size_norm directly.
+    if not result.count_only_external_ids:
         result.criteria_results["ac1_enrichment_fired_on_scraped_data"] = False
         logger.warning(
             "AC1 FAIL: no count-only API products found in scraped set "
             "(count_only_external_ids is empty — category may not have pack products)"
         )
-    else:
-        enriched_count_only = sum(
-            1 for p in count_only_products if "x" in (normalize_package_size(p.package_size) or "")
+    elif not result.count_only_persisted_norms:
+        # Persisted norms not yet queried (dry-run or error before ingest completed).
+        result.criteria_results["ac1_enrichment_fired_on_scraped_data"] = False
+        logger.warning(
+            "AC1 FAIL: count_only_persisted_norms not populated — "
+            "cannot verify persisted package_size_norm values"
         )
-        result.criteria_results["ac1_enrichment_fired_on_scraped_data"] = enriched_count_only > 0
+    else:
+        enriched_persisted = sum(
+            1 for norm in result.count_only_persisted_norms.values() if "x" in (norm or "")
+        )
+        result.criteria_results["ac1_enrichment_fired_on_scraped_data"] = enriched_persisted > 0
 
     # ── AC2 ───────────────────────────────────────────────────────────────────
     # No canonical product created/used by this crawl appears in the audit's
@@ -440,6 +475,19 @@ def _evaluate_criteria(result: ValidationResult) -> None:
         result.criteria_results["ac5_no_new_audit_defects"] = not grew
 
 
+def _all_criteria_passed(result: ValidationResult) -> bool:
+    """Return True only when every criterion is explicitly True and no errors occurred.
+
+    A None result (missing evidence) is treated as a failure — incomplete validation
+    must never produce an overall PASS.
+    """
+    return (
+        not result.errors
+        and bool(result.criteria_results)
+        and all(v is True for v in result.criteria_results.values())
+    )
+
+
 # ── Report generation ─────────────────────────────────────────────────────────
 
 
@@ -455,10 +503,15 @@ def _write_report(
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     report_path = out_dir / f"validation_{ts}_{chain}.md"
 
-    # A result is only a full PASS when all non-None criteria passed AND no errors.
-    definite_values = [v for v in result.criteria_results.values() if v is not None]
-    all_passed = bool(definite_values) and all(definite_values) and not result.errors
-    status = "PASSED" if all_passed else "FAILED"
+    if dry_run:
+        # Dry-run only evaluates AC1 at parse level; AC2–AC5 are None by design.
+        ac1 = result.criteria_results.get("ac1_enrichment_fired_on_scraped_data")
+        all_passed = ac1 is True and not result.errors
+        status = "AC1 PASSED (parse-level only — no DB writes)" if all_passed else "FAILED"
+    else:
+        # Live run: every criterion must be explicitly True; None counts as failure.
+        all_passed = _all_criteria_passed(result)
+        status = "PASSED" if all_passed else "FAILED"
 
     lines = [
         "# Story #109 — Fresh Crawl Validation Report",
@@ -506,10 +559,10 @@ def _write_report(
         ]
 
     criteria_labels = {
-        "ac1_enrichment_fired_on_scraped_data": "AC1 — Count-only pack enriched from real scraped products",
+        "ac1_enrichment_fired_on_scraped_data": "AC1 — Count-only pack enriched and persisted as multipack norm in DB",
         "ac2_no_unexpected_merges": "AC2 — No new canonical product appears in single/multipack collision list",
         "ac3_separate_products": "AC3 — No two scraped products with different norms share a canonical product",
-        "ac4_idempotent_repeat_ingest": "AC4 — Listing associations unchanged after repeat ingest",
+        "ac4_idempotent_repeat_ingest": "AC4 — Zero new products on repeat ingest; listing associations stable",
         "ac5_no_new_audit_defects": "AC5 — Confirmed-norm-mismatch count did not increase",
     }
     lines += [
@@ -611,6 +664,18 @@ def _parse_args() -> argparse.Namespace:
         default="woolworths",
         help="Comma-separated chains for audit scope (default: woolworths)",
     )
+    p.add_argument(
+        "--confirm-db",
+        default=None,
+        metavar="DB_NAME",
+        dest="confirm_db",
+        help=(
+            "Required for live (non-dry-run) runs. Pass the exact name of the database "
+            "you intend to write to. The script queries SELECT current_database() and "
+            "aborts if the names do not match exactly (case-insensitive). "
+            "Example: --confirm-db dealfindio_dev"
+        ),
+    )
     return p.parse_args()
 
 
@@ -647,7 +712,31 @@ def main() -> int:
             _SAFE_DB_FRAGMENTS,
         )
         return 1
-    logger.info("Database safety check passed (name='%s').", db_name)
+
+    # ── Explicit identity confirmation for live (write) runs ─────────────────
+    # --confirm-db requires the caller to explicitly name the target database.
+    # This prevents accidental writes when DATABASE_URL is an alias or points to
+    # a different environment than expected.
+    if not args.dry_run:
+        if not args.confirm_db:
+            logger.error(
+                "Live runs require --confirm-db <database-name>. "
+                "The currently connected database is '%s'. "
+                "If this is the intended target, re-run with: --confirm-db %s",
+                db_name,
+                db_name,
+            )
+            return 1
+        if args.confirm_db.lower() != db_name.lower():
+            logger.error(
+                "--confirm-db '%s' does not match the actual database '%s'. Aborting.",
+                args.confirm_db,
+                db_name,
+            )
+            return 1
+        logger.info("Database identity confirmed: '%s' (matches --confirm-db).", db_name)
+    else:
+        logger.info("Dry-run mode: connected to '%s' (no writes will be made).", db_name)
 
     # ── Crawl ─────────────────────────────────────────────────────────────────
     logger.info(
@@ -740,6 +829,18 @@ def main() -> int:
         result.listing_map_first = _get_listing_map(session, external_ids, chain)
         result.new_product_ids = set(result.listing_map_first.values())
 
+        # Query persisted package_size_norm for count-only products (for AC1)
+        result.count_only_persisted_norms = _get_count_only_persisted_norms(
+            session, result.count_only_external_ids, result.listing_map_first
+        )
+        logger.info(
+            "Count-only products: %d identified, %d mapped to canonicals, "
+            "%d with enriched persisted norm",
+            len(result.count_only_external_ids),
+            len(result.count_only_persisted_norms),
+            sum(1 for n in result.count_only_persisted_norms.values() if "x" in (n or "")),
+        )
+
         # Post-ingest distribution
         result.post_ingest = _norm_distribution(session, chain)
         logger.info(
@@ -804,15 +905,8 @@ def main() -> int:
     # ── Criteria evaluation ───────────────────────────────────────────────────
     _evaluate_criteria(result)
 
-    # Errors in audit/planner are surfaced as a hard failure
-    if result.errors:
-        logger.error("Errors occurred during validation: %s", result.errors)
-        # Criteria that depend on the failed components are already marked False
-        # (AC5 uses -1 sentinel); flag the whole run as failed regardless.
-        all_passed = False
-    else:
-        definite = [v for v in result.criteria_results.values() if v is not None]
-        all_passed = bool(definite) and all(definite)
+    # Every criterion must be explicitly True; None and errors both block PASS.
+    all_passed = _all_criteria_passed(result)
 
     report_path = _write_report(
         result, out_dir, chain, args.category_name, args.max_pages, args.dry_run
