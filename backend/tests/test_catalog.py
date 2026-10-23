@@ -624,3 +624,250 @@ class TestRunCatalogCrawlTask:
         assert run.products_found == 2
         # Products actually landed in the DB.
         assert test_db_session.query(Product).count() >= 2
+
+
+# ── combine_count_with_volume ────────────────────────────────────────────────
+
+
+class TestCombineCountWithVolume:
+    """Unit tests for the new shared utility in app/services/package_size.py."""
+
+    def _fn(self, name: str, count: int):
+        from app.services.package_size import combine_count_with_volume
+
+        return combine_count_with_volume(name, count)
+
+    @pytest.mark.unit
+    def test_ml_volume_in_name_combines(self):
+        assert self._fn("Corona Extra Beer Bottle 355mL", 6) == "355mL 6 Pack"
+
+    @pytest.mark.unit
+    def test_litre_volume_in_name_combines(self):
+        assert self._fn("Spring Water Bottle 1.25L", 6) == "1.25L 6 Pack"
+
+    @pytest.mark.unit
+    def test_weight_g_not_combined(self):
+        """Requirement 2: weight units must not be combined — may be total package weight."""
+        assert self._fn("Thin Pork Sausages 560g", 8) is None
+
+    @pytest.mark.unit
+    def test_weight_kg_not_combined(self):
+        assert self._fn("Chicken Thighs 1.2kg", 4) is None
+
+    @pytest.mark.unit
+    def test_no_unit_in_name_returns_none(self):
+        assert self._fn("Chocolate Chip Cookies", 12) is None
+
+    @pytest.mark.unit
+    def test_count_1_returns_none(self):
+        assert self._fn("Corona Beer Bottle 355mL", 1) is None
+
+    @pytest.mark.unit
+    def test_empty_name_returns_none(self):
+        assert self._fn("", 6) is None
+
+    @pytest.mark.unit
+    def test_result_normalizes_to_canonical_multipack(self):
+        from app.services.package_size import normalize_package_size
+
+        raw = self._fn("Pale Ale Cans 375mL", 6)
+        assert normalize_package_size(raw) == "6x375mL"
+
+    @pytest.mark.unit
+    def test_contradictory_count_in_name_rejected(self):
+        """Requirement 1: never invent quantities from contradictory evidence.
+
+        API says 6 units; name says 4 x 250mL. The two pieces of evidence conflict
+        so augmentation must be refused.
+        """
+        assert self._fn("Drink 4 x 250mL", 6) is None
+
+    @pytest.mark.unit
+    def test_matching_count_in_name_allowed(self):
+        """When the name's explicit count agrees with the API count, augment normally."""
+        result = self._fn("Crown Lager 6 Pack 375mL", 6)
+        assert result == "375mL 6 Pack"
+
+    @pytest.mark.unit
+    def test_n_x_unit_format_count_mismatch_rejected(self):
+        """'24 x 355mL' in the name with API count=6 is contradictory."""
+        assert self._fn("Corona Extra 24 x 355mL", 6) is None
+
+    @pytest.mark.unit
+    def test_second_explicit_count_marker_contradicts_api_count_rejected(self):
+        """Name contains both '6 Pack' (matches API) and '4 x' (contradicts API).
+        All explicit count markers must be checked — the second one disagrees."""
+        assert self._fn("Drink Mix 6 Pack 4 x 250mL", 6) is None
+
+    @pytest.mark.unit
+    def test_multiple_different_volumes_rejected(self):
+        """When the name contains two different volume quantities, evidence is ambiguous."""
+        assert self._fn("Mix 250mL serve and 355mL can", 6) is None
+
+    @pytest.mark.unit
+    def test_identical_repeated_volume_allowed(self):
+        """The same volume appearing twice is unambiguous — augment normally."""
+        result = self._fn("Beer 355mL Can Pack 355mL", 6)
+        assert result == "355mL 6 Pack"
+
+
+# ── Woolworths package-size extraction ───────────────────────────────────────
+
+
+class TestWoolworthsPackageSize:
+    """Covers the volume-augmentation path added to catalog_woolworths._parse_item."""
+
+    def _parse(self, item: dict):
+        from datetime import date
+
+        from scrapers.catalog_base import CategoryNode
+        from scrapers.catalog_woolworths import _parse_item
+
+        return _parse_item(item, CategoryNode(id="beer", name="Beer"), date.today())
+
+    def _item(self, **kwargs) -> dict:
+        base = {"Name": "Woolworths Product", "Price": 15.00, "Stockcode": 123456}
+        base.update(kwargs)
+        return base
+
+    @pytest.mark.unit
+    def test_pack_count_augmented_with_volume_from_name(self):
+        cp = self._parse(self._item(Name="Corona Extra Beer Bottle 355mL", PackageSize="6PK"))
+        assert cp is not None
+        assert cp.package_size == "355mL 6 Pack"
+
+    @pytest.mark.unit
+    def test_pack_count_no_volume_stays_n_pack(self):
+        cp = self._parse(self._item(Name="Chocolate Chip Cookies 12 Pack", PackageSize="12PK"))
+        assert cp is not None
+        assert cp.package_size == "12 Pack"
+
+    @pytest.mark.unit
+    def test_single_ea_suppressed(self):
+        cp = self._parse(self._item(PackageSize="1EA"))
+        assert cp is not None
+        assert cp.package_size is None
+
+    @pytest.mark.unit
+    def test_weight_in_name_not_combined(self):
+        """Requirement 2: weight units must not be combined from the product name."""
+        cp = self._parse(self._item(Name="Thin Pork Sausages 560g", PackageSize="8PK"))
+        assert cp is not None
+        assert cp.package_size == "8 Pack"
+
+    @pytest.mark.unit
+    def test_cup_measure_fallback_when_no_package_size(self):
+        cp = self._parse(self._item(CupMeasure="100mL"))
+        assert cp is not None
+        assert cp.package_size == "100mL"
+
+
+# ── ALDI package-size extraction ─────────────────────────────────────────────
+
+
+class TestAldiPackageSize:
+    """Covers the volume-augmentation path added to catalog_aldi._product_from_api."""
+
+    def _parse(self, item: dict):
+        from scrapers.catalog_aldi import _product_from_api
+
+        return _product_from_api(item, "Beer")
+
+    def _item(self, **kwargs) -> dict:
+        base = {"name": "ALDI Test Product", "sku": "ALDI-001", "price": {"amount": 1500}}
+        base.update(kwargs)
+        return base
+
+    @pytest.mark.unit
+    def test_count_each_augmented_with_volume_from_name(self):
+        cp = self._parse(self._item(name="Heineken Lager Beer Bottle 330mL", sellingSize="6 each"))
+        assert cp is not None
+        assert cp.package_size == "330mL 6 Pack"
+
+    @pytest.mark.unit
+    def test_count_each_no_volume_stays_n_pack(self):
+        cp = self._parse(self._item(name="Almond Biscuit Pack", sellingSize="6 each"))
+        assert cp is not None
+        assert cp.package_size == "6 Pack"
+
+    @pytest.mark.unit
+    def test_single_each_suppressed(self):
+        cp = self._parse(self._item(sellingSize="1 each"))
+        assert cp is not None
+        assert cp.package_size is None
+
+    @pytest.mark.unit
+    def test_weight_in_name_not_combined(self):
+        cp = self._parse(self._item(name="Thin Beef Sausages 500g", sellingSize="4 each"))
+        assert cp is not None
+        assert cp.package_size == "4 Pack"
+
+    @pytest.mark.unit
+    def test_direct_size_passes_through(self):
+        """sellingSize with a metric unit (not count-type) is used as-is."""
+        cp = self._parse(self._item(sellingSize="200 g"))
+        assert cp is not None
+        assert cp.package_size == "200 g"
+
+
+# ── IGA package-size extraction ──────────────────────────────────────────────
+
+
+class TestIgaPackageSize:
+    """Covers the volume-augmentation path added to catalog_iga._parse_item."""
+
+    def _parse(self, item: dict):
+        from datetime import date
+
+        from scrapers.catalog_iga import _parse_item
+
+        return _parse_item(item, "Beer", date.today())
+
+    def _item(self, **kwargs) -> dict:
+        base = {"productId": "IGA-001", "name": "IGA Test Product", "priceNumeric": 15.00}
+        base.update(kwargs)
+        return base
+
+    @pytest.mark.unit
+    def test_count_pack_augmented_with_volume_from_name(self):
+        cp = self._parse(
+            self._item(
+                name="Bundaberg Ginger Beer 375mL",
+                unitOfSize={"size": 6, "type": "pack"},
+            )
+        )
+        assert cp is not None
+        assert cp.package_size == "375mL 6 Pack"
+
+    @pytest.mark.unit
+    def test_count_pk_no_volume_stays_n_pack(self):
+        cp = self._parse(
+            self._item(
+                name="Dog Biscuits Variety",
+                unitOfSize={"size": 6, "type": "pk"},
+            )
+        )
+        assert cp is not None
+        assert cp.package_size == "6 Pack"
+
+    @pytest.mark.unit
+    def test_weight_in_name_not_combined(self):
+        cp = self._parse(
+            self._item(
+                name="Thin Lamb Sausages 560g",
+                unitOfSize={"size": 8, "type": "each"},
+            )
+        )
+        assert cp is not None
+        assert cp.package_size == "8 Pack"
+
+    @pytest.mark.unit
+    def test_ml_size_type_passes_through(self):
+        cp = self._parse(
+            self._item(
+                name="Sparkling Water Can",
+                unitOfSize={"size": 330, "type": "millilitre"},
+            )
+        )
+        assert cp is not None
+        assert cp.package_size == "330 mL"

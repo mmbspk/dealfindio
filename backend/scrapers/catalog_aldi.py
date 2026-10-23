@@ -26,6 +26,7 @@ import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.services.category_normaliser import normalise_category as _normalise_category
+from app.services.package_size import combine_count_with_volume
 from scrapers.base import ScraperError
 from scrapers.catalog_base import (
     SCRAPER_UA,
@@ -148,7 +149,12 @@ def _product_from_api(item: dict, category_name: str) -> Optional[CatalogProduct
         count_m = re.match(r"^(\d+)\s*(?:each|ea|pk|pack)$", selling_size, re.IGNORECASE)
         if count_m:
             count = int(count_m.group(1))
-            selling_size = f"{count} Pack" if count > 1 else None
+            if count > 1:
+                # Try to extract a volume unit from the product name to build a
+                # complete size string (e.g. "6 each" + "Heineken 330mL" → "330mL 6 Pack").
+                selling_size = combine_count_with_volume(name, count) or f"{count} Pack"
+            else:
+                selling_size = None
 
     # Category: use deepest available category name ("Dairy, Eggs & Fridge > Cheese")
     cats = item.get("categories") or []

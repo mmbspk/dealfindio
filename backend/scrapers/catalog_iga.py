@@ -46,6 +46,7 @@ import httpx
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from app.services.category_normaliser import normalise_category as _normalise_category
+from app.services.package_size import combine_count_with_volume
 from scrapers.base import ScraperError
 from scrapers.catalog_base import (
     SCRAPER_UA,
@@ -391,7 +392,9 @@ def _parse_item(item: dict, cat_name: str | None, today: date) -> Optional[Catal
             try:
                 count = int(float(size_val))
                 if count > 1:
-                    package_size = f"{count} Pack"
+                    # Try to extract a volume unit from the product name to produce a
+                    # complete size string (e.g. "6 pk" + "Bundaberg 375mL" → "375mL 6 Pack").
+                    package_size = combine_count_with_volume(name, count) or f"{count} Pack"
             except (ValueError, TypeError):
                 pass
         elif type_lower:
