@@ -1559,7 +1559,6 @@ class TestAsymmetricSizeVeto:
         assert score == 0.0
 
 
-
 # ── Asymmetric veto — end-to-end ingestion ────────────────────────────────────
 
 
@@ -1663,9 +1662,7 @@ class TestAsymmetricVetoEndToEnd:
         assert len({l.product_id for l in listings}) == 2
 
     @pytest.mark.integration
-    def test_e2e_repeat_ingest_preserves_listing_associations(
-        self, test_db_session: Session
-    ):
+    def test_e2e_repeat_ingest_preserves_listing_associations(self, test_db_session: Session):
         """Re-ingesting the same SKU must not move a listing to a different product
         and must not create a third canonical product.
         """
@@ -1691,9 +1688,7 @@ class TestAsymmetricVetoEndToEnd:
             )
         ).scalar_one()
         ww_listing = test_db_session.execute(
-            select(ProductRetailerListing).where(
-                ProductRetailerListing.external_id == "E2E-C-WW"
-            )
+            select(ProductRetailerListing).where(ProductRetailerListing.external_id == "E2E-C-WW")
         ).scalar_one()
         original_coles_pid = coles_listing.product_id
         original_ww_pid = ww_listing.product_id

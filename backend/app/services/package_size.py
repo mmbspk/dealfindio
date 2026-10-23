@@ -164,8 +164,9 @@ def combine_count_with_volume(name: str, count: int) -> str | None:
     Returns None and refuses augmentation when:
     - count < 2 or name is empty
     - No volume unit (mL / L) is found in the name
-    - The name contains an explicit pack count that contradicts *count*
-      (e.g. "Drink 4 x 250mL" with count=6 — the two pieces of evidence conflict)
+    - The name contains ANY explicit pack count that contradicts *count*
+      (e.g. "6 Pack 4 x 250mL" with count=6 — the "4 x" marker is contradictory
+      even though "6 Pack" agrees; all markers must be checked)
     - The name contains multiple *different* volume quantities
 
     Only volume units (mL, L) are matched.  Weight units (g, kg) are never
@@ -175,10 +176,10 @@ def combine_count_with_volume(name: str, count: int) -> str | None:
     if not name or count < 2:
         return None
 
-    # Guard 1 — reject when the name carries an explicit pack count that differs
-    # from the API-supplied count (contradictory evidence).
-    explicit_m = _RE_NAME_EXPLICIT_COUNT.search(name)
-    if explicit_m and int(explicit_m.group(1)) != count:
+    # Guard 1 — reject when ANY explicit pack-count marker in the name differs
+    # from the API-supplied count.  Checking only the first marker would miss
+    # names like "6 Pack 4 x 250mL" where the second marker contradicts count.
+    if any(int(m.group(1)) != count for m in _RE_NAME_EXPLICIT_COUNT.finditer(name)):
         return None
 
     # Find every volume quantity in the name.

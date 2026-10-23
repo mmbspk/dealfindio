@@ -694,6 +694,12 @@ class TestCombineCountWithVolume:
         assert self._fn("Corona Extra 24 x 355mL", 6) is None
 
     @pytest.mark.unit
+    def test_second_explicit_count_marker_contradicts_api_count_rejected(self):
+        """Name contains both '6 Pack' (matches API) and '4 x' (contradicts API).
+        All explicit count markers must be checked — the second one disagrees."""
+        assert self._fn("Drink Mix 6 Pack 4 x 250mL", 6) is None
+
+    @pytest.mark.unit
     def test_multiple_different_volumes_rejected(self):
         """When the name contains two different volume quantities, evidence is ambiguous."""
         assert self._fn("Mix 250mL serve and 355mL can", 6) is None
