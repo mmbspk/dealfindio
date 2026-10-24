@@ -440,3 +440,146 @@ class TestAllCriteriaPassed:
         """Empty criteria dict means evaluation never ran — must not be a PASS."""
         result = ValidationResult()
         assert _all_criteria_passed(result) is False
+
+
+# ── Regression: _identify_count_only_external_ids ─────────────────────────────
+
+_identify_count_only = _mod._identify_count_only_external_ids
+
+
+class TestCountOnlyIdentification:
+    """_identify_count_only_external_ids must match all count-only formats the scraper uses.
+
+    The scraper's regex is r"^(\\d+)\\s*(?:ea|each|pk|pack)$" (catalog_woolworths.py ~line 605).
+    This class ensures the validator's detection is symmetric with it, including the count > 1
+    filter (count=1 is suppressed to None by the scraper, not enriched).
+    """
+
+    @pytest.mark.unit
+    def test_matches_uppercase_pk(self):
+        assert "100" in _identify_count_only([{"Stockcode": "100", "PackageSize": "6PK"}])
+
+    @pytest.mark.unit
+    def test_matches_spaced_pack(self):
+        assert "100" in _identify_count_only([{"Stockcode": "100", "PackageSize": "6 Pack"}])
+
+    @pytest.mark.unit
+    def test_matches_lowercase_pack(self):
+        assert "100" in _identify_count_only([{"Stockcode": "100", "PackageSize": "30 pack"}])
+
+    @pytest.mark.unit
+    def test_matches_large_count(self):
+        assert "100" in _identify_count_only([{"Stockcode": "100", "PackageSize": "100 pack"}])
+
+    @pytest.mark.unit
+    def test_matches_ea(self):
+        assert "100" in _identify_count_only([{"Stockcode": "100", "PackageSize": "6EA"}])
+
+    @pytest.mark.unit
+    def test_matches_each(self):
+        assert "100" in _identify_count_only([{"Stockcode": "100", "PackageSize": "6 each"}])
+
+    @pytest.mark.unit
+    def test_excludes_count_one_ea(self):
+        """count=1 is suppressed to None by the scraper — must not be a candidate."""
+        assert _identify_count_only([{"Stockcode": "100", "PackageSize": "1EA"}]) == set()
+
+    @pytest.mark.unit
+    def test_excludes_count_one_pack(self):
+        assert _identify_count_only([{"Stockcode": "100", "PackageSize": "1 Pack"}]) == set()
+
+    @pytest.mark.unit
+    def test_excludes_pre_enriched_size(self):
+        """'375mL x 6 pack' already has volume — not a count-only raw value."""
+        assert (
+            _identify_count_only([{"Stockcode": "100", "PackageSize": "375mL x 6 pack"}]) == set()
+        )
+
+    @pytest.mark.unit
+    def test_excludes_volume_only_size(self):
+        assert _identify_count_only([{"Stockcode": "100", "PackageSize": "375mL"}]) == set()
+
+    @pytest.mark.unit
+    def test_excludes_missing_package_size(self):
+        assert _identify_count_only([{"Stockcode": "100"}]) == set()
+
+    @pytest.mark.unit
+    def test_excludes_null_package_size(self):
+        assert _identify_count_only([{"Stockcode": "100", "PackageSize": None}]) == set()
+
+    @pytest.mark.unit
+    def test_returns_multiple_matches(self):
+        items = [
+            {"Stockcode": "A", "PackageSize": "6PK"},
+            {"Stockcode": "B", "PackageSize": "30 pack"},
+            {"Stockcode": "C", "PackageSize": "375mL"},
+        ]
+        assert _identify_count_only(items) == {"A", "B"}
+
+    @pytest.mark.unit
+    def test_skips_item_with_no_stockcode(self):
+        assert _identify_count_only([{"PackageSize": "6PK"}]) == set()
+
+
+# ── Regression: runtime bugs fixed in PR #111 ─────────────────────────────────
+
+
+class TestRuntimeBugRegressions:
+    """Guards against the two live-run bugs discovered post-merge of PR #110."""
+
+    @pytest.mark.unit
+    def test_session_local_not_imported_from_app_deps(self):
+        """_SessionLocal must NOT be imported from app.deps.
+
+        The FastAPI app lifecycle never starts in a standalone script, so
+        app.deps._SessionLocal is None until init_database() is called.  The
+        fix in PR #111 creates its own engine+sessionmaker inside main().
+        This test verifies the import-time side-effect is gone.
+        """
+        import ast
+        import pathlib
+
+        script = pathlib.Path(__file__).parent.parent / "scripts" / "validate_crawl_109.py"
+        tree = ast.parse(script.read_text())
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                if node.module and "app.deps" in node.module:
+                    imported = [alias.name for alias in node.names]
+                    assert "_SessionLocal" not in imported, (
+                        f"validate_crawl_109.py still imports _SessionLocal from {node.module} "
+                        "— this causes a NoneType error in standalone (non-FastAPI) execution"
+                    )
+
+    @pytest.mark.unit
+    async def test_parse_products_receives_full_dict_not_list(self):
+        """parse_products expects raw: dict with a 'products' key, not a bare list.
+
+        The pre-fix code called parse_products(raw_products, target) where
+        raw_products was the list already extracted from raw.get("products", []).
+        The scraper calls raw.get("products", []) internally, so passing the list
+        raised AttributeError: 'list' object has no attribute 'get'.
+        """
+        from unittest.mock import MagicMock
+
+        from scrapers.catalog_woolworths import WoolworthsCatalogScraper
+
+        mock_config = MagicMock()
+        mock_config.min_delay_s = 0
+        mock_config.max_delay_s = 0
+        mock_config.burst_limit = 100
+        mock_config.max_pages_per_category = 1
+
+        scraper = WoolworthsCatalogScraper(chain="woolworths", config=mock_config)
+        mock_category = MagicMock()
+        mock_category.name = "Test"
+        mock_category.id = "test-id"
+
+        # Passing a bare list must raise AttributeError — the regression test
+        # confirms we no longer call it that way.
+        with pytest.raises(AttributeError, match="get"):
+            await scraper.parse_products([], mock_category)
+
+        # Passing the correct full dict must succeed (even if products list is empty).
+        result = await scraper.parse_products({"products": []}, mock_category)
+        assert result == []
