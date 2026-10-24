@@ -74,10 +74,9 @@ _BACKEND = _HERE.parent
 if str(_BACKEND) not in sys.path:
     sys.path.insert(0, str(_BACKEND))
 
-from sqlalchemy import select, text
-from sqlalchemy.orm import Session
+from sqlalchemy import create_engine, select, text
+from sqlalchemy.orm import Session, sessionmaker
 
-from app.deps import _SessionLocal
 from app.models import Product, ProductRetailerListing
 from app.services.catalog_ingest import ingest_catalog_products
 from app.services.package_size import normalize_package_size
@@ -94,9 +93,11 @@ logger = logging.getLogger("validate_crawl_109")
 _SAFE_DB_FRAGMENTS = ("dev", "test", "local", "staging", "ci")
 
 # Woolworths raw API PackageSize values that contain only a count (no volume).
-# e.g. "6PK", "24PK", "12PK".  These are the products where combine_count_with_volume
-# is expected to fire — AC1 proves it actually did on real data.
-_RE_COUNT_ONLY_API_SIZE = re.compile(r"^\d+PK$", re.IGNORECASE)
+# Mirrors the scraper's own detection in catalog_woolworths.py (line ~605):
+#   r"^(\d+)\s*(?:ea|each|pk|pack)$"
+# Matches: "6PK", "6 Pack", "6EA", "6 each", "30 pack", "100 pack", etc.
+# Count=1 is excluded (scraper suppresses "1EA" to None rather than enriching it).
+_RE_COUNT_ONLY_API_SIZE = re.compile(r"^(\d+)\s*(?:ea|each|pk|pack)$", re.IGNORECASE)
 
 
 # ── Data structures ───────────────────────────────────────────────────────────
@@ -273,15 +274,19 @@ def _count_confirmed_mismatches(session: Session, chains: set[str]) -> int:
 
 
 def _identify_count_only_external_ids(raw_products: list[dict]) -> set[str]:
-    """Return Stockcodes of raw items whose PackageSize is count-only (e.g. '6PK').
+    """Return Stockcodes of raw items whose PackageSize is count-only (e.g. '6PK', '30 pack').
 
     These are the candidates where combine_count_with_volume should fire.
     AC1 verifies at least one was successfully enriched.
+
+    count=1 (e.g. "1EA") is excluded because the scraper suppresses it to None
+    rather than enriching it — matching the scraper's own count > 1 filter.
     """
     result: set[str] = set()
     for item in raw_products:
         size = item.get("PackageSize") or ""
-        if _RE_COUNT_ONLY_API_SIZE.match(str(size)):
+        m = _RE_COUNT_ONLY_API_SIZE.match(str(size))
+        if m and int(m.group(1)) > 1:
             ext_id = str(item.get("Stockcode", ""))
             if ext_id:
                 result.add(ext_id)
@@ -348,7 +353,7 @@ async def _bounded_crawl(
     raw_products = raw.get("products", [])
     logger.info("Received %d raw product dicts from '%s'", len(raw_products), target.name)
     try:
-        products = await scraper.parse_products(raw_products, target)
+        products = await scraper.parse_products(raw, target)  # parse_products expects the full dict
     except Exception as exc:
         errors.append(f"parse_products failed: {exc}")
         return [], raw_products, errors
@@ -737,6 +742,12 @@ def main() -> int:
     if not db_url:
         logger.error("DATABASE_URL is not set. Aborting.")
         return 1
+
+    # Build a dedicated engine for this script run — we do not go through
+    # app.deps.init_database because the script runs standalone and does not
+    # start the FastAPI app lifecycle.
+    _engine = create_engine(db_url, pool_pre_ping=True, echo=False)
+    _SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=_engine)
 
     result = ValidationResult()
 
