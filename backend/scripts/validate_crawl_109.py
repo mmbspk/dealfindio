@@ -1,19 +1,25 @@
 #!/usr/bin/env python3
 """
-Story #109 — Fresh Catalog Crawl & Ingestion Validation (Woolworths)
+Multi-Retailer Fresh Crawl & Catalog Integrity Validation
 
-Validates the complete crawler-to-database pipeline using real Woolworths data
-after the Story #107 scraper pack-size hardening.
+Validates the complete crawler-to-database pipeline using real retailer data.
+Originally written for Woolworths (Story #109); made chain-agnostic in Story #114.
 
 Usage:
   python scripts/validate_crawl_109.py [options]
 
 Options:
-  --category-name NAME   Category name to target (default: "Beer")
+  --chain CHAIN          Retailer to crawl and ingest (default: woolworths).
+                         Supported: woolworths, aldi, iga, coles.
+                         Must be registered in scrapers/catalog_registry.py.
+  --category-name NAME   Category name to target (default: Beer).
+                         The available names are chain-specific — check the
+                         discovery log on a dry-run if unsure.
   --max-pages N          Max pages per category, 36 products/page (default: 2)
   --out-dir DIR          Directory for the validation report (default: validation_output)
   --dry-run              Parse and display products without writing to the database
-  --chains CHAINS        Comma-separated chains for audit scope (default: woolworths)
+  --chains CHAINS        Comma-separated chains for audit scope.
+                         Defaults to the selected --chain when omitted.
 
 Connects to DATABASE_URL (dev database expected).  Never connects to production.
 
@@ -24,16 +30,17 @@ development or test database.  The script queries SELECT current_database() to
 verify the target is a recognised dev/test database before any writes.
 
 Pipeline steps:
-  1. Verify database name contains a safe suffix (dev / test / local / staging / ci)
-  2. Capture baseline DB metrics for Woolworths products
-  3. Capture baseline confirmed-norm-mismatch count (before ingest) for AC5
-  4. Run bounded Woolworths crawl (one category, max N pages)
-  5. Ingest the scraped products (first run); capture listing-to-product map
-  6. Capture post-ingest metrics and repeat run (idempotency)
-  7. Run package-size audit
-  8. Run remediation planner (post-ingest) and compare against baseline count
-  9. Evaluate the five acceptance criteria
-  10. Write Markdown report
+  1. Validate --chain against the scraper registry; abort if unknown
+  2. Verify database name contains a safe suffix (dev / test / local / staging / ci)
+  3. Capture baseline DB metrics for the selected chain's products
+  4. Capture baseline confirmed-norm-mismatch count (before ingest) for AC5
+  5. Run bounded crawl (one category, max N pages)
+  6. Ingest the scraped products (first run); capture listing-to-product map
+  7. Capture post-ingest metrics and repeat run (idempotency)
+  8. Run package-size audit
+  9. Run remediation planner (post-ingest) and compare against baseline count
+  10. Evaluate the five acceptance criteria
+  11. Write Markdown report
 
 Acceptance criteria:
   AC1  At least one scraped product was enriched from count-only to a multipack
@@ -97,6 +104,11 @@ _SAFE_DB_FRAGMENTS = ("dev", "test", "local", "staging", "ci")
 #   r"^(\d+)\s*(?:ea|each|pk|pack)$"
 # Matches: "6PK", "6 Pack", "6EA", "6 each", "30 pack", "100 pack", etc.
 # Count=1 is excluded (scraper suppresses "1EA" to None rather than enriching it).
+#
+# NOTE: count-only detection tuned for Woolworths API response format.
+# Each retailer story (#115–#117) must probe the chain's PackageSize field and
+# extend this pattern (or confirm it covers the chain's API output) before AC1
+# can be evaluated for that retailer.
 _RE_COUNT_ONLY_API_SIZE = re.compile(r"^(\d+)\s*(?:ea|each|pk|pack)$", re.IGNORECASE)
 
 
@@ -690,11 +702,22 @@ def _print_sample(products: list[CatalogProduct], n: int = 20) -> None:
 
 
 def _parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Story #109 — Woolworths fresh-crawl validation")
+    p = argparse.ArgumentParser(
+        description="Multi-retailer fresh-crawl & catalog integrity validation"
+    )
+    p.add_argument(
+        "--chain",
+        default="woolworths",
+        help=(
+            "Retailer to crawl and ingest (default: woolworths). "
+            "Must be registered in scrapers/catalog_registry.py. "
+            "Supported: woolworths, aldi, iga, coles."
+        ),
+    )
     p.add_argument(
         "--category-name",
         default="Beer",
-        help="Category name to target (default: Beer)",
+        help="Category name to target (default: Beer). Available names are chain-specific.",
     )
     p.add_argument(
         "--max-pages",
@@ -714,8 +737,11 @@ def _parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--chains",
-        default="woolworths",
-        help="Comma-separated chains for audit scope (default: woolworths)",
+        default=None,
+        help=(
+            "Comma-separated chains for audit scope. "
+            "Defaults to the selected --chain when omitted."
+        ),
     )
     p.add_argument(
         "--confirm-db",
@@ -734,9 +760,18 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = _parse_args()
-    chain = "woolworths"
-    audit_chains = {c.strip() for c in args.chains.split(",")}
+    chain = args.chain
+    audit_chains = {c.strip() for c in args.chains.split(",")} if args.chains else {chain}
     out_dir = Path(args.out_dir)
+
+    # ── Chain registry validation ─────────────────────────────────────────────
+    # Validate before any network or DB operations so an unknown chain name is
+    # caught immediately with a clear message.
+    try:
+        get_catalog_scraper(chain, redis_client=None)
+    except ValueError as exc:
+        logger.error("Unknown chain '%s': %s", chain, exc)
+        return 1
 
     db_url = os.environ.get("DATABASE_URL", "")
     if not db_url:
