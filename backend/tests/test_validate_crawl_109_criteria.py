@@ -127,6 +127,23 @@ class TestAC1EnrichmentFiredOnScrapedData:
         _evaluate_criteria(result)
         assert result.criteria_results["ac1_enrichment_fired_on_scraped_data"] is False
 
+    @pytest.mark.unit
+    def test_not_exercised_when_count_only_found_but_all_unenrichable(self):
+        """Count-only products exist but no product name contains volume evidence.
+
+        This is the real-world tea-bag case: PackageSize='100 Pack' but the name
+        'Dilmah Tea Bags' has no per-bag volume, so combine_count_with_volume returns None.
+        AC1 must be None (not exercised), not False (failure) — the enrichment path is
+        not broken; there simply is no qualifying product in the sampled category.
+        """
+        result = ValidationResult(
+            count_only_external_ids={"E1", "E2"},
+            count_only_expected_norms={"E1": None, "E2": None},  # no volume in names
+            count_only_persisted_norms={},
+        )
+        _evaluate_criteria(result)
+        assert result.criteria_results["ac1_enrichment_fired_on_scraped_data"] is None
+
 
 class TestAC2NoUnexpectedMerges:
     """AC2: no product created by this crawl appears in the collision list."""

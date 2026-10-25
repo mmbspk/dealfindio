@@ -401,11 +401,25 @@ def _evaluate_criteria(result: ValidationResult) -> None:
             "(count_only_external_ids is empty — category may not have pack products)"
         )
     elif not enriched_ext_ids:
-        result.criteria_results["ac1_enrichment_fired_on_scraped_data"] = False
-        logger.warning(
-            "AC1 FAIL: scraper produced no multipack norms for count-only products "
-            "(combine_count_with_volume may not have fired or no volume was in product names)"
-        )
+        # Count-only products were found but none could be enriched because no
+        # product name contained unambiguous volume evidence.  This is "not exercised"
+        # (None) rather than a failure — correct behaviour for e.g. tea bags where
+        # there is no per-bag volume to combine with the pack count.
+        all_unenrichable = all(v is None for v in result.count_only_expected_norms.values())
+        if all_unenrichable:
+            result.criteria_results["ac1_enrichment_fired_on_scraped_data"] = None
+            logger.info(
+                "AC1 NOT EXERCISED: %d count-only product(s) found but none had volume "
+                "evidence in the product name — combine_count_with_volume cannot fire "
+                "without a per-unit volume; use a beverage/soft-drink category to exercise AC1",
+                len(result.count_only_external_ids),
+            )
+        else:
+            result.criteria_results["ac1_enrichment_fired_on_scraped_data"] = False
+            logger.warning(
+                "AC1 FAIL: scraper produced no multipack norms for count-only products "
+                "(combine_count_with_volume may not have fired or no volume was in product names)"
+            )
     elif not result.count_only_persisted_norms:
         result.criteria_results["ac1_enrichment_fired_on_scraped_data"] = False
         logger.warning(
