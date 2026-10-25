@@ -432,13 +432,14 @@ def _all_true_result() -> ValidationResult:
 
 
 class TestAllCriteriaPassed:
-    """_all_criteria_passed requires every criterion to pass or be Not Exercised.
+    """_all_criteria_passed requires all five criteria to be present and pass.
 
     Rules:
+    - All five AC1–AC5 keys must be present; a partial dict must not report PASS.
     - Any explicit False blocks PASS.
     - None on AC2–AC5 blocks PASS (incomplete verification).
     - None on AC1 is allowed (Not Exercised) when AC2–AC5 are all True.
-    - All-None blocks PASS (no verification happened).
+    - Errors always block PASS.
     """
 
     @pytest.mark.unit
@@ -473,7 +474,7 @@ class TestAllCriteriaPassed:
 
     @pytest.mark.unit
     def test_fails_when_all_criteria_are_none(self):
-        """All-None (no verification happened at all) must block PASS."""
+        """All five keys present but all None — AC2 None blocks PASS."""
         result = ValidationResult()
         for k in [
             "ac1_enrichment_fired_on_scraped_data",
@@ -483,6 +484,17 @@ class TestAllCriteriaPassed:
             "ac5_no_new_audit_defects",
         ]:
             result.criteria_results[k] = None
+        assert _all_criteria_passed(result) is False
+
+    @pytest.mark.unit
+    def test_fails_when_only_partial_criteria_present(self):
+        """A result with only some criteria (e.g. only AC2=True) must not report PASS.
+
+        This guards against incomplete evaluation where fewer than 5 criteria
+        were populated — e.g. a validator bug that skips AC3–AC5.
+        """
+        result = ValidationResult()
+        result.criteria_results["ac2_no_unexpected_merges"] = True
         assert _all_criteria_passed(result) is False
 
     @pytest.mark.unit

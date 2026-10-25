@@ -577,6 +577,17 @@ def _evaluate_criteria(result: ValidationResult) -> None:
         result.criteria_results["ac5_no_new_audit_defects"] = not grew
 
 
+_EXPECTED_CRITERIA: frozenset[str] = frozenset(
+    {
+        "ac1_enrichment_fired_on_scraped_data",
+        "ac2_no_unexpected_merges",
+        "ac3_separate_products",
+        "ac4_idempotent_repeat_ingest",
+        "ac5_no_new_audit_defects",
+    }
+)
+"""All five criteria that must be present in a completed live-run result."""
+
 _NOT_EXERCISED_ALLOWED: frozenset[str] = frozenset({"ac1_enrichment_fired_on_scraped_data"})
 """Criteria that may be None (Not Exercised) without blocking an overall PASS.
 
@@ -588,23 +599,27 @@ must be explicitly True — a None there indicates incomplete verification.
 
 
 def _all_criteria_passed(result: ValidationResult) -> bool:
-    """Return True only when every criterion is True (or Not Exercised for AC1).
+    """Return True only when all five criteria are present and all pass.
 
     Rules:
+    - All five keys from _EXPECTED_CRITERIA must be present; a partial result
+      (e.g. only AC2=True) must never report success.
     - Any explicit False blocks PASS.
-    - A None on any criterion outside _NOT_EXERCISED_ALLOWED blocks PASS
-      (incomplete verification must never report success).
-    - A None on an AC1-equivalent criterion is acceptable (Not Exercised).
-    - At least one criterion must be True; all-None is treated as a failure.
+    - A None on AC2–AC5 blocks PASS (incomplete verification).
+    - AC1=None is acceptable (Not Exercised — enrichment path confirmed present
+      but no enrichable count-only products in the sampled category).
+    - Errors always block PASS.
     """
-    if result.errors or not result.criteria_results:
+    if result.errors:
+        return False
+    if not _EXPECTED_CRITERIA.issubset(result.criteria_results):
         return False
     for k, v in result.criteria_results.items():
         if v is False:
             return False
         if v is None and k not in _NOT_EXERCISED_ALLOWED:
             return False
-    return any(v is True for v in result.criteria_results.values())
+    return True
 
 
 # ── Report generation ─────────────────────────────────────────────────────────
