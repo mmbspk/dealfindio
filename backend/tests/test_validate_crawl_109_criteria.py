@@ -144,6 +144,23 @@ class TestAC1EnrichmentFiredOnScrapedData:
         _evaluate_criteria(result)
         assert result.criteria_results["ac1_enrichment_fired_on_scraped_data"] is None
 
+    @pytest.mark.unit
+    def test_fails_when_expected_norms_empty_despite_count_only_ids(self):
+        """Empty count_only_expected_norms must not qualify as 'not exercised'.
+
+        all(v is None for v in {}.values()) is True for an empty dict, so without
+        an explicit non-empty guard, missing evidence would be misclassified as a
+        legitimate not-exercised result.  An empty mapping means the norm lookup
+        never ran — treat that as a failure, not as evidence of correct behaviour.
+        """
+        result = ValidationResult(
+            count_only_external_ids={"E1"},
+            count_only_expected_norms={},  # empty — evidence was never populated
+            count_only_persisted_norms={},
+        )
+        _evaluate_criteria(result)
+        assert result.criteria_results["ac1_enrichment_fired_on_scraped_data"] is False
+
 
 class TestAC2NoUnexpectedMerges:
     """AC2: no product created by this crawl appears in the collision list."""

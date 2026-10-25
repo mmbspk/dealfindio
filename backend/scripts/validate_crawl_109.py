@@ -405,7 +405,9 @@ def _evaluate_criteria(result: ValidationResult) -> None:
         # product name contained unambiguous volume evidence.  This is "not exercised"
         # (None) rather than a failure — correct behaviour for e.g. tea bags where
         # there is no per-bag volume to combine with the pack count.
-        all_unenrichable = all(v is None for v in result.count_only_expected_norms.values())
+        all_unenrichable = bool(result.count_only_expected_norms) and all(
+            v is None for v in result.count_only_expected_norms.values()
+        )
         if all_unenrichable:
             result.criteria_results["ac1_enrichment_fired_on_scraped_data"] = None
             logger.info(
