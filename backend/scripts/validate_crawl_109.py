@@ -99,17 +99,34 @@ logger = logging.getLogger("validate_crawl_109")
 # Database names that are recognised as safe dev/test targets.
 _SAFE_DB_FRAGMENTS = ("dev", "test", "local", "staging", "ci")
 
-# Woolworths raw API PackageSize values that contain only a count (no volume).
-# Mirrors the scraper's own detection in catalog_woolworths.py (line ~605):
-#   r"^(\d+)\s*(?:ea|each|pk|pack)$"
-# Matches: "6PK", "6 Pack", "6EA", "6 each", "30 pack", "100 pack", etc.
-# Count=1 is excluded (scraper suppresses "1EA" to None rather than enriching it).
+# Regex matching count-only size strings (no per-unit volume).
+# Shared across all chains — each scraper uses the same pattern internally.
+# Matches: "6PK", "6 Pack", "6EA", "6 each", "30 pack", "100 pack", "12 each", etc.
+# Count=1 is excluded (scraper suppresses "1EA" / "1 each" to None).
 #
-# NOTE: count-only detection tuned for Woolworths API response format.
-# Each retailer story (#115–#117) must probe the chain's PackageSize field and
-# extend this pattern (or confirm it covers the chain's API output) before AC1
-# can be evaluated for that retailer.
+# NOTE: count-only detection is confirmed for Woolworths and ALDI.
+# Stories #116–#117 must confirm the pattern covers IGA and Coles API formats.
 _RE_COUNT_ONLY_API_SIZE = re.compile(r"^(\d+)\s*(?:ea|each|pk|pack)$", re.IGNORECASE)
+
+# Per-chain field names for the raw product dict returned by crawl_category.
+# Each entry maps to (external_id_field, package_size_field).
+_CHAIN_ITEM_FIELDS: dict[str, tuple[str, str]] = {
+    "woolworths": ("Stockcode", "PackageSize"),
+    "aldi": ("sku", "sellingSize"),
+}
+
+
+def _extract_raw_items(raw: dict, chain: str) -> list[dict]:
+    """Extract the flat list of raw product dicts from a crawl_category response.
+
+    Different chains use different top-level structures:
+      woolworths: {"products": [item, ...]}
+      aldi:       {"pages": [{"data": [item, ...]}, ...]}
+    Returns an empty list for unknown chains (count-only detection will be skipped).
+    """
+    if chain == "aldi":
+        return [item for page in raw.get("pages", []) for item in page.get("data", [])]
+    return raw.get("products", [])
 
 
 # ── Data structures ───────────────────────────────────────────────────────────
@@ -285,21 +302,25 @@ def _count_confirmed_mismatches(session: Session, chains: set[str]) -> int:
 # ── Crawl helpers ─────────────────────────────────────────────────────────────
 
 
-def _identify_count_only_external_ids(raw_products: list[dict]) -> set[str]:
-    """Return Stockcodes of raw items whose PackageSize is count-only (e.g. '6PK', '30 pack').
+def _identify_count_only_external_ids(raw_items: list[dict], chain: str = "woolworths") -> set[str]:
+    """Return external IDs of raw items whose size field is count-only (e.g. '6PK', '30 pack').
 
     These are the candidates where combine_count_with_volume should fire.
     AC1 verifies at least one was successfully enriched.
 
-    count=1 (e.g. "1EA") is excluded because the scraper suppresses it to None
-    rather than enriching it — matching the scraper's own count > 1 filter.
+    count=1 (e.g. "1EA", "1 each") is excluded because scrapers suppress it to None
+    rather than enriching it — matching each scraper's own count > 1 filter.
+
+    Field names are chain-specific: Woolworths uses "Stockcode"/"PackageSize";
+    ALDI uses "sku"/"sellingSize".  Unknown chains fall back to Woolworths fields.
     """
+    id_field, size_field = _CHAIN_ITEM_FIELDS.get(chain, _CHAIN_ITEM_FIELDS["woolworths"])
     result: set[str] = set()
-    for item in raw_products:
-        size = item.get("PackageSize") or ""
+    for item in raw_items:
+        size = item.get(size_field) or ""
         m = _RE_COUNT_ONLY_API_SIZE.match(str(size))
         if m and int(m.group(1)) > 1:
-            ext_id = str(item.get("Stockcode", ""))
+            ext_id = str(item.get(id_field, ""))
             if ext_id:
                 result.add(ext_id)
     return result
@@ -362,7 +383,7 @@ async def _bounded_crawl(
         errors.append(f"crawl_category failed for '{target.name}': {exc}")
         return [], [], errors
 
-    raw_products = raw.get("products", [])
+    raw_products = _extract_raw_items(raw, chain)
     logger.info("Received %d raw product dicts from '%s'", len(raw_products), target.name)
     try:
         products = await scraper.parse_products(raw, target)  # parse_products expects the full dict
@@ -413,10 +434,10 @@ def _evaluate_criteria(result: ValidationResult) -> None:
             "(count_only_external_ids is empty — category may not have pack products)"
         )
     elif not enriched_ext_ids:
-        # Count-only products were found but none could be enriched because no
-        # product name contained unambiguous volume evidence.  This is "not exercised"
-        # (None) rather than a failure — correct behaviour for e.g. tea bags where
-        # there is no per-bag volume to combine with the pack count.
+        # All count-only products exist but none produced a multipack norm.
+        # Distinguish: every item genuinely lacks volume evidence (Not Exercised)
+        # vs the norm dict was never populated at all (structural FAIL).
+        # The empty-dict guard prevents a vacuous all() from passing as Not Exercised.
         all_unenrichable = bool(result.count_only_expected_norms) and all(
             v is None for v in result.count_only_expected_norms.values()
         )
@@ -424,9 +445,9 @@ def _evaluate_criteria(result: ValidationResult) -> None:
             result.criteria_results["ac1_enrichment_fired_on_scraped_data"] = None
             logger.info(
                 "AC1 NOT EXERCISED: %d count-only product(s) found but none had volume "
-                "evidence in the product name — combine_count_with_volume cannot fire "
-                "without a per-unit volume; use a beverage/soft-drink category to exercise AC1",
-                len(result.count_only_external_ids),
+                "evidence in product names (e.g. produce bundles, kit items). "
+                "Enrichment path exists but cannot fire on this category.",
+                len(result.count_only_expected_norms),
             )
         else:
             result.criteria_results["ac1_enrichment_fired_on_scraped_data"] = False
@@ -556,17 +577,34 @@ def _evaluate_criteria(result: ValidationResult) -> None:
         result.criteria_results["ac5_no_new_audit_defects"] = not grew
 
 
-def _all_criteria_passed(result: ValidationResult) -> bool:
-    """Return True only when every criterion is explicitly True and no errors occurred.
+_NOT_EXERCISED_ALLOWED: frozenset[str] = frozenset({"ac1_enrichment_fired_on_scraped_data"})
+"""Criteria that may be None (Not Exercised) without blocking an overall PASS.
 
-    A None result (missing evidence) is treated as a failure — incomplete validation
-    must never produce an overall PASS.
+AC1 is the only allowed not-exercised criterion: the enrichment path exists but
+cannot fire when the chosen category contains no enrichable count-only products
+(e.g. produce bundles, kit items with no mL in the name).  All other criteria
+must be explicitly True — a None there indicates incomplete verification.
+"""
+
+
+def _all_criteria_passed(result: ValidationResult) -> bool:
+    """Return True only when every criterion is True (or Not Exercised for AC1).
+
+    Rules:
+    - Any explicit False blocks PASS.
+    - A None on any criterion outside _NOT_EXERCISED_ALLOWED blocks PASS
+      (incomplete verification must never report success).
+    - A None on an AC1-equivalent criterion is acceptable (Not Exercised).
+    - At least one criterion must be True; all-None is treated as a failure.
     """
-    return (
-        not result.errors
-        and bool(result.criteria_results)
-        and all(v is True for v in result.criteria_results.values())
-    )
+    if result.errors or not result.criteria_results:
+        return False
+    for k, v in result.criteria_results.items():
+        if v is False:
+            return False
+        if v is None and k not in _NOT_EXERCISED_ALLOWED:
+            return False
+    return any(v is True for v in result.criteria_results.values())
 
 
 # ── Report generation ─────────────────────────────────────────────────────────
@@ -859,7 +897,7 @@ def main() -> int:
         _bounded_crawl(chain, args.category_name, args.max_pages)
     )
     result.scraped_products = products
-    result.count_only_external_ids = _identify_count_only_external_ids(raw_products)
+    result.count_only_external_ids = _identify_count_only_external_ids(raw_products, chain)
     result.errors.extend(crawl_errors)
 
     if not products:

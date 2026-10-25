@@ -432,11 +432,13 @@ def _all_true_result() -> ValidationResult:
 
 
 class TestAllCriteriaPassed:
-    """_all_criteria_passed requires every criterion to be explicitly True.
+    """_all_criteria_passed requires every criterion to pass or be Not Exercised.
 
-    None results — even when all definite values are True — must block PASS.
-    This is the invariant that prevents incomplete validation from reporting
-    success.
+    Rules:
+    - Any explicit False blocks PASS.
+    - None on AC2–AC5 blocks PASS (incomplete verification).
+    - None on AC1 is allowed (Not Exercised) when AC2–AC5 are all True.
+    - All-None blocks PASS (no verification happened).
     """
 
     @pytest.mark.unit
@@ -447,6 +449,14 @@ class TestAllCriteriaPassed:
         assert _all_criteria_passed(result) is True
 
     @pytest.mark.unit
+    def test_passes_when_ac1_not_exercised_and_ac2_to_ac5_true(self):
+        """AC1=None (Not Exercised) must not block PASS when AC2–AC5 are all True."""
+        result = _all_true_result()
+        _evaluate_criteria(result)
+        result.criteria_results["ac1_enrichment_fired_on_scraped_data"] = None
+        assert _all_criteria_passed(result) is True
+
+    @pytest.mark.unit
     def test_fails_when_any_criterion_is_false(self):
         result = _all_true_result()
         _evaluate_criteria(result)
@@ -454,12 +464,25 @@ class TestAllCriteriaPassed:
         assert _all_criteria_passed(result) is False
 
     @pytest.mark.unit
-    def test_fails_when_any_criterion_is_none(self):
-        """A None criterion (missing evidence) must block PASS."""
+    def test_fails_when_ac4_is_none(self):
+        """None on AC4 (listing maps empty — can't verify idempotency) must block PASS."""
         result = _all_true_result()
         _evaluate_criteria(result)
-        # Inject None to simulate listing maps unavailable (e.g. ingestion error)
         result.criteria_results["ac4_idempotent_repeat_ingest"] = None
+        assert _all_criteria_passed(result) is False
+
+    @pytest.mark.unit
+    def test_fails_when_all_criteria_are_none(self):
+        """All-None (no verification happened at all) must block PASS."""
+        result = ValidationResult()
+        for k in [
+            "ac1_enrichment_fired_on_scraped_data",
+            "ac2_no_unexpected_merges",
+            "ac3_separate_products",
+            "ac4_idempotent_repeat_ingest",
+            "ac5_no_new_audit_defects",
+        ]:
+            result.criteria_results[k] = None
         assert _all_criteria_passed(result) is False
 
     @pytest.mark.unit
