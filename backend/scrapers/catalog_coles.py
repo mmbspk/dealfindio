@@ -44,6 +44,7 @@ from tenacity import (
 )
 
 from app.services.category_normaliser import normalise_category as _normalise_category
+from app.services.package_size import combine_count_with_volume as _combine_count_with_volume
 from scrapers.base import ScraperError
 from scrapers.catalog_base import (
     HTML_HEADERS as _HTML_HEADERS,
@@ -701,11 +702,19 @@ def _extract_coles_package_size(item: dict) -> Optional[str]:
     # 1. Dedicated size field — fastest path, most reliable.
     dedicated = (item.get("size") or "").strip()
     if dedicated:
-        # Even with a dedicated unit size, the Coles API often omits the pack count
-        # from item["size"] (e.g. size="375mL") while item["name"] carries it
-        # (e.g. "12 Pack Soft Drink Cans 375mL").  Augment so the canonical norm
-        # becomes "12x375mL" not just "375mL".
         name_text = (item.get("name") or "").strip()
+        # Bare-count case: e.g. size="18 Pack" — no per-unit volume in the field.
+        # Try to enrich with volume from the product name (same conservative logic
+        # as Woolworths/ALDI/IGA).  Falls back to returning the bare count unchanged
+        # when the name has no volume, multiple volumes, or contradictory counts.
+        if _COLES_BARE_PACK_COUNT_RE.search(dedicated) and not _COLES_UNIT_BEARING_RE.search(
+            dedicated
+        ):
+            pack_m = _COLES_BARE_PACK_COUNT_RE.search(dedicated)
+            enriched = _combine_count_with_volume(name_text, int(pack_m.group(1)))
+            if enriched:
+                return enriched
+        # Unit size case: e.g. size="375mL" — augment with pack count from name.
         return _augment_with_pack_count(name_text, dedicated)
 
     # 2. Full description (uppercase, e.g. "PAULS ... 1.5 LITRE").
