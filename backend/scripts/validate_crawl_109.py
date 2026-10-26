@@ -100,19 +100,25 @@ logger = logging.getLogger("validate_crawl_109")
 _SAFE_DB_FRAGMENTS = ("dev", "test", "local", "staging", "ci")
 
 # Regex matching count-only size strings (no per-unit volume).
-# Shared across all chains — each scraper uses the same pattern internally.
+# Shared across Woolworths and ALDI — each uses a flat string size field.
 # Matches: "6PK", "6 Pack", "6EA", "6 each", "30 pack", "100 pack", "12 each", etc.
 # Count=1 is excluded (scraper suppresses "1EA" / "1 each" to None).
 #
-# NOTE: count-only detection is confirmed for Woolworths and ALDI.
-# Stories #116–#117 must confirm the pattern covers IGA and Coles API formats.
+# IGA uses a nested dict unitOfSize={"size": N, "type": "each"/"pk"/...} — see
+# _is_iga_count_only() for that chain's count-only detection.
+#
+# NOTE: count-only detection is confirmed for Woolworths, ALDI, and IGA.
+# Story #117 must confirm the pattern covers Coles API formats.
 _RE_COUNT_ONLY_API_SIZE = re.compile(r"^(\d+)\s*(?:ea|each|pk|pack)$", re.IGNORECASE)
 
 # Per-chain field names for the raw product dict returned by crawl_category.
 # Each entry maps to (external_id_field, package_size_field).
+# IGA's size field (unitOfSize) is a dict — _identify_count_only_external_ids
+# handles it via _is_iga_count_only() rather than the regex path.
 _CHAIN_ITEM_FIELDS: dict[str, tuple[str, str]] = {
     "woolworths": ("Stockcode", "PackageSize"),
     "aldi": ("sku", "sellingSize"),
+    "iga": ("productId", "unitOfSize"),
 }
 
 
@@ -122,10 +128,13 @@ def _extract_raw_items(raw: dict, chain: str) -> list[dict]:
     Different chains use different top-level structures:
       woolworths: {"products": [item, ...]}
       aldi:       {"pages": [{"data": [item, ...]}, ...]}
+      iga:        {"pages": [{"total": N, "count": N, "items": [item, ...]}, ...]}
     Returns an empty list for unknown chains (count-only detection will be skipped).
     """
     if chain == "aldi":
         return [item for page in raw.get("pages", []) for item in page.get("data", [])]
+    if chain == "iga":
+        return [item for page in raw.get("pages", []) for item in page.get("items", [])]
     return raw.get("products", [])
 
 
@@ -302,6 +311,24 @@ def _count_confirmed_mismatches(session: Session, chains: set[str]) -> int:
 # ── Crawl helpers ─────────────────────────────────────────────────────────────
 
 
+def _is_iga_count_only(item: dict) -> bool:
+    """Return True if an IGA raw item has a count-only unitOfSize (N≥2 each/ea/pk/pack).
+
+    IGA's size is a nested dict {"size": value, "type": "each"|"ea"|"pk"|"pack"|...}
+    rather than a plain string — the regex path used for Woolworths/ALDI cannot apply.
+    """
+    uos = item.get("unitOfSize") or {}
+    if not isinstance(uos, dict):
+        return False
+    size_type = (uos.get("type") or "").lower()
+    if size_type not in ("each", "ea", "pk", "pack"):
+        return False
+    try:
+        return int(float(uos.get("size") or 0)) > 1
+    except (TypeError, ValueError):
+        return False
+
+
 def _identify_count_only_external_ids(raw_items: list[dict], chain: str = "woolworths") -> set[str]:
     """Return external IDs of raw items whose size field is count-only (e.g. '6PK', '30 pack').
 
@@ -312,17 +339,23 @@ def _identify_count_only_external_ids(raw_items: list[dict], chain: str = "woolw
     rather than enriching it — matching each scraper's own count > 1 filter.
 
     Field names are chain-specific: Woolworths uses "Stockcode"/"PackageSize";
-    ALDI uses "sku"/"sellingSize".  Unknown chains fall back to Woolworths fields.
+    ALDI uses "sku"/"sellingSize"; IGA uses "productId"/"unitOfSize" (dict, not string).
+    Unknown chains fall back to Woolworths fields.
     """
     id_field, size_field = _CHAIN_ITEM_FIELDS.get(chain, _CHAIN_ITEM_FIELDS["woolworths"])
     result: set[str] = set()
     for item in raw_items:
-        size = item.get(size_field) or ""
-        m = _RE_COUNT_ONLY_API_SIZE.match(str(size))
-        if m and int(m.group(1)) > 1:
-            ext_id = str(item.get(id_field, ""))
-            if ext_id:
-                result.add(ext_id)
+        if chain == "iga":
+            if not _is_iga_count_only(item):
+                continue
+        else:
+            size = item.get(size_field) or ""
+            m = _RE_COUNT_ONLY_API_SIZE.match(str(size))
+            if not m or int(m.group(1)) <= 1:
+                continue
+        ext_id = str(item.get(id_field, ""))
+        if ext_id:
+            result.add(ext_id)
     return result
 
 
