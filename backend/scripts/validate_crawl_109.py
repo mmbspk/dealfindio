@@ -100,15 +100,17 @@ logger = logging.getLogger("validate_crawl_109")
 _SAFE_DB_FRAGMENTS = ("dev", "test", "local", "staging", "ci")
 
 # Regex matching count-only size strings (no per-unit volume).
-# Shared across Woolworths and ALDI — each uses a flat string size field.
+# Shared across Woolworths, ALDI, and Coles — each uses a flat string size field.
 # Matches: "6PK", "6 Pack", "6EA", "6 each", "30 pack", "100 pack", "12 each", etc.
 # Count=1 is excluded (scraper suppresses "1EA" / "1 each" to None).
 #
+# Coles: the raw item["size"] field can hold a bare count (e.g. "18 Pack").
+# These items never get enriched by combine_count_with_volume (the Coles scraper
+# uses _augment_with_pack_count instead), so AC1 is Not Exercised for those
+# categories — which is acceptable per the completeness rules.
+#
 # IGA uses a nested dict unitOfSize={"size": N, "type": "each"/"pk"/...} — see
 # _is_iga_count_only() for that chain's count-only detection.
-#
-# NOTE: count-only detection is confirmed for Woolworths, ALDI, and IGA.
-# Story #117 must confirm the pattern covers Coles API formats.
 _RE_COUNT_ONLY_API_SIZE = re.compile(r"^(\d+)\s*(?:ea|each|pk|pack)$", re.IGNORECASE)
 
 # Per-chain field names for the raw product dict returned by crawl_category.
@@ -119,6 +121,7 @@ _CHAIN_ITEM_FIELDS: dict[str, tuple[str, str]] = {
     "woolworths": ("Stockcode", "PackageSize"),
     "aldi": ("sku", "sellingSize"),
     "iga": ("productId", "unitOfSize"),
+    "coles": ("id", "size"),
 }
 
 
@@ -129,12 +132,27 @@ def _extract_raw_items(raw: dict, chain: str) -> list[dict]:
       woolworths: {"products": [item, ...]}
       aldi:       {"pages": [{"data": [item, ...]}, ...]}
       iga:        {"pages": [{"total": N, "count": N, "items": [item, ...]}, ...]}
+      coles:      {"pages": [{"pageProps": {"searchResults": {"results": [item, ...]}}}, ...]}
     Returns an empty list for unknown chains (count-only detection will be skipped).
     """
     if chain == "aldi":
         return [item for page in raw.get("pages", []) for item in page.get("data", [])]
     if chain == "iga":
         return [item for page in raw.get("pages", []) for item in page.get("items", [])]
+    if chain == "coles":
+        items: list[dict] = []
+        for page in raw.get("pages", []):
+            props = page.get("pageProps") or {}
+            search = props.get("searchResults") or {}
+            page_items = (
+                search.get("results")
+                or props.get("results")
+                or page.get("results")
+                or []
+            )
+            if isinstance(page_items, list):
+                items.extend(page_items)
+        return items
     return raw.get("products", [])
 
 
