@@ -169,17 +169,23 @@ def main() -> None:
             # fall back to the listing's chain column.
             resolved_chain: str | None = None
             if ext_src and ext_src.startswith("catalog_"):
-                resolved_chain = ext_src[len("catalog_"):]
+                resolved_chain = ext_src[len("catalog_") :]
             elif chain:
                 resolved_chain = chain
 
             if resolved_chain is None:
                 continue
+
+            # Track ALL chains this product appears in before applying any --chains
+            # filter. A restricted run (--chains coles,woolworths) must still know
+            # that product P also has an aldi listing so the multi-chain veto fires
+            # correctly — building product_all_chains only for restricted chains
+            # would silently weaken the same-chain guard.
+            product_all_chains.setdefault(pid, set()).add(resolved_chain)
+
+            # Apply --chains restriction only for which products to process.
             if restrict and resolved_chain not in restrict:
                 continue
-
-            # Track all chains this product appears in (used for same-chain guard below).
-            product_all_chains.setdefault(pid, set()).add(resolved_chain)
 
             n = _norm(product)
             if not n or len(n) < MIN_CANDIDATE_LEN:

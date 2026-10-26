@@ -56,7 +56,9 @@ MATCH_THRESHOLD = _mod.MATCH_THRESHOLD
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
-def _make_product(session, name: str, brand: str | None = None, size_norm: str | None = None) -> Product:
+def _make_product(
+    session, name: str, brand: str | None = None, size_norm: str | None = None
+) -> Product:
     p = Product(id=uuid4(), name=name, brand=brand, package_size_norm=size_norm)
     session.add(p)
     session.flush()
@@ -402,9 +404,13 @@ class TestSecondBestCandidate:
         # Candidate A: Woolworths 400g — name normalises identically (score 100),
         # size guard fires → must be skipped.
         _make_product_with_listing = lambda name, size, src, chain: (  # noqa: E731
-            _make_listing(test_db_session, _make_product(test_db_session, name, size_norm=size), src, chain)
+            _make_listing(
+                test_db_session, _make_product(test_db_session, name, size_norm=size), src, chain
+            )
         )
-        _make_product_with_listing("Natural Almonds 400g", "400g", "catalog_woolworths", "woolworths")
+        _make_product_with_listing(
+            "Natural Almonds 400g", "400g", "catalog_woolworths", "woolworths"
+        )
 
         # Candidate B: Drakes, NULL size — same normalised name, guard cannot
         # confirm a conflict → must be chosen as second-best.
@@ -438,6 +444,34 @@ class TestSecondBestCandidate:
         assert merged == 0
         captured = capsys.readouterr()
         assert "size conflict" in captured.out.lower()
+
+    @pytest.mark.integration
+    def test_size_unverified_held_in_write_mode(self, test_db_session, capsys) -> None:
+        """In write mode (dry_run=False) a SIZE UNVERIFIED candidate must NOT be merged.
+
+        dry_run=True reports it as a candidate (merged count 1) for reviewers.
+        dry_run=False holds it and logs HOLD — actual merge count must be 0.
+        """
+        aldi_p = _make_product(test_db_session, "Natural Almonds 750g", size_norm="750g")
+        _make_listing(test_db_session, aldi_p, "catalog_aldi", "aldi")
+
+        # Only candidate: NULL size — passes size guard but unverified.
+        ww_p = _make_product(test_db_session, "Natural Almonds 750g", size_norm=None)
+        _make_listing(test_db_session, ww_p, "catalog_woolworths", "woolworths")
+
+        # dry_run=True: match is REPORTED (merged count reflects candidates found)
+        _checked_dry, merged_dry = run_backfill(test_db_session, "catalog_aldi", dry_run=True)
+        capsys.readouterr()
+        assert merged_dry == 1, "dry-run must still report the SIZE UNVERIFIED candidate"
+
+        # dry_run=False: match must be HELD — no irreversible merge
+        _checked_live, merged_live = run_backfill(test_db_session, "catalog_aldi", dry_run=False)
+        captured = capsys.readouterr()
+        assert merged_live == 0, (
+            "In write mode, a candidate with missing package_size_norm on either side "
+            "must not be merged — size conflict cannot be ruled out."
+        )
+        assert "HOLD" in captured.out, "write-mode must log a HOLD message for unverified sizes"
 
 
 # ── Multi-chain guard ─────────────────────────────────────────────────────────

@@ -95,7 +95,9 @@ def merge_into(session: Session, duplicate: Product, canonical: Product, dry_run
     can_id = str(canonical.id)
 
     if dry_run:
-        print(f"  [DRY] would merge '{duplicate.name}' ({dup_id[:8]}) → '{canonical.name}' ({can_id[:8]})")
+        print(
+            f"  [DRY] would merge '{duplicate.name}' ({dup_id[:8]}) → '{canonical.name}' ({can_id[:8]})"
+        )
         return
 
     # Propagate a valid EAN-13 GTIN from the dropped record to the survivor
@@ -222,9 +224,12 @@ def run_backfill(session: Session, source_chain: str, dry_run: bool) -> tuple[in
             if extra:
                 cand_chains = set(
                     session.execute(
-                        select(ProductRetailerListing.external_source)
-                        .where(ProductRetailerListing.product_id == canonical.id)
-                    ).scalars().all()
+                        select(ProductRetailerListing.external_source).where(
+                            ProductRetailerListing.product_id == canonical.id
+                        )
+                    )
+                    .scalars()
+                    .all()
                 )
                 if extra & cand_chains:
                     continue
@@ -253,10 +258,22 @@ def run_backfill(session: Session, source_chain: str, dry_run: bool) -> tuple[in
             continue
 
         idx, score, canonical, size_is_null = chosen
-        size_note = " [SIZE UNVERIFIED — one side missing package_size_norm]" if size_is_null else ""
+        size_note = (
+            " [SIZE UNVERIFIED — one side missing package_size_norm]" if size_is_null else ""
+        )
         print(
             f"  MATCH ({score:.0f}): '{src_product.name}' [{source_chain}] → '{canonical.name}'{size_note}"
         )
+        # In write mode, skip candidates without confirmed sizes on both sides.
+        # A missing package_size_norm means we cannot rule out a size conflict,
+        # so these require explicit human approval before any irreversible merge.
+        # In dry-run the candidates are still reported for visibility.
+        if size_is_null and not dry_run:
+            print(
+                f"  HOLD (write-mode, size unverified): '{src_product.name}' — "
+                "re-run after package_size_norm is populated on both products."
+            )
+            continue
         merge_into(session, src_product, canonical, dry_run)
         merged += 1
 
