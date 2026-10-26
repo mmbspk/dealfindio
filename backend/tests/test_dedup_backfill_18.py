@@ -376,3 +376,114 @@ class TestMergeIntoGtinPropagation:
             "merge_into must call propagate_gtin_on_merge — "
             "the valid EAN-13 from the dropped product must transfer to the survivor."
         )
+
+
+# ── Second-best candidate selection ───────────────────────────────────────────
+
+
+class TestSecondBestCandidate:
+    """run_backfill must try the next candidate when the top-scoring one fails
+    the size guard (PR review issue #2).
+
+    Old behaviour (extractOne): if the single best match had a size conflict,
+    the source product was skipped entirely — losing valid second-best matches.
+
+    New behaviour (extract, limit=10): candidates are iterated in score order;
+    the first one passing all guards is chosen.
+    """
+
+    @pytest.mark.integration
+    def test_second_best_chosen_when_top_fails_size_guard(self, test_db_session, capsys) -> None:
+        """Exactly one match must be proposed even when the top-scoring candidate
+        fails the size guard — the NULL-size Drakes product must be selected."""
+        aldi_p = _make_product(test_db_session, "Natural Almonds 750g", size_norm="750g")
+        _make_listing(test_db_session, aldi_p, "catalog_aldi", "aldi")
+
+        # Candidate A: Woolworths 400g — name normalises identically (score 100),
+        # size guard fires → must be skipped.
+        _make_product_with_listing = lambda name, size, src, chain: (  # noqa: E731
+            _make_listing(test_db_session, _make_product(test_db_session, name, size_norm=size), src, chain)
+        )
+        _make_product_with_listing("Natural Almonds 400g", "400g", "catalog_woolworths", "woolworths")
+
+        # Candidate B: Drakes, NULL size — same normalised name, guard cannot
+        # confirm a conflict → must be chosen as second-best.
+        drakes_p = _make_product(test_db_session, "Natural Almonds 750g", size_norm=None)
+        _make_listing(test_db_session, drakes_p, "catalog_drakes", "drakes")
+
+        _checked, merged = run_backfill(test_db_session, "catalog_aldi", dry_run=True)
+
+        assert merged == 1, (
+            "When the top candidate (WW 400g) fails size guard, "
+            "the next valid candidate (Drakes NULL size) must be proposed."
+        )
+        captured = capsys.readouterr()
+        assert "SIZE UNVERIFIED" in captured.out, (
+            "A match where one side has no package_size_norm must be annotated "
+            "[SIZE UNVERIFIED] so reviewers know it needs extra verification."
+        )
+
+    @pytest.mark.integration
+    def test_all_conflicts_skips_source_product(self, test_db_session, capsys) -> None:
+        """When every candidate fails size guard, no merge must occur and the
+        SKIP message must still be printed (same as before)."""
+        aldi_p = _make_product(test_db_session, "Natural Almonds 750g", size_norm="750g")
+        _make_listing(test_db_session, aldi_p, "catalog_aldi", "aldi")
+
+        ww_p = _make_product(test_db_session, "Natural Almonds 400g", size_norm="400g")
+        _make_listing(test_db_session, ww_p, "catalog_woolworths", "woolworths")
+
+        _checked, merged = run_backfill(test_db_session, "catalog_aldi", dry_run=True)
+
+        assert merged == 0
+        captured = capsys.readouterr()
+        assert "size conflict" in captured.out.lower()
+
+
+# ── Multi-chain guard ─────────────────────────────────────────────────────────
+
+
+class TestMultiChainGuard:
+    """run_backfill must skip a candidate when the source product already has
+    a listing in the same chain as the candidate (PR review issue #4).
+
+    Without this guard, a product that was previously merged across chains
+    (and therefore has listings in both aldi and woolworths) could be falsely
+    merged a second time with a different woolworths product that shares its name.
+    """
+
+    @pytest.mark.integration
+    def test_source_already_covers_candidate_chain_is_skipped(self, test_db_session) -> None:
+        """Source product with an existing WW listing must not merge with another WW product."""
+        # Source product: ALDI, but ALSO has a woolworths listing (already merged)
+        multi_p = _make_product(test_db_session, "Natural Almonds 400g", size_norm="400g")
+        _make_listing(test_db_session, multi_p, "catalog_aldi", "aldi")
+        _make_listing(test_db_session, multi_p, "catalog_woolworths", "woolworths")
+
+        # Candidate: a different WW product with the same name stem
+        ww_p = _make_product(test_db_session, "Natural Almonds 400g", size_norm="400g")
+        _make_listing(test_db_session, ww_p, "catalog_woolworths", "woolworths")
+
+        _checked, merged = run_backfill(test_db_session, "catalog_aldi", dry_run=True)
+
+        assert merged == 0, (
+            "Source product already has a catalog_woolworths listing — "
+            "it is already represented in that chain and must not be re-merged "
+            "with a different woolworths product."
+        )
+
+    @pytest.mark.integration
+    def test_no_extra_chains_does_not_skip(self, test_db_session) -> None:
+        """Source product with NO extra chain listings must still be proposed normally."""
+        aldi_p = _make_product(test_db_session, "Natural Almonds 400g", size_norm="400g")
+        _make_listing(test_db_session, aldi_p, "catalog_aldi", "aldi")
+
+        ww_p = _make_product(test_db_session, "Natural Almonds 400g", size_norm="400g")
+        _make_listing(test_db_session, ww_p, "catalog_woolworths", "woolworths")
+
+        _checked, merged = run_backfill(test_db_session, "catalog_aldi", dry_run=True)
+
+        assert merged == 1, (
+            "Source product with only a catalog_aldi listing (no extra chains) "
+            "must still be matched against woolworths candidates normally."
+        )

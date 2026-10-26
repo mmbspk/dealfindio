@@ -59,7 +59,6 @@ from app.models.product_retailer_listing import ProductRetailerListing
 from app.services.ai_dedup import (
     AIVerdict,
     DedupDecision,
-    ProductFacts,
     choose_survivor,
     facts_for_product_id,
     judge_pair,
@@ -146,16 +145,21 @@ def main() -> None:
         # the primary ProductRetailerListing (Product has no external_source column).
         # Primary listing = most recently seen (catalog_last_seen_at DESC NULLS LAST),
         # breaking ties by id ASC — same ordering used by facts_for_product_id.
+        # ORDER BY gives deterministic chain assignment when a product has
+        # multiple catalog listings (first alphabetically wins for primary chain).
         stmt = (
             select(Product, ProductRetailerListing.external_source, ProductRetailerListing.chain)
             .join(ProductRetailerListing, ProductRetailerListing.product_id == Product.id)
             .where(ProductRetailerListing.external_source.like("catalog_%"))
+            .order_by(ProductRetailerListing.product_id, ProductRetailerListing.external_source)
         )
         rows = session.execute(stmt).all()
 
         by_chain: dict[str, list[Product]] = {}
         # Map product_id → resolved chain name (e.g. "aldi", "coles")
         product_chain_map: dict[str, str] = {}
+        # Map product_id → ALL chain names from its listings (for multi-chain guard)
+        product_all_chains: dict[str, set[str]] = {}
 
         for product, ext_src, chain in rows:
             pid = str(product.id)
@@ -173,6 +177,10 @@ def main() -> None:
                 continue
             if restrict and resolved_chain not in restrict:
                 continue
+
+            # Track all chains this product appears in (used for same-chain guard below).
+            product_all_chains.setdefault(pid, set()).add(resolved_chain)
+
             n = _norm(product)
             if not n or len(n) < MIN_CANDIDATE_LEN:
                 continue
@@ -216,6 +224,17 @@ def main() -> None:
                     continue
                 _name, score, idx = best
                 pb = list_b[idx]
+
+                # Skip if either product already has a listing in the other's chain.
+                # A product with multi-retailer listings is already cross-chain;
+                # comparing it against another product in one of its existing chains
+                # risks conflating two genuinely different products that are merely
+                # both present in that chain.
+                chains_a = product_all_chains.get(str(pa.id), set())
+                chains_b = product_all_chains.get(str(pb.id), set())
+                if chains_a & chains_b:
+                    vetoed += 1
+                    continue
 
                 # Brand hard-veto before spending an API call.
                 if brands_conflict(pa.brand, pb.brand):

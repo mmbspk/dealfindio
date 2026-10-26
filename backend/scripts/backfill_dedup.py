@@ -35,7 +35,7 @@ os.environ.setdefault("DATABASE_URL", os.environ.get("DATABASE_URL", ""))
 os.environ.setdefault("REDIS_URL", "redis://localhost/0")
 os.environ.setdefault("SECRET_KEY", "backfill-script")
 
-from rapidfuzz.process import extractOne
+from rapidfuzz.process import extract as fuzzy_extract
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session
 
@@ -163,6 +163,19 @@ def run_backfill(session: Session, source_chain: str, dry_run: bool) -> tuple[in
             filtered_candidates.append(p)
             filtered_names.append(n)
 
+    # Build set of non-source-chain external_sources per source product.
+    # If a source product already has a listing in the candidate's chain it is
+    # already represented there — skip to avoid false cross-chain merges.
+    src_product_ids = [sp.id for sp in source_products]  # UUID objects (not str) for IN clause
+    _extra_rows = session.execute(
+        select(ProductRetailerListing.product_id, ProductRetailerListing.external_source)
+        .where(ProductRetailerListing.product_id.in_(src_product_ids))
+        .where(ProductRetailerListing.external_source != source_chain)
+    ).all()
+    src_extra_chains: dict[str, set[str]] = {}
+    for _pid, _ext_src in _extra_rows:
+        src_extra_chains.setdefault(str(_pid), set()).add(_ext_src)
+
     checked = 0
     merged = 0
 
@@ -178,43 +191,71 @@ def run_backfill(session: Session, source_chain: str, dry_run: bool) -> tuple[in
         if not normalized or len(normalized) < MIN_CANDIDATE_LEN:
             continue
 
-        result = extractOne(normalized, filtered_names, score_cutoff=MATCH_THRESHOLD)
-        if result is None:
+        # Use extract(limit=10) rather than extractOne so that if the top candidate
+        # fails the size guard we can try the next-best match (Issue #2 from PR review).
+        results = fuzzy_extract(normalized, filtered_names, score_cutoff=MATCH_THRESHOLD, limit=10)
+        if not results:
             continue
 
-        _name, score, idx = result
-        canonical = filtered_candidates[idx]
+        # Iterate candidates in score order until one passes all guards.
+        best_size_skip: tuple | None = None  # (canonical, src_size, cand_size, score)
+        chosen: tuple | None = None  # (idx, score, canonical, size_is_null)
 
-        if str(canonical.id) in EXCLUDED_PRODUCT_IDS:
+        for _cand_name, score, idx in results:
+            canonical = filtered_candidates[idx]
+            cand_id = str(canonical.id)
+
+            if cand_id in EXCLUDED_PRODUCT_IDS or canonical.id == src_product.id:
+                continue
+
+            # Brand veto: never merge across a clear brand conflict.
+            if brands_conflict(src_product.brand, canonical.brand):
+                print(
+                    f"  SKIP (brand conflict): '{src_product.name}' [{src_product.brand}] "
+                    f"vs '{canonical.name}' [{canonical.brand}]"
+                )
+                continue
+
+            # Multi-chain guard: skip if source product already has a listing in
+            # one of the candidate's chains — it is already represented there.
+            extra = src_extra_chains.get(src_id)
+            if extra:
+                cand_chains = set(
+                    session.execute(
+                        select(ProductRetailerListing.external_source)
+                        .where(ProductRetailerListing.product_id == canonical.id)
+                    ).scalars().all()
+                )
+                if extra & cand_chains:
+                    continue
+
+            # Package-size guard: skip when both sizes are known and differ.
+            src_size = src_product.package_size_norm
+            cand_size = canonical.package_size_norm
+            if src_size and cand_size and src_size != cand_size:
+                # Record the best size-conflict skip for logging, then try next.
+                if best_size_skip is None:
+                    best_size_skip = (canonical, src_size, cand_size, score)
+                continue
+
+            # All guards passed.
+            chosen = (idx, score, canonical, not (src_size and cand_size))
+            break
+
+        if chosen is None:
+            # No valid candidate — log the best size-conflict hit if there was one.
+            if best_size_skip is not None:
+                can, s_size, c_size, s = best_size_skip
+                print(
+                    f"  SKIP (size conflict): '{src_product.name}' [{s_size}] "
+                    f"vs '{can.name}' [{c_size}] (score={s:.0f})"
+                )
             continue
 
-        if canonical.id == src_product.id:
-            continue  # already the same row
-
-        # Brand veto: never merge across a clear brand conflict (e.g. Kirks vs
-        # Fanta both named "Orange Soft Drink").
-        if brands_conflict(src_product.brand, canonical.brand):
-            print(
-                f"  SKIP (brand conflict): '{src_product.name}' [{src_product.brand}] "
-                f"vs '{canonical.name}' [{canonical.brand}]"
-            )
-            continue
-
-        # Package-size guard: if both products have a normalised package size and
-        # they differ, they are different products even when names match closely.
-        # (e.g. "Coke 375mL" norm="375mL" vs "Coke 2L" norm="2L" — both normalise
-        # to "coke" after FuzzyMatcher strips size tokens.)
-        src_size = src_product.package_size_norm
-        cand_size = canonical.package_size_norm
-        if src_size and cand_size and src_size != cand_size:
-            print(
-                f"  SKIP (size conflict): '{src_product.name}' [{src_size}] "
-                f"vs '{canonical.name}' [{cand_size}] (score={score:.0f})"
-            )
-            continue
-
+        idx, score, canonical, size_is_null = chosen
+        size_note = " [SIZE UNVERIFIED — one side missing package_size_norm]" if size_is_null else ""
         print(
-            f"  MATCH ({score:.0f}): '{src_product.name}' [{source_chain}] → '{canonical.name}'"
+            f"  MATCH ({score:.0f}): '{src_product.name}' [{source_chain}] → '{canonical.name}'{size_note}"
         )
         merge_into(session, src_product, canonical, dry_run)
         merged += 1
