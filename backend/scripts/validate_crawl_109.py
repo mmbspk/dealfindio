@@ -104,10 +104,10 @@ _SAFE_DB_FRAGMENTS = ("dev", "test", "local", "staging", "ci")
 # Matches: "6PK", "6 Pack", "6EA", "6 each", "30 pack", "100 pack", "12 each", etc.
 # Count=1 is excluded (scraper suppresses "1EA" / "1 each" to None).
 #
-# Coles: the raw item["size"] field can hold a bare count (e.g. "18 Pack").
-# These items never get enriched by combine_count_with_volume (the Coles scraper
-# uses _augment_with_pack_count instead), so AC1 is Not Exercised for those
-# categories — which is acceptable per the completeness rules.
+# Coles: item["size"] can be a bare count (e.g. "18 Pack"). After Story #117 the
+# Coles scraper calls combine_count_with_volume when the product name contains a
+# usable per-unit volume, so AC1 can fire for those items. Items whose names lack
+# volume info remain unenrichable → AC1 Not Exercised for that subset.
 #
 # IGA uses a nested dict unitOfSize={"size": N, "type": "each"/"pk"/...} — see
 # _is_iga_count_only() for that chain's count-only detection.

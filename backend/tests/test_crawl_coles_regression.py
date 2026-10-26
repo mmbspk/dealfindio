@@ -150,7 +150,10 @@ class TestColesCountOnlyIdentification:
     def test_bare_count_in_size_identified(self, coles_raw_items) -> None:
         """Items with size='18 Pack' must be identified by id."""
         count_only_ids = _identify_count_only_external_ids(coles_raw_items, "coles")
-        assert "1111003" in count_only_ids  # 18 Pack
+        assert "1111003" in count_only_ids  # 18 Pack (enrichable via name volume)
+        assert "1111009" in count_only_ids  # 18 Pack (contradictory count — falls back)
+        assert "1111010" in count_only_ids  # 6 Pack (multiple volumes — falls back)
+        assert "1111011" in count_only_ids  # 8 Pack (weight-only name — falls back)
 
     @pytest.mark.unit
     def test_unit_size_items_not_count_only(self, coles_raw_items) -> None:
@@ -196,14 +199,17 @@ class TestColesScraperParsingRegression:
     """Regression: _parse_item must correctly handle all Coles size variants.
 
     Coles size formats encountered in the wild:
-      item["size"] = "375mL"  + pack count in name → "375mL 24 Pack" via _augment_with_pack_count
-      item["size"] = "6x375mL"                     → "6x375mL" (already multipack)
-      item["size"] = "18 Pack"                      → "18 Pack" (count-only, unenrichable by Coles scraper)
+      item["size"] = "375mL"  + pack count in name  → "375mL 24 Pack" via _augment_with_pack_count
+      item["size"] = "6x375mL"                      → "6x375mL" (already multipack)
+      item["size"] = "18 Pack" + volume in name     → "375mL 18 Pack" via combine_count_with_volume
+      item["size"] = "18 Pack", contradictory count → "18 Pack" unchanged (conservative fallback)
+      item["size"] = "6 Pack", multiple volumes     → "6 Pack" unchanged (ambiguous, conservative)
+      item["size"] = "8 Pack", weight-only name     → "8 Pack" unchanged (no mL/L to combine)
       item["size"] = "2L" / "200g" / "1kg"         → plain size passes through
-      item["size"] = null + size in name/desc      → "375mL 6 Pack" (name-fallback path)
-      item["size"] = null, no size anywhere        → package_size=None
-      item["_type"] = "SINGLE_TILE_AD"             → returns None
-      pricing.now = null                           → returns None
+      item["size"] = null + size in name/desc       → "375mL 6 Pack" (name-fallback path)
+      item["size"] = null, no size anywhere         → package_size=None
+      item["_type"] = "SINGLE_TILE_AD"              → returns None
+      pricing.now = null                            → returns None
     """
 
     @pytest.mark.unit
@@ -225,12 +231,39 @@ class TestColesScraperParsingRegression:
         assert normalize_package_size(cp.package_size) == "2L"
 
     @pytest.mark.unit
-    def test_bare_count_size_produces_pack_string(self, coles_raw_items) -> None:
-        """size='18 Pack' (count-only) → '18 Pack'; norm=None (Coles doesn't enrich bare counts)."""
+    def test_bare_count_enriched_from_name(self, coles_raw_items) -> None:
+        """size='18 Pack' + name has '375mL' → combine_count_with_volume → '375mL 18 Pack'; norm='18x375mL'."""
         item = _find(coles_raw_items, "bare_count_in_size_field")
         cp = _parse_item(item, _cat("Drinks"), _TODAY, _EMPTY_L2_MAP)
         assert cp is not None
+        assert cp.package_size == "375mL 18 Pack"
+        assert normalize_package_size(cp.package_size) == "18x375mL"
+
+    @pytest.mark.unit
+    def test_bare_count_contradictory_count_falls_back(self, coles_raw_items) -> None:
+        """size='18 Pack' but name says '12 Pack' → contradictory count → falls back to '18 Pack'; norm=None."""
+        item = _find(coles_raw_items, "bare_count_contradictory_count")
+        cp = _parse_item(item, _cat("Drinks"), _TODAY, _EMPTY_L2_MAP)
+        assert cp is not None
         assert cp.package_size == "18 Pack"
+        assert normalize_package_size(cp.package_size) is None
+
+    @pytest.mark.unit
+    def test_bare_count_multiple_volumes_falls_back(self, coles_raw_items) -> None:
+        """size='6 Pack' + name has two different volumes → ambiguous → falls back to '6 Pack'; norm=None."""
+        item = _find(coles_raw_items, "bare_count_multiple_volumes")
+        cp = _parse_item(item, _cat("Drinks"), _TODAY, _EMPTY_L2_MAP)
+        assert cp is not None
+        assert cp.package_size == "6 Pack"
+        assert normalize_package_size(cp.package_size) is None
+
+    @pytest.mark.unit
+    def test_bare_count_weight_only_name_falls_back(self, coles_raw_items) -> None:
+        """size='8 Pack' + name has only 560g (weight) → no mL/L → falls back to '8 Pack'; norm=None."""
+        item = _find(coles_raw_items, "bare_count_weight_only_name")
+        cp = _parse_item(item, _cat("Deli"), _TODAY, _EMPTY_L2_MAP)
+        assert cp is not None
+        assert cp.package_size == "8 Pack"
         assert normalize_package_size(cp.package_size) is None
 
     @pytest.mark.unit
