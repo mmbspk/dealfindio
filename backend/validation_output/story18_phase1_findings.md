@@ -34,8 +34,9 @@ and score 100 against each other — **a false-positive merge**.
 | Chain | Size-conflict pairs | Clean merge candidates |
 |-------|---------------------|------------------------|
 | ALDI  | **122**             | 151                    |
-| Coles | **100+**            | TBD (probe still running) |
-| IGA   | TBD                 | TBD                    |
+| Coles | **819**             | 3,186                  |
+| IGA   | **1,157**           | 5,182                  |
+| **Total** | **2,098**       | **8,519**              |
 
 **Selected false-positive examples (would merge without guard):**
 
