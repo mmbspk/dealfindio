@@ -144,12 +144,7 @@ def _extract_raw_items(raw: dict, chain: str) -> list[dict]:
         for page in raw.get("pages", []):
             props = page.get("pageProps") or {}
             search = props.get("searchResults") or {}
-            page_items = (
-                search.get("results")
-                or props.get("results")
-                or page.get("results")
-                or []
-            )
+            page_items = search.get("results") or props.get("results") or page.get("results") or []
             if isinstance(page_items, list):
                 items.extend(page_items)
         return items
