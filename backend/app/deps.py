@@ -494,17 +494,14 @@ def get_anthropic_client():
 
     if _anthropic_client is None:
         settings = get_settings()
-        if not settings.ANTHROPIC_API_KEY:
-            raise RuntimeError(
-                "ANTHROPIC_API_KEY is not configured; receipt parsing is unavailable"
-            )
         from anthropic import Anthropic
 
-        # Resolve the proxy base URL and API key DB-first (admin Configs UI) then
-        # env. Both are read at client-construction time — the client is a cached
-        # singleton, so changes made in the admin UI take effect on the next
-        # backend restart. The DB key takes precedence so that a proxy with its
-        # own key format (e.g. a UUID gateway key) can be set without touching .env.
+        # Resolve both the proxy URL and API key DB-first (admin Configs UI),
+        # falling back to env / settings. Both are read at client-construction
+        # time — the client is a cached singleton, so changes take effect on the
+        # next backend restart. DB takes precedence so that a proxy with its own
+        # key format (e.g. a UUID gateway key) can be configured without
+        # touching .env. The env key is only the final fallback.
         base_url = settings.ANTHROPIC_BASE_URL
         api_key = settings.ANTHROPIC_API_KEY
         if _SessionLocal is not None:
@@ -518,6 +515,12 @@ def get_anthropic_client():
                         api_key = db_key
             except Exception as exc:  # noqa: BLE001 — never block client init on config lookup
                 logger.warning("Could not read Anthropic config overrides from DB: %s", exc)
+
+        # Validate after the DB override has had a chance to supply the key.
+        if not api_key:
+            raise RuntimeError(
+                "ANTHROPIC_API_KEY is not configured; receipt parsing is unavailable"
+            )
 
         client_kwargs = {"api_key": api_key}
         if base_url:
