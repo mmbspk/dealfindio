@@ -494,27 +494,35 @@ def get_anthropic_client():
 
     if _anthropic_client is None:
         settings = get_settings()
-        if not settings.ANTHROPIC_API_KEY:
-            raise RuntimeError(
-                "ANTHROPIC_API_KEY is not configured; receipt parsing is unavailable"
-            )
         from anthropic import Anthropic
 
-        # Resolve the proxy base URL DB-first (admin Configs UI) then env. Like
-        # ANTHROPIC_API_KEY, this is read at client-construction time — the
-        # client is a cached singleton, so a base-URL change made in the admin UI
-        # takes effect on the next backend start.
+        # Resolve both the proxy URL and API key DB-first (admin Configs UI),
+        # falling back to env / settings. Both are read at client-construction
+        # time — the client is a cached singleton, so changes take effect on the
+        # next backend restart. DB takes precedence so that a proxy with its own
+        # key format (e.g. a UUID gateway key) can be configured without
+        # touching .env. The env key is only the final fallback.
         base_url = settings.ANTHROPIC_BASE_URL
+        api_key = settings.ANTHROPIC_API_KEY
         if _SessionLocal is not None:
             try:
                 from app.services.config_store import get_runtime_value
 
                 with _SessionLocal() as session:
                     base_url = get_runtime_value("ANTHROPIC_BASE_URL", session) or base_url
+                    db_key = get_runtime_value("ANTHROPIC_API_KEY", session)
+                    if db_key:
+                        api_key = db_key
             except Exception as exc:  # noqa: BLE001 — never block client init on config lookup
-                logger.warning("Could not read ANTHROPIC_BASE_URL override: %s", exc)
+                logger.warning("Could not read Anthropic config overrides from DB: %s", exc)
 
-        client_kwargs = {"api_key": settings.ANTHROPIC_API_KEY}
+        # Validate after the DB override has had a chance to supply the key.
+        if not api_key:
+            raise RuntimeError(
+                "ANTHROPIC_API_KEY is not configured; receipt parsing is unavailable"
+            )
+
+        client_kwargs = {"api_key": api_key}
         if base_url:
             # Route through a proxy / gateway when configured.
             client_kwargs["base_url"] = base_url
