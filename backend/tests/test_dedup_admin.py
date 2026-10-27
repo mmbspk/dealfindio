@@ -475,3 +475,37 @@ class TestProductMergeLog:
         assert log.ai_reason == "Identical EAN-13 barcode"
         assert log.proposed_by == "auto"
         assert log.reviewed_by == "admin@example.com"
+
+    @pytest.mark.integration
+    def test_merge_and_log_are_atomic(self, test_db_session) -> None:
+        """Product deletion and audit log must succeed or fail together.
+
+        Rolling back the transaction must leave the drop product intact and
+        the ProductMergeLog empty — the two writes are inseparable.
+        """
+        import uuid as _uuid
+
+        from sqlalchemy import select
+
+        from app.models.product_merge_log import ProductMergeLog
+        from app.routers.admin import _merge_products
+
+        keep, drop, _pr = self._make_pair(test_db_session)
+        keep_id, drop_id = str(keep.id), str(drop.id)
+
+        sp = test_db_session.begin_nested()
+        _merge_products(test_db_session, keep_id, drop_id, reviewed_by="test")
+        sp.rollback()
+
+        assert (
+            test_db_session.execute(
+                select(Product).where(Product.id == _uuid.UUID(drop_id))
+            ).scalar_one_or_none()
+            is not None
+        ), "Drop product must survive a rolled-back merge"
+        assert (
+            test_db_session.execute(
+                select(ProductMergeLog).where(ProductMergeLog.drop_id == drop_id)
+            ).scalar_one_or_none()
+            is None
+        ), "ProductMergeLog entry must not persist after rollback"

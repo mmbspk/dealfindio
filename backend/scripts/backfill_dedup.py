@@ -36,13 +36,12 @@ os.environ.setdefault("REDIS_URL", "redis://localhost/0")
 os.environ.setdefault("SECRET_KEY", "backfill-script")
 
 from rapidfuzz.process import extract as fuzzy_extract
-from sqlalchemy import create_engine, select, text
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.models import Product
 from app.models.product_retailer_listing import ProductRetailerListing
-from app.services.ai_dedup import propagate_gtin_on_merge
 from app.services.product_dedup import FuzzyMatcher, brands_conflict
 
 _matcher = FuzzyMatcher()
@@ -90,52 +89,22 @@ def load_candidates(session: Session, exclude_sources: list[str]) -> list[Produc
 
 
 def merge_into(session: Session, duplicate: Product, canonical: Product, dry_run: bool) -> None:
-    """Re-point all references from duplicate → canonical, then delete duplicate."""
-    dup_id = str(duplicate.id)
-    can_id = str(canonical.id)
+    """Re-point all references from duplicate → canonical, then delete duplicate.
 
+    Delegates to _merge_products so every write-mode merge is audited in
+    product_merge_log and follows the same GTIN propagation / candidate
+    invalidation logic as the admin UI and the AI dedup stream.
+    """
     if dry_run:
         print(
-            f"  [DRY] would merge '{duplicate.name}' ({dup_id[:8]}) → '{canonical.name}' ({can_id[:8]})"
+            f"  [DRY] would merge '{duplicate.name}' ({str(duplicate.id)[:8]})"
+            f" → '{canonical.name}' ({str(canonical.id)[:8]})"
         )
         return
 
-    # Propagate a valid EAN-13 GTIN from the dropped record to the survivor
-    # before the DELETE removes it.
-    propagate_gtin_on_merge(session, can_id, dup_id)
+    from app.routers.admin import _merge_products
 
-    # Re-point price_reports
-    session.execute(
-        text("UPDATE price_reports SET product_id = :can WHERE product_id = :dup"),
-        {"can": can_id, "dup": dup_id},
-    )
-    # Re-point watchlist items (skip if user already watches canonical in same list)
-    session.execute(
-        text(
-            """
-            UPDATE user_watchlist SET product_id = :can
-            WHERE product_id = :dup
-              AND NOT EXISTS (
-                SELECT 1 FROM user_watchlist u2
-                WHERE u2.product_id = :can
-                  AND u2.user_id = user_watchlist.user_id
-                  AND (u2.list_id = user_watchlist.list_id OR (u2.list_id IS NULL AND user_watchlist.list_id IS NULL))
-              )
-        """
-        ),
-        {"can": can_id, "dup": dup_id},
-    )
-    # Delete any remaining watchlist rows that would conflict
-    session.execute(
-        text("DELETE FROM user_watchlist WHERE product_id = :dup"),
-        {"dup": dup_id},
-    )
-    # Delete the duplicate product row
-    session.execute(
-        text("DELETE FROM products WHERE id = :dup"),
-        {"dup": dup_id},
-    )
-    session.flush()
+    _merge_products(session, str(canonical.id), str(duplicate.id), reviewed_by="script")
 
 
 def run_backfill(session: Session, source_chain: str, dry_run: bool) -> tuple[int, int]:

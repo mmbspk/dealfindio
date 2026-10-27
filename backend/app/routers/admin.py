@@ -984,26 +984,42 @@ def _merge_products(
         {"drop": _drop_sql},
     ).one_or_none()
 
-    drop_chain = session.execute(
-        text(
-            "SELECT external_source FROM product_retailer_listings "
-            "WHERE product_id = :drop LIMIT 1"
-        ),
-        {"drop": _drop_sql},
-    ).scalar_one_or_none()
+    drop_sources = (
+        session.execute(
+            text(
+                "SELECT DISTINCT external_source FROM product_retailer_listings "
+                "WHERE product_id = :drop ORDER BY external_source"
+            ),
+            {"drop": _drop_sql},
+        )
+        .scalars()
+        .all()
+    )
+    drop_chain = (
+        ",".join((s[len("catalog_") :] if s.startswith("catalog_") else s) for s in drop_sources)
+        or None
+    )
 
     keep_snap = session.execute(
         text("SELECT name FROM products WHERE id = :keep"),
         {"keep": _keep_sql},
     ).one_or_none()
 
-    keep_chain = session.execute(
-        text(
-            "SELECT external_source FROM product_retailer_listings "
-            "WHERE product_id = :keep LIMIT 1"
-        ),
-        {"keep": _keep_sql},
-    ).scalar_one_or_none()
+    keep_sources = (
+        session.execute(
+            text(
+                "SELECT DISTINCT external_source FROM product_retailer_listings "
+                "WHERE product_id = :keep ORDER BY external_source"
+            ),
+            {"keep": _keep_sql},
+        )
+        .scalars()
+        .all()
+    )
+    keep_chain = (
+        ",".join((s[len("catalog_") :] if s.startswith("catalog_") else s) for s in keep_sources)
+        or None
+    )
 
     session.execute(
         text("UPDATE price_reports SET product_id = :keep WHERE product_id = :drop"),
