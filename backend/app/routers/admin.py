@@ -1069,8 +1069,9 @@ def _merge_products(
         {"drop": _drop_sql},
     )
 
-    # Write the permanent audit record AFTER the delete so the log is only
-    # created when the merge actually committed (flush orders writes).
+    # Write the permanent audit record after the DELETE. The log entry and
+    # the product deletion are both part of the caller's transaction — they
+    # commit or roll back together (as the atomicity test verifies).
     from app.models.product_merge_log import ProductMergeLog
 
     session.add(
