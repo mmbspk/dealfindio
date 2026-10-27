@@ -120,9 +120,13 @@ def main() -> None:
     settings = get_settings()
     restrict = {c.strip() for c in args.chains.split(",") if c.strip()} if args.chains else None
 
-    from app.deps import get_anthropic_client
+    from app.deps import get_anthropic_client, init_database
     from app.services.config_store import get_runtime_typed
 
+    # init_database sets _SessionLocal in app.deps so that get_anthropic_client()
+    # can read ANTHROPIC_API_KEY and ANTHROPIC_BASE_URL from the DB (same as the
+    # FastAPI app does at startup).
+    init_database(settings.DATABASE_URL, pool_size=5, echo=False)
     engine = create_engine(settings.DATABASE_URL, echo=False)
 
     with Session(engine) as session:
