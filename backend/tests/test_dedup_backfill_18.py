@@ -380,6 +380,62 @@ class TestMergeIntoGtinPropagation:
         )
 
 
+# ── merge_into: ProductMergeLog audit trail ────────────────────────────────────
+
+
+class TestMergeIntoCreatesAuditLog:
+    """merge_into must create a ProductMergeLog entry for every write-mode merge.
+
+    After Story #19, merge_into delegates to _merge_products which writes
+    the permanent audit record. Verifying this here ensures every fuzzy-backfill
+    merge is covered by the audit trail, not just AI-dedup and admin-UI merges.
+    """
+
+    @pytest.mark.integration
+    def test_write_mode_creates_log_entry(self, test_db_session) -> None:
+        """A successful merge_into must write a ProductMergeLog row."""
+        from sqlalchemy import select
+
+        from app.models.product_merge_log import ProductMergeLog
+
+        keep_p = _make_product(test_db_session, "Woolworths Natural Almonds 750g")
+        drop_p = _make_product(test_db_session, "ALDI Natural Almonds 750g")
+        _make_listing(test_db_session, keep_p, "catalog_woolworths", "woolworths")
+        _make_listing(test_db_session, drop_p, "catalog_aldi", "aldi")
+        keep_id, drop_id = str(keep_p.id), str(drop_p.id)
+
+        merge_into(test_db_session, drop_p, keep_p, dry_run=False)
+        test_db_session.commit()
+
+        log = test_db_session.execute(
+            select(ProductMergeLog).where(ProductMergeLog.drop_id == drop_id)
+        ).scalar_one_or_none()
+        assert log is not None, "merge_into must create a ProductMergeLog entry"
+        assert log.keep_id == keep_id
+        assert log.reviewed_by == "script"
+
+    @pytest.mark.integration
+    def test_dry_run_creates_no_log_entry(self, test_db_session) -> None:
+        """dry_run=True must leave the database completely unchanged."""
+        from sqlalchemy import select
+
+        from app.models.product_merge_log import ProductMergeLog
+
+        keep_p = _make_product(test_db_session, "Woolworths Natural Almonds 750g")
+        drop_p = _make_product(test_db_session, "ALDI Natural Almonds 750g")
+        drop_id = str(drop_p.id)
+
+        merge_into(test_db_session, drop_p, keep_p, dry_run=True)
+        test_db_session.commit()
+
+        assert (
+            test_db_session.execute(
+                select(ProductMergeLog).where(ProductMergeLog.drop_id == drop_id)
+            ).scalar_one_or_none()
+            is None
+        ), "dry_run=True must not create any ProductMergeLog entries"
+
+
 # ── Second-best candidate selection ───────────────────────────────────────────
 
 

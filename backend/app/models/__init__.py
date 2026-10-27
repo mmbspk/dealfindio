@@ -22,6 +22,7 @@ from .prediction import PricePrediction
 from .price_report import PriceReport
 from .product import Product
 from .product_match import ProductMatchCandidate
+from .product_merge_log import ProductMergeLog
 from .product_retailer_listing import ProductRetailerListing
 from .store import Store
 from .user import User, UserProfile
@@ -35,6 +36,7 @@ __all__ = [
     "Store",
     "Product",
     "ProductMatchCandidate",
+    "ProductMergeLog",
     "ProductRetailerListing",
     "PriceReport",
     "User",

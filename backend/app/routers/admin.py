@@ -943,11 +943,87 @@ def _product_to_detail(p: "Product", price_aud: float | None, db: Session) -> Ma
     )
 
 
-def _merge_products(session: Session, keep_id: str, drop_id: str) -> None:
-    """Merge drop_id into keep_id: re-point price_reports + watchlist, delete drop."""
+def _merge_products(
+    session: Session,
+    keep_id: str,
+    drop_id: str,
+    *,
+    candidate_id: str | None = None,
+    score: float | None = None,
+    ai_verdict: str | None = None,
+    ai_confidence: float | None = None,
+    ai_reason: str | None = None,
+    proposed_by: str | None = None,
+    reviewed_by: str = "unknown",
+) -> None:
+    """Merge drop_id into keep_id: re-point price_reports + watchlist, delete drop.
+
+    Keyword-only audit params are forwarded to ProductMergeLog so every merge
+    has a permanent record that survives the product deletion and the
+    cascade-delete of the product_match_candidates row.
+    """
+    # PostgreSQL stores UUIDs natively (accepts dashes or plain hex); SQLite
+    # stores PG_UUID as CHAR(32) without dashes. Strip dashes so every raw SQL
+    # parameter works in both environments. The log columns store the original
+    # dashed strings (drop_id / keep_id) as plain VARCHAR, not UUID types.
+    _drop_sql = drop_id.replace("-", "")
+    _keep_sql = keep_id.replace("-", "")
+
+    # Snapshot both products and their primary listings BEFORE any mutations.
+    # These queries must run before the DELETE so the data is still in the DB.
+    price_reports_moved = (
+        session.execute(
+            text("SELECT COUNT(*) FROM price_reports WHERE product_id = :drop"),
+            {"drop": _drop_sql},
+        ).scalar()
+        or 0
+    )
+
+    drop_snap = session.execute(
+        text("SELECT name, brand, gtin FROM products WHERE id = :drop"),
+        {"drop": _drop_sql},
+    ).one_or_none()
+
+    drop_sources = (
+        session.execute(
+            text(
+                "SELECT DISTINCT external_source FROM product_retailer_listings "
+                "WHERE product_id = :drop ORDER BY external_source"
+            ),
+            {"drop": _drop_sql},
+        )
+        .scalars()
+        .all()
+    )
+    drop_chain = (
+        ",".join((s[len("catalog_") :] if s.startswith("catalog_") else s) for s in drop_sources)
+        or None
+    )
+
+    keep_snap = session.execute(
+        text("SELECT name FROM products WHERE id = :keep"),
+        {"keep": _keep_sql},
+    ).one_or_none()
+
+    keep_sources = (
+        session.execute(
+            text(
+                "SELECT DISTINCT external_source FROM product_retailer_listings "
+                "WHERE product_id = :keep ORDER BY external_source"
+            ),
+            {"keep": _keep_sql},
+        )
+        .scalars()
+        .all()
+    )
+    keep_chain = (
+        ",".join((s[len("catalog_") :] if s.startswith("catalog_") else s) for s in keep_sources)
+        or None
+    )
+
     session.execute(
         text("UPDATE price_reports SET product_id = :keep WHERE product_id = :drop"),
-        {"keep": keep_id, "drop": drop_id},
+        {"keep": _keep_sql, "drop": _drop_sql},
     )
     session.execute(
         text(
@@ -963,24 +1039,24 @@ def _merge_products(session: Session, keep_id: str, drop_id: str) -> None:
               )
         """
         ),
-        {"keep": keep_id, "drop": drop_id},
+        {"keep": _keep_sql, "drop": _drop_sql},
     )
     # Remove any duplicates that couldn't be migrated
     session.execute(
         text("DELETE FROM user_watchlist WHERE product_id = :drop"),
-        {"drop": drop_id},
+        {"drop": _drop_sql},
     )
     # Invalidate other pending candidates referencing the dropped product
     session.execute(
         text(
             """
             UPDATE product_match_candidates
-            SET status = 'rejected', reviewed_at = now()
+            SET status = 'rejected', reviewed_at = :now
             WHERE status = 'pending'
               AND (product_a_id = :drop OR product_b_id = :drop)
         """
         ),
-        {"drop": drop_id},
+        {"drop": _drop_sql, "now": datetime.now(timezone.utc)},
     )
     # Recover a real barcode: if the survivor has no GTIN and the dropped
     # record carries a valid EAN-13 that no other product owns, copy it before
@@ -990,7 +1066,33 @@ def _merge_products(session: Session, keep_id: str, drop_id: str) -> None:
     propagate_gtin_on_merge(session, keep_id, drop_id)
     session.execute(
         text("DELETE FROM products WHERE id = :drop"),
-        {"drop": drop_id},
+        {"drop": _drop_sql},
+    )
+
+    # Write the permanent audit record after the DELETE. The log entry and
+    # the product deletion are both part of the caller's transaction — they
+    # commit or roll back together (as the atomicity test verifies).
+    from app.models.product_merge_log import ProductMergeLog
+
+    session.add(
+        ProductMergeLog(
+            keep_id=keep_id,
+            keep_name=keep_snap.name if keep_snap else None,
+            keep_external_source=keep_chain,
+            drop_id=drop_id,
+            drop_name=drop_snap.name if drop_snap else None,
+            drop_brand=drop_snap.brand if drop_snap else None,
+            drop_gtin=drop_snap.gtin if drop_snap else None,
+            drop_external_source=drop_chain,
+            candidate_id=candidate_id,
+            score=score,
+            ai_verdict=ai_verdict,
+            ai_confidence=ai_confidence,
+            ai_reason=ai_reason,
+            proposed_by=proposed_by,
+            reviewed_by=reviewed_by,
+            price_reports_moved=price_reports_moved,
+        )
     )
     session.flush()
 
@@ -1101,7 +1203,18 @@ def decide_candidate(
         # _merge_products raw-SQL updates product_match_candidates (invalidating
         # siblings), so we must not have any pending ORM dirty state for this row.
         db.expire(row)
-        _merge_products(db, keep_id, drop_id)
+        _merge_products(
+            db,
+            keep_id,
+            drop_id,
+            candidate_id=str(cid),
+            score=pre_score,
+            ai_verdict=pre_ai_verdict,
+            ai_confidence=pre_ai_confidence,
+            ai_reason=pre_ai_reason,
+            proposed_by=pre_proposed_by,
+            reviewed_by=admin.email,
+        )
 
     # Update status via raw SQL to avoid ORM version-check on the row.
     db.execute(
@@ -1532,8 +1645,27 @@ def _run_ai_dedup_stream(
                 keep_id, drop_id = choose_survivor(facts_a, facts_b, verdict)
                 row.status = "approved"
                 db.flush()
+                # Capture candidate fields before expire — the candidate row is
+                # CASCADE-deleted inside _merge_products and unreadable afterward.
+                _cand_id = str(row.id)
+                _score = row.score
+                _ai_verdict = row.ai_verdict
+                _ai_confidence = row.ai_confidence
+                _ai_reason = row.ai_reason
+                _proposed_by = row.proposed_by
                 db.expire(row)
-                _merge_products(db, str(keep_id), str(drop_id))
+                _merge_products(
+                    db,
+                    str(keep_id),
+                    str(drop_id),
+                    candidate_id=_cand_id,
+                    score=_score,
+                    ai_verdict=_ai_verdict,
+                    ai_confidence=_ai_confidence,
+                    ai_reason=_ai_reason,
+                    proposed_by=_proposed_by,
+                    reviewed_by="auto",
+                )
                 merged += 1
                 for lst in by_chain.values():
                     lst[:] = [p for p in lst if str(p.id) != str(drop_id)]

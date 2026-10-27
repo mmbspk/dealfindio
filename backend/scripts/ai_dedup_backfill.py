@@ -334,11 +334,27 @@ def main() -> None:
                     from app.routers.admin import _merge_products
 
                     session.flush()
+                    # Capture candidate fields before expire — CASCADE-deleted
+                    # inside _merge_products and unreadable afterward.
+                    _cand_id = str(row.id)
+                    _score = row.score
+                    _ai_verdict = row.ai_verdict
+                    _ai_confidence = row.ai_confidence
+                    _ai_reason = row.ai_reason
+                    _proposed_by = row.proposed_by
                     session.expire(row)
-                    # NOTE: _merge_products does not yet accept candidate_id/score/
-                    # ai_verdict kwargs (ProductMergeLog is a separate story).
-                    # Those should be added before enabling auto-merge at scale.
-                    _merge_products(session, str(keep_id), str(drop_id))
+                    _merge_products(
+                        session,
+                        str(keep_id),
+                        str(drop_id),
+                        candidate_id=_cand_id,
+                        score=_score,
+                        ai_verdict=_ai_verdict,
+                        ai_confidence=_ai_confidence,
+                        ai_reason=_ai_reason,
+                        proposed_by=_proposed_by,
+                        reviewed_by="script",
+                    )
                     merged += 1
                     # Drop dropped product from in-memory chain lists so it isn't
                     # re-judged as pb for a later pa.

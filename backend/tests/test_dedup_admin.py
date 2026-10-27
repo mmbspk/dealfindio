@@ -205,6 +205,24 @@ class TestDecideCandidateApprove:
         ).scalar_one()
         assert str(moved.product_id) == keep_id
 
+        # ProductMergeLog: a permanent record must survive the product deletion.
+        from app.models.product_merge_log import ProductMergeLog
+
+        logs = (
+            test_db_session.execute(
+                select(ProductMergeLog).where(ProductMergeLog.drop_id == drop_id)
+            )
+            .scalars()
+            .all()
+        )
+        assert len(logs) == 1
+        log = logs[0]
+        assert log.keep_id == keep_id
+        assert log.drop_name == "Coca Cola 1.25L"
+        assert log.candidate_id == cand_id
+        assert log.reviewed_by == "admin@example.com"
+        assert log.price_reports_moved == 1
+
 
 # ── Size-variant penalty in fuzzy composite score (Gap 4) ────────────────────
 
@@ -286,3 +304,208 @@ class TestSizeVariantPenalty:
         assert (
             match is not None or score >= 92.0
         ), f"pair without size data should not be penalised (score={score})"
+
+
+# ── ProductMergeLog audit trail ───────────────────────────────────────────────
+
+
+class TestProductMergeLog:
+    """_merge_products must write a ProductMergeLog row for every merge.
+
+    All ID columns in the log are plain strings (not FKs) so the row survives
+    the product DELETE and the cascade-delete of the candidate row.
+    """
+
+    def _make_pair(self, session, keep_name="Keep Product", drop_name="Drop Product"):
+        """Seed a minimal keep/drop pair with one price report on the drop side."""
+        store = Store(id=uuid4(), chain="aldi", name="ALDI Test")
+        keep = Product(id=uuid4(), name=keep_name, brand="Brand A")
+        drop = Product(id=uuid4(), name=drop_name, brand="Brand A")
+        session.add_all([store, keep, drop])
+        session.flush()
+        pr = PriceReport(
+            id=uuid4(),
+            product_id=drop.id,
+            store_id=store.id,
+            price_cents=199,
+            source="catalog_aldi",
+            valid_from=datetime.now(timezone.utc),
+        )
+        session.add(pr)
+        session.commit()
+        return keep, drop, pr
+
+    @pytest.mark.integration
+    def test_log_entry_created_on_merge(self, test_db_session) -> None:
+        """_merge_products must create a ProductMergeLog row capturing keep/drop names."""
+        from sqlalchemy import select
+
+        from app.models.product_merge_log import ProductMergeLog
+        from app.routers.admin import _merge_products
+
+        keep, drop, _pr = self._make_pair(test_db_session)
+        keep_id, drop_id = str(keep.id), str(drop.id)
+
+        _merge_products(
+            test_db_session,
+            keep_id,
+            drop_id,
+            reviewed_by="test",
+        )
+        test_db_session.commit()
+
+        logs = (
+            test_db_session.execute(
+                select(ProductMergeLog).where(ProductMergeLog.drop_id == drop_id)
+            )
+            .scalars()
+            .all()
+        )
+        assert len(logs) == 1
+        log = logs[0]
+        assert log.keep_id == keep_id
+        assert log.drop_name == "Drop Product"
+        assert log.keep_name == "Keep Product"
+        assert log.reviewed_by == "test"
+
+    @pytest.mark.integration
+    def test_log_captures_price_reports_moved(self, test_db_session) -> None:
+        """price_reports_moved must equal the number of price reports on the drop product."""
+        from sqlalchemy import select
+
+        from app.models.product_merge_log import ProductMergeLog
+        from app.routers.admin import _merge_products
+
+        keep, drop, _pr = self._make_pair(test_db_session)
+        keep_id, drop_id = str(keep.id), str(drop.id)
+
+        _merge_products(test_db_session, keep_id, drop_id, reviewed_by="test")
+        test_db_session.commit()
+
+        log = test_db_session.execute(
+            select(ProductMergeLog).where(ProductMergeLog.drop_id == drop_id)
+        ).scalar_one()
+        assert log.price_reports_moved == 1
+
+    @pytest.mark.integration
+    def test_log_survives_after_drop_product_deleted(self, test_db_session) -> None:
+        """The log row must exist even after the drop product is gone (plain-string ID, not FK)."""
+        import uuid as _uuid
+
+        from sqlalchemy import select
+
+        from app.models.product_merge_log import ProductMergeLog
+        from app.routers.admin import _merge_products
+
+        keep, drop, _pr = self._make_pair(test_db_session)
+        drop_id = str(drop.id)
+
+        _merge_products(test_db_session, str(keep.id), drop_id, reviewed_by="test")
+        test_db_session.commit()
+
+        # Confirm drop product is gone
+        assert (
+            test_db_session.execute(
+                select(Product).where(Product.id == _uuid.UUID(drop_id))
+            ).scalar_one_or_none()
+            is None
+        )
+        # Log must still be queryable — ID column is a plain string, not a FK
+        log = test_db_session.execute(
+            select(ProductMergeLog).where(ProductMergeLog.drop_id == drop_id)
+        ).scalar_one_or_none()
+        assert log is not None, "ProductMergeLog row must survive the product DELETE"
+
+    @pytest.mark.integration
+    def test_log_null_candidate_fields_when_no_candidate(self, test_db_session) -> None:
+        """Calling _merge_products without a candidate_id must still create a log row
+        with null candidate fields — supports manual/scripted merges without a queue row."""
+        from sqlalchemy import select
+
+        from app.models.product_merge_log import ProductMergeLog
+        from app.routers.admin import _merge_products
+
+        keep, drop, _pr = self._make_pair(test_db_session)
+        keep_id, drop_id = str(keep.id), str(drop.id)
+
+        _merge_products(test_db_session, keep_id, drop_id, reviewed_by="script")
+        test_db_session.commit()
+
+        log = test_db_session.execute(
+            select(ProductMergeLog).where(ProductMergeLog.drop_id == drop_id)
+        ).scalar_one()
+        assert log.candidate_id is None
+        assert log.score is None
+        assert log.ai_verdict is None
+        assert log.reviewed_by == "script"
+
+    @pytest.mark.integration
+    def test_log_candidate_context_passed_through(self, test_db_session) -> None:
+        """All candidate audit fields must be written to the log when supplied."""
+        from sqlalchemy import select
+
+        from app.models.product_merge_log import ProductMergeLog
+        from app.routers.admin import _merge_products
+
+        keep, drop, _pr = self._make_pair(test_db_session)
+        keep_id, drop_id = str(keep.id), str(drop.id)
+        fake_cand_id = str(uuid4())
+
+        _merge_products(
+            test_db_session,
+            keep_id,
+            drop_id,
+            candidate_id=fake_cand_id,
+            score=97.5,
+            ai_verdict="same",
+            ai_confidence=0.98,
+            ai_reason="Identical EAN-13 barcode",
+            proposed_by="auto",
+            reviewed_by="admin@example.com",
+        )
+        test_db_session.commit()
+
+        log = test_db_session.execute(
+            select(ProductMergeLog).where(ProductMergeLog.drop_id == drop_id)
+        ).scalar_one()
+        assert log.candidate_id == fake_cand_id
+        assert log.score == pytest.approx(97.5)
+        assert log.ai_verdict == "same"
+        assert log.ai_confidence == pytest.approx(0.98)
+        assert log.ai_reason == "Identical EAN-13 barcode"
+        assert log.proposed_by == "auto"
+        assert log.reviewed_by == "admin@example.com"
+
+    @pytest.mark.integration
+    def test_merge_and_log_are_atomic(self, test_db_session) -> None:
+        """Product deletion and audit log must succeed or fail together.
+
+        Rolling back the transaction must leave the drop product intact and
+        the ProductMergeLog empty — the two writes are inseparable.
+        """
+        import uuid as _uuid
+
+        from sqlalchemy import select
+
+        from app.models.product_merge_log import ProductMergeLog
+        from app.routers.admin import _merge_products
+
+        keep, drop, _pr = self._make_pair(test_db_session)
+        keep_id, drop_id = str(keep.id), str(drop.id)
+
+        sp = test_db_session.begin_nested()
+        _merge_products(test_db_session, keep_id, drop_id, reviewed_by="test")
+        sp.rollback()
+
+        assert (
+            test_db_session.execute(
+                select(Product).where(Product.id == _uuid.UUID(drop_id))
+            ).scalar_one_or_none()
+            is not None
+        ), "Drop product must survive a rolled-back merge"
+        assert (
+            test_db_session.execute(
+                select(ProductMergeLog).where(ProductMergeLog.drop_id == drop_id)
+            ).scalar_one_or_none()
+            is None
+        ), "ProductMergeLog entry must not persist after rollback"
