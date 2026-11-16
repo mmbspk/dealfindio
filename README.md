@@ -709,11 +709,11 @@ Full interactive documentation is available when the API is running:
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/api/v1/receipts/upload` | Upload receipt photo → creates community price reports |
-| Planned | `/api/v1/receipts/verify` | Not implemented (Epic #87) |
+| Planned (not a route) | `/api/v1/receipts/verify` | Not implemented (Epic #87) |
 | `GET` | `/api/v1/notifications/unread-count` | Count of unread in-app notifications (for bell badge) |
 | `PUT` | `/api/v1/notifications/preferences` | Update push/email/quiet-hours preferences |
-| Planned | `/api/v1/admin/catalog-audit` | Not registered; use operational scripts |
-| Planned | `/api/v1/admin/catalog-remediate` | Not registered; use reviewed operational scripts |
+| Planned (not a route) | `/api/v1/admin/catalog-audit` | Not registered; use operational scripts |
+| Planned (not a route) | `/api/v1/admin/catalog-remediate` | Not registered; use reviewed operational scripts |
 
 ### Authentication
 
