@@ -9,7 +9,7 @@ Complete feature catalogue for DealFindio.
 ### Deal Feed
 A location-aware feed of current specials sorted by discount depth. Filters by category, chain, and distance. Powered by PostGIS proximity queries.
 
-> **Screenshot placeholder:** `docs/screenshots/deals-feed.png`
+> **Screenshot pending (not included in this PR):** `docs/screenshots/deals-feed.png`
 
 ### Product Catalogue Search
 Full-text (`pg_trgm`) + semantic (`pgvector`) hybrid search across all chains. Results are ranked by relevance, with typo tolerance and synonym expansion.
@@ -17,7 +17,7 @@ Full-text (`pg_trgm`) + semantic (`pgvector`) hybrid search across all chains. R
 ### Price History Charts
 90-day rolling price chart per product, broken down by chain. Built with Recharts on the web and a custom chart component on mobile.
 
-> **Screenshot placeholder:** `docs/screenshots/price-history-chart.png`
+> **Screenshot pending (not included in this PR):** `docs/screenshots/price-history-chart.png`
 
 ### Price Predictions — "Buy Now or Wait?"
 ML-driven recommendations powered by Prophet (primary) and ARIMA (fallback). Each prediction shows:
@@ -31,7 +31,7 @@ Normalised `package_size_norm` and `unit_price_label` fields let you compare tru
 ### Store Locator
 Interactive map and sortable list of nearby stores. Powered by PostGIS `earthdistance`/`ll_to_earth`. Tap a store to see its currently active specials.
 
-> **Screenshot placeholder:** `docs/screenshots/store-locator.png`
+> **Screenshot pending (not included in this PR):** `docs/screenshots/store-locator.png`
 
 ---
 
@@ -46,18 +46,18 @@ Users can submit a price they see in-store. Reports are:
 ### Receipt OCR Upload
 Photograph a store receipt. Claude Vision extracts all line items (name, quantity, unit price) and creates community price reports automatically — no manual entry.
 
-> **Screenshot placeholder:** `docs/screenshots/receipt-upload.png`
+> **Screenshot pending (not included in this PR):** `docs/screenshots/receipt-upload.png`
 
-### Receipt Price Verification _(Epic #87)_
-A separate, read-only receipt flow:
+### Receipt Price Verification _(Epic #87 — planned, not implemented)_
+Proposed read-only flow:
 
 1. User photographs their receipt
 2. Claude Vision extracts line items
 3. DealFindio compares each line against known shelf prices
 4. Any overcharges are flagged with the actual vs. charged price
-5. The **Australian Scanning Code of Practice (SCOP)** remedy is explained for each overcharge — at Coles, Woolworths, ALDI, and IGA the first overcharged item is free
+5. Explain retailer-specific scanning policies only after confirming applicability and current terms
 
-> **Screenshot placeholder:** `docs/screenshots/receipt-verify-results.png`
+> **Screenshot pending (not included in this PR):** `docs/screenshots/receipt-verify-results.png`
 
 ### Upvote / Dispute
 Users can upvote or dispute any price report. Crowd consensus raises or lowers a report's confidence score.
@@ -84,7 +84,7 @@ Track a product with any combination of:
 ### Watchlist Lists _(Epic #60)_
 Organise watched products into named, emoji-tagged lists (e.g. 🛒 Weekly Groceries, 🎂 Baking, 🍷 Entertaining). Each list supports a per-list notification channel override.
 
-> **Screenshot placeholder:** `docs/screenshots/watchlist-lists.png`
+> **Screenshot pending (not included in this PR):** `docs/screenshots/watchlist-lists.png`
 
 ### In-App Notification Bell _(Epic #60)_
 An unread count badge on the notification bell icon in the header. Badge updates in real-time via polling the `/api/v1/notifications/unread-count` endpoint. Tapping opens a full notification history page.
@@ -126,10 +126,10 @@ Also supports timezone-aware quiet hours (no push during 22:00–08:00 local tim
 Trigger or cancel catalogue crawls per chain from the admin panel. Full-crawl and delta-crawl modes. Live log streaming via Redis pub/sub.
 
 ### Catalog Integrity Audit
-A read-only scanner that classifies all products by 7 issue subtypes. Produces a report admins can review before any remediation runs.
+Script-based catalog data quality checks; the registered admin router does not provide a catalog audit endpoint.
 
 ### Approval-gated Remediation
-The audit produces a remediation plan. Admins review and approve before any data changes are applied — prevents accidental bulk mutations.
+Review remediation plans operationally before any script execution. An admin approval API for these operations is not implemented.
 
 ### Deduplication Review
 Inspect and approve AI-generated product merge candidates. Full audit trail kept in `ProductMergeLog`.
