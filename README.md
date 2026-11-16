@@ -1,6 +1,6 @@
 # DealFindio
 
-**Australian grocery deal-finding platform.** Track prices across major supermarket chains, get notified when prices drop, verify your receipt for overcharges, and let AI help you decide when to buy.
+**Australian grocery deal-finding platform.** Track prices across major supermarket chains, get notified when prices drop, parse receipts (overcharge verification planned), and let AI help you decide when to buy.
 
 > **Mobile-first.** The primary experience is the Expo / React Native mobile app. The web app is a full-featured companion.
 
@@ -58,7 +58,7 @@ Grocery prices in Australia vary significantly between chains, and specials rota
 | Bargain-conscious shoppers | A single feed of the best deals near them right now |
 | Meal planners | Price history charts to know when something is genuinely cheap vs. just marketed as a deal |
 | Community contributors | A reputation system that rewards accurate price reports |
-| Careful shoppers | Receipt scanning that flags overcharges and tells you exactly what the store owes you |
+| Careful shoppers | Receipt OCR extraction; overcharge verification is planned |
 
 ### How it works (end-to-end)
 
@@ -95,7 +95,7 @@ Store catalogues / flyers
 
 - **Price reporting** — users submit a price they see in-store; geofenced ≤200m from the store, rate-limited 20/24h
 - **Receipt OCR upload** — photograph a receipt; Claude Vision extracts line items and creates community price reports automatically
-- **Receipt price verification** — upload a receipt to check what was charged against dealfindio's known shelf prices; flags overcharges and explains the Australian **Scanning Code of Practice** remedy (first overcharged item free at Coles, Woolworths, ALDI, and IGA)
+- **Receipt price verification (planned; Epic #87)** — proposed read-only overcharge comparison; no `/receipts/verify` API route is currently registered
 - **Upvote / dispute** — crowd-sourced accuracy scoring on community reports
 - **Reputation system** — contributors earn points that weight their reports; tiers: Bronze / Silver / Gold
 
@@ -112,8 +112,8 @@ Store catalogues / flyers
 ### Admin & Operations
 
 - **Scraper management** — trigger / cancel catalogue crawls per chain from the admin panel; live log streaming via Redis
-- **Catalog integrity audit** — read-only scanner that classifies all products by 7 subtypes of data quality issues (missing package size, bad unit price, category mismatches, etc.)
-- **Approval-gated remediation** — generates a remediation plan from the audit; admin reviews and approves before any data is changed
+- **Catalog integrity audit** — operational scripts for catalog quality checks; not exposed as admin API endpoints
+- **Catalog remediation scripts** — review proposed changes before executing; no registered admin remediation endpoint
 - **Deduplication review** — inspect and approve AI-generated product merge candidates; full audit trail in `ProductMergeLog`
 - **App config** — runtime feature flags stored in the database; change behaviour without a deploy
 
@@ -168,7 +168,7 @@ Store catalogues / flyers
 | **PostGIS for geo** | `earthdistance`/`ll_to_earth` functions power "nearby stores" and geofence validation |
 | **Community confidence** | Every price report has a `confidence` score (0–1) that rises with upvotes and reporter reputation |
 | **ProductRetailerListing** | Retailer-specific pricing lives in a separate table so the canonical `Product` record is chain-agnostic |
-| **Approval-gated remediation** | Audit runs read-only; data changes require an explicit admin approval step to prevent accidental bulk mutations |
+| **Approval-gated remediation** | Script operations require human review; admin remediation approval API endpoints not implemented |
 
 ---
 
@@ -367,7 +367,7 @@ cd backend && poetry run alembic upgrade head
 
 # Or start manually in separate terminals:
 cd backend && poetry run uvicorn app.main:app --reload --host 0.0.0.0 --port 8010
-cd backend && poetry run celery -A app.workers.celery_app worker -Q scraper,catalog,celery,notification --loglevel=info -c 2
+cd backend && poetry run celery -A app.workers.celery_app worker -Q default,scraper,catalog,ml,notification,image --loglevel=info -c 2
 cd backend && poetry run celery -A app.workers.celery_app beat --loglevel=info
 cd web && npm run dev
 ```
@@ -460,7 +460,7 @@ Full guide → [docs/local-mobile-development.md](docs/local-mobile-development.
 | Category Normaliser | `services/category_normaliser.py` | Maps chain-specific categories to canonical taxonomy |
 | Package Size | `services/package_size.py` | Extracts and normalises pack size strings (e.g. "375mL 6-pack") |
 | Specials Schedule | `services/specials_schedule.py` | Knows when each chain's specials rotate; drives crawl scheduling |
-| Embeddings | `services/embeddings.py` | Generates pgvector embeddings via Claude for semantic search |
+| Embeddings | `services/embeddings.py` | Generates local `all-MiniLM-L6-v2` (384D) embeddings in pgvector for semantic search |
 | Receipt Parser | `services/receipt_parser.py` | Claude Vision: receipt photo → structured line items |
 | Reputation | `services/reputation.py` | 3σ outlier detection + confidence scoring for community reports |
 | Push Sender | `services/push_sender.py` | Expo Push API — covers iOS APNs and Android FCM |
@@ -472,7 +472,7 @@ Full guide → [docs/local-mobile-development.md](docs/local-mobile-development.
 
 ### Celery Workers & Tasks
 
-Workers consume from queues: `scraper`, `catalog`, `celery` (default), `notification`.
+Configured task queues: `default`, `scraper`, `catalog`, `ml`, `notification`, `image`. Workers must subscribe to the queues required by the feature.
 
 | Task | Queue | Trigger | What it does |
 |------|-------|---------|-------------|
@@ -482,12 +482,12 @@ Workers consume from queues: `scraper`, `catalog`, `celery` (default), `notifica
 | `validate_community_report` | celery | On POST /price-reports | Outlier detection + confidence scoring |
 | `recalculate_reporter_reputation` | celery | After report validation | Updates contributor tier and score |
 | `check_watchlist_for_price` | notification | After price report saved | Triggers push/email/in-app for matching watchlists |
-| `notify_prediction_drops` | notification | Beat (hourly) | Checks ML predictions against watchlists; sends alerts |
+| `notify_prediction_drops` | notification | Not scheduled in current Beat configuration | Checks ML predictions when dispatched against watchlists; sends alerts |
 | `send_weekly_digest` | notification | Beat (Wednesday 22:00 UTC) | Sends per-user weekly deal digest email |
-| `embed_product` | celery | On new product | Generates pgvector embedding for semantic search |
-| `backfill_product_embeddings` | celery | On-demand | Batch-generates embeddings for products missing them |
+| `embed_product` | ml | On new product | Generates pgvector embedding for semantic search |
+| `backfill_product_embeddings` | ml | On-demand | Batch-generates embeddings for products missing them |
 | `enrich_product_images` | celery | Nightly beat | Fills missing product images from Open Food Facts |
-| `refit_and_predict_all` | celery | Weekly beat | Retrains Prophet/ARIMA models on latest price history |
+| `refit_and_predict_all` | ml | Weekly beat | Retrains Prophet/ARIMA models on latest price history |
 
 ### Database Migrations
 
@@ -653,7 +653,7 @@ A read-only audit tool (`scripts/catalog_integrity_audit.py`) classifies all pro
 | `missing_image` | No `image_url` or `external_image_url` |
 | `orphaned_listing` | `ProductRetailerListing` with no matching `Product` |
 
-The audit produces a remediation plan. An admin reviews and approves before any changes are applied — protecting against accidental bulk mutations.
+Audit and remediation scripts require review before execution; no catalog audit/remediation admin API routes are registered.
 
 ---
 
