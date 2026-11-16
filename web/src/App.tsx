@@ -5,6 +5,7 @@ import { Header } from './components/Header'
 import { Footer } from './components/Footer'
 import { ProtectedRoute } from './components/ProtectedRoute'
 import { Home } from './pages/Home'
+import { Landing } from './pages/Landing'
 import { Login } from './pages/Login'
 import { Products } from './pages/Products'
 import { Product } from './pages/Product'
@@ -23,7 +24,7 @@ function ScrollToTop() {
   return null
 }
 
-function AdminRoute({ children }: { children: React.ReactNode }) {
+function AdminRoute({ children }: { readonly children: React.ReactNode }) {
   const { user, loading, isAdmin } = useAuth()
   const location = useLocation()
   if (loading) return null
@@ -32,27 +33,47 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
-function AppRoutes() {
+function LandingRoute({ children }: { readonly children: React.ReactNode }) {
+  const { user, loading } = useAuth()
+  if (loading) return null
+  if (user) return <Navigate to="/app" replace />
+  return <>{children}</>
+}
+
+function AppShell({ children }: { readonly children: React.ReactNode }) {
   return (
     <div className="flex flex-col min-h-screen bg-gray-50">
-      <ScrollToTop />
       <Header />
-      <main className="flex-1">
-        <Routes>
-          <Route path="/" element={<Home />} />
-          <Route path="/login" element={<Login />} />
-          <Route path="/deals" element={<Deals />} />
-          <Route path="/products" element={<Products />} />
-          <Route path="/stores" element={<Stores />} />
-          <Route path="/product/:productId" element={<Product />} />
-          <Route path="/watchlist" element={<ProtectedRoute><Watchlist /></ProtectedRoute>} />
-          <Route path="/notifications" element={<ProtectedRoute><Notifications /></ProtectedRoute>} />
-          <Route path="/notifications/preferences" element={<ProtectedRoute><NotificationPreferences /></ProtectedRoute>} />
-          <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
-          <Route path="/admin" element={<AdminRoute><Admin /></AdminRoute>} />
-          <Route
-            path="*"
-            element={
+      <main className="flex-1">{children}</main>
+      <Footer />
+    </div>
+  )
+}
+
+function AppRoutes() {
+  return (
+    <>
+      <ScrollToTop />
+      <Routes>
+        {/* Marketing landing — own nav/footer, no app shell */}
+        <Route path="/" element={<LandingRoute><Landing /></LandingRoute>} />
+
+        {/* App routes — wrapped in Header + Footer shell */}
+        <Route path="/app" element={<AppShell><Home /></AppShell>} />
+        <Route path="/login" element={<AppShell><Login /></AppShell>} />
+        <Route path="/deals" element={<AppShell><Deals /></AppShell>} />
+        <Route path="/products" element={<AppShell><Products /></AppShell>} />
+        <Route path="/stores" element={<AppShell><Stores /></AppShell>} />
+        <Route path="/product/:productId" element={<AppShell><Product /></AppShell>} />
+        <Route path="/watchlist" element={<AppShell><ProtectedRoute><Watchlist /></ProtectedRoute></AppShell>} />
+        <Route path="/notifications" element={<AppShell><ProtectedRoute><Notifications /></ProtectedRoute></AppShell>} />
+        <Route path="/notifications/preferences" element={<AppShell><ProtectedRoute><NotificationPreferences /></ProtectedRoute></AppShell>} />
+        <Route path="/profile" element={<AppShell><ProtectedRoute><Profile /></ProtectedRoute></AppShell>} />
+        <Route path="/admin" element={<AppShell><AdminRoute><Admin /></AdminRoute></AppShell>} />
+        <Route
+          path="*"
+          element={
+            <AppShell>
               <div className="min-h-screen flex items-center justify-center">
                 <div className="text-center">
                   <h1 className="text-4xl font-bold text-gray-900 mb-4">404 - Page Not Found</h1>
@@ -65,12 +86,11 @@ function AppRoutes() {
                   </a>
                 </div>
               </div>
-            }
-          />
-        </Routes>
-      </main>
-      <Footer />
-    </div>
+            </AppShell>
+          }
+        />
+      </Routes>
+    </>
   )
 }
 
