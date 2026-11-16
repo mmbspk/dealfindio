@@ -1,6 +1,6 @@
 # DealFindio Wiki
 
-> **Australian grocery deal-finding platform** — track prices across major supermarket chains, get notified when prices drop, verify your receipt for overcharges, and let AI help you decide when to buy.
+> **Australian grocery deal-finding platform** — track prices across major supermarket chains, get notified when prices drop, parse receipts (overcharge verification is planned), and let AI help you decide when to buy.
 
 DealFindio is **mobile-first**. The primary experience is the Expo / React Native app, with a full-featured web companion.
 
