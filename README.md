@@ -666,7 +666,7 @@ Audit and remediation scripts require review before execution; no catalog audit/
 | Receipt OCR | `services/receipt_parser.py` | Vision model: photo → structured line items (name, price, qty) |
 | AI deduplication | `services/ai_dedup.py` | Compare product pairs; recommend merge, keep, or flag for review |
 | Category normalisation | `services/category_normaliser.py` | Map raw chain category strings to the canonical taxonomy |
-| Product embeddings | `services/embeddings.py` | Text embeddings via Claude for pgvector semantic search |
+| Product embeddings | `services/embeddings.py` | Local `all-MiniLM-L6-v2` embeddings stored in pgvector |
 
 The AI dedup service supports loading the API key and proxy URL from the database (`app_config` table), allowing key rotation without a deploy.
 
@@ -709,11 +709,11 @@ Full interactive documentation is available when the API is running:
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/api/v1/receipts/upload` | Upload receipt photo → creates community price reports |
-| `POST` | `/api/v1/receipts/verify` | Upload receipt → compare against shelf prices → returns overcharge flags + SCOP remedy |
+| Planned | `/api/v1/receipts/verify` | Not implemented (Epic #87) |
 | `GET` | `/api/v1/notifications/unread-count` | Count of unread in-app notifications (for bell badge) |
 | `PUT` | `/api/v1/notifications/preferences` | Update push/email/quiet-hours preferences |
-| `GET` | `/api/v1/admin/catalog-audit` | Run read-only catalog integrity audit |
-| `POST` | `/api/v1/admin/catalog-remediate` | Execute an approved remediation plan |
+| Planned | `/api/v1/admin/catalog-audit` | Not registered; use operational scripts |
+| Planned | `/api/v1/admin/catalog-remediate` | Not registered; use reviewed operational scripts |
 
 ### Authentication
 
@@ -778,7 +778,7 @@ Railway reads the `Procfile`:
 
 ```
 api:     cd backend && poetry run uvicorn app.main:app --host 0.0.0.0 --port $PORT
-worker:  cd backend && poetry run celery -A app.workers.celery_app worker -Q scraper,catalog,celery,notification --loglevel=info
+worker:  cd backend && poetry run celery -A app.workers.celery_app worker -Q default,scraper,catalog,ml,notification,image --loglevel=info
 beat:    cd backend && poetry run celery -A app.workers.celery_app beat --loglevel=info
 ```
 
