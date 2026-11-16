@@ -174,9 +174,9 @@ class TestSearchService:
         monkeypatch.setattr(embeddings, "get_model", lambda: model)
 
         vec = embeddings.embed_text("Full Cream Milk 2000ml")
-        model.encode.assert_called_once_with(
-            "full cream milk 2l", normalize_embeddings=True
-        )
+        assert model.encode.call_count == 1
+        assert model.encode.call_args.args == ("full cream milk 2l",)
+        assert model.encode.call_args.kwargs == {"normalize_embeddings": True}
         assert vec == expected
         assert len(vec) == 384
         import math
