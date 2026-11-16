@@ -79,7 +79,7 @@ See [[Architecture#Environment-Variables]] for the full variable reference.
 ## 5. Run database migrations
 
 ```bash
-cd backend
+cd backend  # from the repository root
 poetry run alembic upgrade head
 ```
 
@@ -88,7 +88,7 @@ poetry run alembic upgrade head
 ## 6. Install web dependencies
 
 ```bash
-cd web
+cd ../web  # from backend/
 npm install
 ```
 
@@ -111,14 +111,14 @@ On macOS, one command opens four Terminal tabs:
 ./dev.sh
 ```
 
-Or start each service manually in separate terminals:
+Or start each service manually in separate terminals, **each starting at the repository root**:
 
 ```bash
 # Terminal 1 — FastAPI
 cd backend && poetry run uvicorn app.main:app --reload --host 0.0.0.0 --port 8010
 
 # Terminal 2 — Celery worker
-cd backend && poetry run celery -A app.workers.celery_app worker -Q scraper,catalog,celery --loglevel=info -c 2
+cd backend && poetry run celery -A app.workers.celery_app worker -Q default,scraper,catalog,ml,notification,image --loglevel=info -c 2
 
 # Terminal 3 — Celery beat (scheduled tasks)
 cd backend && poetry run celery -A app.workers.celery_app beat --loglevel=info
@@ -161,7 +161,7 @@ Then open:
 ## Mobile App Setup
 
 ```bash
-cd mobile
+cd ../mobile  # from web/
 npm install
 ```
 
@@ -182,7 +182,7 @@ Full mobile guide → [docs/local-mobile-development.md](https://github.com/mmbs
 ## Useful Makefile Targets (backend)
 
 ```bash
-cd backend
+cd backend  # from repository root
 
 make format          # black + ruff --fix
 make lint            # ruff check
