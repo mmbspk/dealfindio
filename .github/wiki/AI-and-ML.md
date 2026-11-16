@@ -27,7 +27,7 @@ The extracted items are then matched to known products in the database using fuz
 
 **Limits:**
 - Maximum image size: 5 MB
-- Minimum OCR confidence: 0.7 (items below this are returned as unmatched)
+- Matched receipt reports start with confidence 0.7 and are subsequently eligible for validation; this is not an OCR extraction confidence threshold.
 - Supported formats: JPEG, PNG, WebP (HEIC is not directly supported)
 
 ### Receipt Price Verification — planned (Epic #87)
@@ -42,7 +42,7 @@ For product pairs that pass the deterministic similarity threshold but aren't a 
 - Product names and brands
 - Category assignments
 - Package sizes
-- Images (if available)
+- Whether an image is available (the judge primarily receives structured product facts, not image pixels)
 
 The AI judge returns `same_product`, `confidence`, `keep` (`a` or `b`) and `reason`; deterministic same-chain and brand-conflict guards take precedence over the model's output.
 
