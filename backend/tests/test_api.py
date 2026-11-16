@@ -160,16 +160,28 @@ class TestSearchService:
 
         assert "0.5kg" in normalise_product_name("Plain Flour 500g")
 
-    def test_embed_text_returns_384_dims(self):
-        from app.services.embeddings import embed_text
+    def test_embed_text_returns_384_dims(self, monkeypatch):
+        """Exercise encoding and normalisation without loading native Torch in unit CI."""
+        from unittest.mock import Mock
 
-        vec = embed_text("full cream milk 2l")
+        from app.services import embeddings
+
+        expected = [1.0] + [0.0] * 383
+        encoded = Mock()
+        encoded.tolist.return_value = expected
+        model = Mock()
+        model.encode.return_value = encoded
+        monkeypatch.setattr(embeddings, "get_model", lambda: model)
+
+        vec = embeddings.embed_text("Full Cream Milk 2000ml")
+        assert model.encode.call_count == 1
+        assert model.encode.call_args.args == ("full cream milk 2l",)
+        assert model.encode.call_args.kwargs == {"normalize_embeddings": True}
+        assert vec == expected
         assert len(vec) == 384
-        # Unit normalised vectors should be approximately unit length
         import math
 
-        norm = math.sqrt(sum(x * x for x in vec))
-        assert abs(norm - 1.0) < 1e-4
+        assert abs(math.sqrt(sum(x * x for x in vec)) - 1.0) < 1e-4
 
     def test_sqlite_path_uses_ilike(self, test_client, sample_products):
         """Search on the SQLite test DB should return results via ILIKE fallback."""

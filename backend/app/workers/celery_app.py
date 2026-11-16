@@ -13,7 +13,7 @@ import logging
 
 from celery import Celery
 from celery.signals import task_failure, task_retry, task_success, worker_process_init
-from kombu import Exchange, Queue
+from kombu.entity import Exchange, Queue
 
 from app.config import get_settings
 
