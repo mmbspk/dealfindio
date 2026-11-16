@@ -6,7 +6,7 @@ DealFindio uses Anthropic Claude for several AI-powered features and runs local 
 
 ## Claude Integrations
 
-All Claude features require `ANTHROPIC_API_KEY` to be set in `backend/.env`.
+Claude-backed features require configured Anthropic credentials; the backend can resolve credentials from runtime database configuration as well as environment settings. Local embeddings do not require an Anthropic key.
 
 ### Receipt OCR — `services/receipt_parser.py`
 
@@ -18,16 +18,8 @@ User uploads a photo of a store receipt. Claude extracts structured line items:
 {
   "store_name": "Coles Chatswood",
   "receipt_date": "2026-10-15",
-  "subtotal": 47.85,
   "total": 47.85,
-  "items": [
-    {
-      "name": "Full Cream Milk 2L",
-      "quantity": 1,
-      "unit_price": 2.85,
-      "total_price": 2.85
-    }
-  ]
+  "products": [{"name":"Full Cream Milk 2L","price":2.85,"quantity":1,"unit_price":2.85}]
 }
 ```
 
@@ -36,23 +28,15 @@ The extracted items are then matched to known products in the database using fuz
 **Limits:**
 - Maximum image size: 5 MB
 - Minimum OCR confidence: 0.7 (items below this are returned as unmatched)
-- Supported formats: JPEG, PNG, WebP, HEIC
+- Supported formats: JPEG, PNG, WebP (HEIC is not directly supported)
 
-### Receipt Price Verification — `routers/receipts.py`
+### Receipt Price Verification — planned (Epic #87)
 
-The `/api/v1/receipts/verify` endpoint reuses `ReceiptParser` but instead of creating price reports, it:
-
-1. Extracts line items (Claude Vision)
-2. For each item, looks up the current shelf price in DealFindio's database
-3. Compares: `charged_price` vs `shelf_price`
-4. Flags any item where `charged_price > shelf_price`
-5. Returns the overcharge amount and the relevant **Scanning Code of Practice (SCOP)** remedy
-
-**SCOP remedy text** is per-chain and explains what the store owes the customer (typically: the first overcharged item free, subsequent items at the shelf price).
+The implemented endpoint is `POST /api/v1/receipts/upload`; it extracts line items and may create community reports. There is **no registered** `/api/v1/receipts/verify` route or SCOP remedy response. Read-only comparison against shelf prices and any retailer-specific policy guidance remain proposed capabilities, not production API functionality.
 
 ### AI-Assisted Deduplication — `services/ai_dedup.py`
 
-**Model:** `claude-sonnet-4-5`
+**Default model:** `claude-sonnet-4-6` (configurable)
 
 For product pairs that pass the deterministic similarity threshold but aren't a certain match, Claude reviews:
 - Product names and brands
@@ -60,7 +44,7 @@ For product pairs that pass the deterministic similarity threshold but aren't a 
 - Package sizes
 - Images (if available)
 
-Claude responds with one of: `merge`, `keep_separate`, or `review`. Only `merge` candidates are added to `product_match_candidates` for admin review. The `keep_separate` decision is cached to avoid re-querying the same pair.
+The AI judge returns `same_product`, `confidence`, `keep` (`a` or `b`) and `reason`; deterministic same-chain and brand-conflict guards take precedence over the model's output.
 
 The API key can be overridden from the `app_config` database table — useful for rotating keys without a deploy.
 
@@ -72,7 +56,7 @@ Each chain uses its own category taxonomy. This service maps raw chain categorie
 
 ### Product Embeddings — `services/embeddings.py`
 
-**Model:** Claude text embeddings
+**Model:** local SentenceTransformers `all-MiniLM-L6-v2` (384-dimensional; no Claude embedding API)
 
 Each product's name, brand, category, and description are embedded into a pgvector vector. These enable semantic search — e.g. "greek yoghurt" finds products named "Natural Yoghurt Thick & Creamy" even without exact word overlap.
 
@@ -104,7 +88,7 @@ Models refit weekly via a Celery Beat task (`refit_and_predict_all`). Prediction
 
 ### Watchlist integration
 
-Users can set a watchlist trigger of type `prediction`. When the ML model emits a "buy now" signal for a watched product, the `notify_prediction_drops` Beat task (hourly) fires push/email/in-app notifications to matching users.
+The `notify_prediction_drops` task is registered but **not scheduled hourly** in the current Celery Beat configuration. Prediction notifications require an explicitly configured dispatch path.
 
 ---
 
@@ -116,4 +100,4 @@ Search queries go through a hybrid pipeline:
 2. **Semantic** (pgvector) — embed the query and find nearest-neighbour products
 3. **Merge** — combine results with a weighted rank; full-text results are prioritised for exact or near-exact matches; semantic results dominate for concept matches
 
-The semantic leg gracefully degrades: if a query embedding can't be generated (API key missing, timeout), the API falls back to full-text only.
+The semantic leg gracefully degrades: if a query embedding can't be generated (local embedding inference unavailable), the API falls back to full-text only.
