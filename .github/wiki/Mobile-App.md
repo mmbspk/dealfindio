@@ -44,7 +44,7 @@ DealFindio's primary experience is the Expo / React Native app.
 | Product Detail | `product/[id]` | Price history, watchlist controls, prediction, availability by chain |
 | Report Price | `report-price` | Community price report (geofenced ≤200m) |
 | Receipt Upload | `upload-receipt` | Camera capture → receipt OCR → community price reports |
-| Receipt Verify | `verify-receipt` | Camera capture → overcharge check → SCOP remedy display |
+| Receipt Verify (planned) | `verify-receipt` | Proposed overcharge comparison; no backend verify API is registered |
 | Notifications | `notifications` | Full notification history; deep-link tap handling |
 | Notification Preferences | `notification-preferences` | Per-channel opt-in: push, email; quiet hours; timezone |
 | Login | `login` | Firebase sign-in (email/password or Google) |
@@ -57,7 +57,7 @@ DealFindio's primary experience is the Expo / React Native app.
 The Search tab has a barcode icon that opens the camera in barcode mode. Scanning an EAN-13 or UPC-A barcode instantly navigates to the product detail page. Uses `expo-camera`.
 
 ### Receipt Capture
-The `upload-receipt` screen uses `<input type="file" capture="environment">` (or `expo-image-picker`) to open the device camera. The captured image is sent to `POST /api/v1/receipts/upload` (community reports) or `POST /api/v1/receipts/verify` (overcharge check).
+The `upload-receipt` screen uses `<input type="file" capture="environment">` (or `expo-image-picker`) to open the device camera. The captured image is sent to `POST /api/v1/receipts/upload` (community reports) ; `POST /api/v1/receipts/verify` is not implemented (planned Epic #87).
 
 > **Screenshot placeholder:** `docs/screenshots/mobile-receipt-capture.png`
 
