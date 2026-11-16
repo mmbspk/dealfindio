@@ -155,7 +155,7 @@ check_watchlist_for_price (Celery task)
   │      → Resend API             │
   └───────────────────────────────┘
 
-notify_prediction_drops (Beat, hourly)
+notify_prediction_drops (registered task; not currently on Beat schedule)
       ↓
   Same flow for "prediction" trigger type
 
