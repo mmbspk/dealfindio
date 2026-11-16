@@ -17,7 +17,7 @@ How prices get from supermarket catalogues to the DealFindio database.
         ↓
 5. Integrity         Catalog audit: classify issues
         ↓
-6. Remediate         Admin approves remediation plan → apply changes
+6. Remediate         Review plan before script execution
         ↓
 7. Enrich            Images (Open Food Facts), embeddings (pgvector), predictions (ML)
         ↓
@@ -106,7 +106,7 @@ A read-only audit tool (`scripts/catalog_integrity_audit.py`) classifies all pro
 | `missing_image` | No `image_url` or `external_image_url` |
 | `orphaned_listing` | `ProductRetailerListing` with no matching canonical `Product` |
 
-The audit produces a JSON remediation plan. An admin reviews it in the admin panel and approves before any changes are applied.
+Audit/remediation are script-based, not registered `/api/v1/admin/catalog-audit` or `/api/v1/admin/catalog-remediate` routes; operators must review plans before running mutations.
 
 Remediation is recorded in `PackageSizeRemediationLog` (and similar per-subtype logs) for full auditability.
 
@@ -119,7 +119,7 @@ After ingestion and deduplication, products are enriched in the background:
 | Enrichment | Task | Source |
 |------------|------|--------|
 | Product images | `enrich_product_images` | Open Food Facts (by GTIN) |
-| pgvector embeddings | `embed_product` / `backfill_product_embeddings` | Anthropic Claude text embeddings |
+| pgvector embeddings | `embed_product` / `backfill_product_embeddings` | Local SentenceTransformers `all-MiniLM-L6-v2` embeddings |
 | Price predictions | `refit_and_predict_all` | Prophet / ARIMA models on price history |
 | Unit price normalisation | `package_size.py` | Regex + rule-based pack size extraction |
 
@@ -141,4 +141,4 @@ When a user submits a price report via the app:
 
 ## Specials Expiry
 
-Specials that have passed their `valid_to` date are marked inactive by the `expire_stale_specials` Beat task. This runs every 15 minutes to ensure the deals feed never shows expired specials.
+The `expire_stale_specials` task has Beat entries for ALDI's promotional cycles, not a global 15-minute schedule. Other chains use validity periods assigned at ingestion.
