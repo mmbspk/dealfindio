@@ -59,7 +59,7 @@ System design, tech stack, and key design decisions.
 | Migrations | Alembic |
 | Scraping | Playwright (Chromium), per-chain catalog crawlers |
 | ML | Prophet, ARIMA (statsmodels) |
-| AI | Anthropic Claude (receipt OCR, dedup, category normalisation, embeddings) |
+| AI | Anthropic Claude (receipt OCR, dedup, category normalisation); local embeddings use SentenceTransformers (`all-MiniLM-L6-v2`) |
 | Auth | Firebase Admin SDK (JWT verification — no passwords stored) |
 | Push | Expo Push API (covers iOS APNs and Android FCM) |
 | Email | Resend API |
@@ -117,7 +117,7 @@ FastAPI + SQLAlchemy 2.0 async + `asyncpg` — all I/O is non-blocking. This kee
 The API verifies Firebase JWTs on every request. It never stores passwords. This keeps the auth surface small and delegates session management to Firebase.
 
 ### Celery for all background work
-Scraping, ML refit, notifications, image enrichment, and community report validation all run off the main request path. Celery workers consume from separate queues (`scraper`, `catalog`, `celery`, `notification`) so heavy catalog crawls don't block notification delivery.
+Scraping, ML refit, notifications, image enrichment, and community report validation all run off the main request path. Celery workers consume from separate queues (`default`, `scraper`, `catalog`, `ml`, `notification`, `image`) so heavy catalog crawls don't block notification delivery.
 
 ### PostgreSQL extensions over separate services
 `pgvector` (semantic search), `pg_trgm` (fuzzy text search), and PostGIS (`earthdistance`, geofencing) are all PostgreSQL extensions — no Elasticsearch or separate vector DB needed.
@@ -126,7 +126,7 @@ Scraping, ML refit, notifications, image enrichment, and community report valida
 Each chain's price for a product lives in a `ProductRetailerListing` row, not on the `Product` table directly. This allows one canonical product record to have per-chain prices, names, SKUs, and availability without duplication.
 
 ### Approval-gated remediation
-The catalog integrity audit runs read-only. Data changes require an explicit admin approval step. This prevents a bug in the audit script from accidentally bulk-mutating thousands of product records.
+Catalog audits and remediation rely on operational scripts. No catalog audit/remediation endpoints are registered in the current admin router. Review proposed changes before any mutating remediation is executed.
 
 ### Expo Push over direct APNs/FCM
 The Expo Push API abstracts over both iOS APNs and Android FCM with a single request format. This avoids managing two separate push credential sets and simplifies the notification pipeline.
