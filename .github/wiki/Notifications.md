@@ -34,10 +34,10 @@ Every notification is logged in `notifications_log` regardless of whether push o
 The web and mobile header polls `GET /api/v1/notifications/unread-count` every 30 seconds to keep the badge count fresh. The app icon badge on mobile reflects the same unread count.
 
 Tapping a notification:
-- Marks it as read (via `POST /api/v1/notifications/{id}/read`)
+- Marks it as read (via `PUT /api/v1/notifications/{id}/read`)
 - Deep-links to the relevant product, deal, or recall page
 
-> **Screenshot placeholder:** `docs/screenshots/notification-bell-badge.png`
+> **Screenshot pending (not included in this PR):** `docs/screenshots/notification-bell-badge.png`
 
 ---
 
@@ -46,8 +46,8 @@ Tapping a notification:
 ### How it works
 
 1. On first app launch (after login), the mobile app calls `Expo.getExpoPushTokenAsync()` to get an Expo push token
-2. The token is sent to `PUT /api/v1/users/me` and stored on the user's `user_profiles` row
-3. When a watchlist trigger fires, the `check_watchlist_for_price` or `notify_prediction_drops` Celery task calls `services/push_sender.py`
+2. The token is sent to `POST /api/v1/notifications/fcm-token` and stored on the user's `user_profiles` row
+3. When a watchlist notification is dispatched (note that `notify_prediction_drops` currently has no hourly Beat schedule), the corresponding Celery task calls `services/push_sender.py`
 4. `push_sender.py` calls the **Expo Push API** at `https://exp.host/--/api/v2/push/send`
 5. Expo routes the push to iOS APNs or Android FCM based on the token format
 6. The notification lands on the device with a title, body, and `data` payload for deep linking
