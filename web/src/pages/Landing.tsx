@@ -1,5 +1,6 @@
-import React, { useRef, useState } from 'react'
+import React, { useState } from 'react'
 import { Link } from 'react-router-dom'
+import { apiClient } from '../api/client'
 
 const STORES = [
   { name: 'Woolworths', logo: '/logos/woolworths.svg', bg: '#007837' },
@@ -80,21 +81,25 @@ const FEATURES = [
 ]
 
 export const Landing: React.FC = () => {
-  const emailRef = useRef<HTMLInputElement>(null)
   const [submitted, setSubmitted] = useState(false)
   const [email, setEmail] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
-  function handleNotify(e: React.FormEvent) {
+  async function handleNotify(e: React.FormEvent) {
     e.preventDefault()
-    const val = emailRef.current?.value.trim() ?? ''
+    const val = email.trim()
     if (!val) return
+    setSubmitting(true)
+    setError(null)
     try {
-      const existing = JSON.parse(localStorage.getItem('df_notify_emails') ?? '[]') as string[]
-      if (!existing.includes(val)) {
-        localStorage.setItem('df_notify_emails', JSON.stringify([...existing, val]))
-      }
-    } catch {}
-    setSubmitted(true)
+      await apiClient.post('/api/v1/waitlist/subscribe', { email: val })
+      setSubmitted(true)
+    } catch {
+      setError('Something went wrong — please try again.')
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   return (
@@ -177,7 +182,7 @@ export const Landing: React.FC = () => {
                 <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
                 <div>
                   <p className="text-[11px] text-gray-400 font-medium uppercase tracking-wide">Best price</p>
-                  <p className="text-[15px] font-bold text-gray-900">Save up to 43%</p>
+                  <p className="text-[15px] font-bold text-gray-900">Best price guaranteed</p>
                 </div>
               </div>
             </div>
@@ -326,7 +331,6 @@ export const Landing: React.FC = () => {
           ) : (
             <form onSubmit={handleNotify} className="flex flex-col sm:flex-row gap-3">
               <input
-                ref={emailRef}
                 type="email"
                 required
                 value={email}
@@ -334,14 +338,19 @@ export const Landing: React.FC = () => {
                 placeholder="your@email.com"
                 className="flex-1 px-5 py-4 rounded-xl text-gray-900 text-[15px] placeholder-gray-400 border border-transparent focus:outline-none focus:ring-2 focus:ring-white min-h-[52px]"
                 aria-label="Email address"
+                disabled={submitting}
               />
               <button
                 type="submit"
-                className="bg-amber-400 hover:bg-amber-300 text-gray-900 text-[15px] font-bold px-7 py-4 rounded-xl transition-colors whitespace-nowrap min-h-[52px]"
+                disabled={submitting}
+                className="bg-amber-400 hover:bg-amber-300 disabled:opacity-60 text-gray-900 text-[15px] font-bold px-7 py-4 rounded-xl transition-colors whitespace-nowrap min-h-[52px]"
               >
-                Notify me
+                {submitting ? 'Sending…' : 'Notify me'}
               </button>
             </form>
+          )}
+          {error && (
+            <p className="mt-3 text-red-300 text-[13px]">{error}</p>
           )}
           <p className="mt-4 text-emerald-200 text-[12px]">No spam. Unsubscribe any time.</p>
         </div>

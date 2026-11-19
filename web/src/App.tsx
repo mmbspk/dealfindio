@@ -6,6 +6,9 @@ import { Footer } from './components/Footer'
 import { ProtectedRoute } from './components/ProtectedRoute'
 import { Home } from './pages/Home'
 import { Landing } from './pages/Landing'
+import { DemoComingSoon } from './pages/DemoComingSoon'
+import { PrivacyPolicy } from './pages/PrivacyPolicy'
+import { TermsOfUse } from './pages/TermsOfUse'
 import { Login } from './pages/Login'
 import { Products } from './pages/Products'
 import { Product } from './pages/Product'
@@ -57,6 +60,9 @@ function AppRoutes() {
       <Routes>
         {/* Marketing landing — own nav/footer, no app shell */}
         <Route path="/" element={<LandingRoute><Landing /></LandingRoute>} />
+        <Route path="/demo" element={<DemoComingSoon />} />
+        <Route path="/privacy" element={<AppShell><PrivacyPolicy /></AppShell>} />
+        <Route path="/terms" element={<AppShell><TermsOfUse /></AppShell>} />
 
         {/* App routes — wrapped in Header + Footer shell */}
         <Route path="/app" element={<AppShell><Home /></AppShell>} />

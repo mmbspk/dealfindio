@@ -385,6 +385,7 @@ def create_app() -> FastAPI:
             receipts,
             stores,
             users,
+            waitlist,
             watchlist,
         )
 
@@ -419,6 +420,12 @@ def create_app() -> FastAPI:
             receipts.router,
             prefix=f"{settings.API_V1_STR}/receipts",
             tags=["Receipts"],
+        )
+
+        app.include_router(
+            waitlist.router,
+            prefix=f"{settings.API_V1_STR}/waitlist",
+            tags=["Waitlist"],
         )
 
         from app.routers import admin
