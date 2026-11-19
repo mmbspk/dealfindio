@@ -28,6 +28,7 @@ from .store import Store
 from .user import User, UserProfile
 from .watchlist import UserWatchlist
 from .watchlist_list import WatchlistList
+from .waitlist import WaitlistEmail
 
 __all__ = [
     "AppConfig",
@@ -47,4 +48,5 @@ __all__ = [
     "PricePrediction",
     "CatalogCrawlRun",
     "PackageSizeRemediationLog",
+    "WaitlistEmail",
 ]
